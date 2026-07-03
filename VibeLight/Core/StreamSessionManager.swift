@@ -46,10 +46,11 @@ final class StreamSessionManager {
     /// only in this Qt log file.
     private(set) var moonlightLogPath: String?
 
-    /// Fired once, the first time the host reports busy after our launch —
-    /// the moment the integrator should hand focus to the stream (hide the
-    /// launcher window, adjust activation policy).
-    @ObservationIgnored var onStreamDidStart: (() -> Void)?
+    /// Fired once when the stream goes live (`@VL STARTED`). Carries the helper
+    /// process's PID so the integrator can force-focus its stream window — a
+    /// subprocess window otherwise opens unfocused under macOS's cooperative
+    /// activation, stranding a couch user who'd have to grab the mouse.
+    @ObservationIgnored var onStreamDidStart: ((_ helperPID: pid_t?) -> Void)?
 
     /// Fired when the local stream process ends and the phase moves to
     /// `.ending`. `cleanly` is best-effort only: `true` for intentional local
@@ -376,9 +377,13 @@ final class StreamSessionManager {
             // full quit is exclusively quitCompletely()'s /cancel (invariant 6).
             "--no-quit-after",
         ]
+        args.append(contentsOf: ["--video-codec", settings.codec.cliValue])
+        args.append(contentsOf: ["--audio-config", settings.audio.cliValue])
+        args.append(contentsOf: ["--video-decoder", settings.decoder.cliValue])
         args.append(settings.hdr ? "--hdr" : "--no-hdr")
         args.append(settings.vsync ? "--vsync" : "--no-vsync")
         args.append(settings.framePacing ? "--frame-pacing" : "--no-frame-pacing")
+        args.append(settings.gameOptimizations ? "--game-optimization" : "--no-game-optimization")
         return args
     }
 
@@ -483,7 +488,7 @@ final class StreamSessionManager {
     private func enterStreaming(app: StreamApp, host: StreamHost, generation gen: UInt64) {
         guard isCurrent(gen), case .launching = phase else { return }
         phase = .streaming(app)
-        onStreamDidStart?()
+        onStreamDidStart?(streamProcess?.processIdentifier)
         startStreamingPoll(host: host, generation: gen)
     }
 

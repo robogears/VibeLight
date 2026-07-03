@@ -77,12 +77,19 @@ final class AppState {
         session = StreamSessionManager(api: client)
 
         // Our settings: previously persisted > imported Moonlight defaults > fallback.
+        var loaded: StreamSettings
         if let data = UserDefaults.standard.data(forKey: Self.settingsKey),
            let saved = try? JSONDecoder().decode(StreamSettings.self, from: data) {
-            settings = saved
+            loaded = saved
         } else {
-            settings = imported?.settings ?? .fallback
+            loaded = imported?.settings ?? .fallback
         }
+        // Snap the imported bitrate (e.g. 87500) onto the clean 10 Mbps grid so
+        // it reads "90 Mbps", not "87". didSet doesn't fire during init.
+        let step = Self.bitrateStep
+        loaded.bitrateKbps = min(max(((loaded.bitrateKbps + step / 2) / step) * step,
+                                     Self.bitrateMin), Self.bitrateMax)
+        settings = loaded
 
         hosts = (imported?.hosts ?? []).filter(\.isPaired)
         selectedHostID = hosts.first?.id
@@ -118,9 +125,9 @@ final class AppState {
                 presentOverlay(.error(message))
             }
         }
-        session.onStreamDidStart = { [weak self] in
+        session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
-            windowCoordinator?.beginStreamHandoff()
+            windowCoordinator?.beginStreamHandoff(helperPID: helperPID)
             overlay = nil
             rebuildFocus()
         }
@@ -414,7 +421,7 @@ final class AppState {
     // MARK: - Settings rows
 
     enum SettingsRow: String, CaseIterable {
-        case resolution, fps, bitrate, hdr, vsync, framePacing
+        case resolution, fps, bitrate, codec, hdr, audio, decoder, vsync, framePacing, gameOpt
 
         var focusID: String { "setting:\(rawValue)" }
 
@@ -423,18 +430,27 @@ final class AppState {
             case .resolution: "Resolution"
             case .fps: "Frame Rate"
             case .bitrate: "Bitrate"
+            case .codec: "Video Codec"
             case .hdr: "HDR"
+            case .audio: "Audio"
+            case .decoder: "Video Decoder"
             case .vsync: "V-Sync"
             case .framePacing: "Frame Pacing"
+            case .gameOpt: "Game Optimizations"
             }
         }
     }
 
     static let resolutionPresets: [(w: Int, h: Int, label: String)] = [
-        (1280, 720, "720p"), (1920, 1080, "1080p"),
-        (2560, 1440, "1440p"), (3840, 2160, "4K"),
+        (1280, 720, "720p"), (1920, 1080, "1080p"), (2560, 1440, "1440p"),
+        (3440, 1440, "Ultrawide 1440p"), (3840, 2160, "4K"),
     ]
-    static let fpsPresets = [30, 60, 90, 120, 144]
+    static let fpsPresets = [30, 60, 90, 120, 144, 165, 240]
+
+    /// Bitrate steps in clean 10 Mbps increments (Kbps).
+    static let bitrateStep = 10_000
+    static let bitrateMin = 10_000
+    static let bitrateMax = 200_000
 
     func value(for row: SettingsRow) -> String {
         switch row {
@@ -442,10 +458,15 @@ final class AppState {
             Self.resolutionPresets.first { $0.w == settings.width && $0.h == settings.height }?.label
                 ?? "\(settings.width)×\(settings.height)"
         case .fps: "\(settings.fps) fps"
-        case .bitrate: String(format: "%.1f Mbps", Double(settings.bitrateKbps) / 1000)
+        // Whole-number Mbps now that bitrate snaps to the 10 Mbps grid.
+        case .bitrate: "\(settings.bitrateKbps / 1000) Mbps"
+        case .codec: settings.codec.label
         case .hdr: settings.hdr ? "On" : "Off"
+        case .audio: settings.audio.label
+        case .decoder: settings.decoder.label
         case .vsync: settings.vsync ? "On" : "Off"
         case .framePacing: settings.framePacing ? "On" : "Off"
+        case .gameOpt: settings.gameOptimizations ? "On" : "Off"
         }
     }
 
@@ -463,12 +484,31 @@ final class AppState {
             let next = min(max(current + (forward ? 1 : -1), 0), presets.count - 1)
             settings.fps = presets[next]
         case .bitrate:
-            let step = 5000
-            settings.bitrateKbps = min(max(settings.bitrateKbps + (forward ? step : -step), 5000), 150_000)
+            // Snap to a clean 10 Mbps grid so values read 80/90/100, never
+            // the imported 87.5. If already on the grid, step; otherwise jump
+            // to the neighboring grid line in the pressed direction.
+            let step = Self.bitrateStep
+            let onGrid = settings.bitrateKbps % step == 0
+            let base = (settings.bitrateKbps / step) * step
+            let next = onGrid ? settings.bitrateKbps + (forward ? step : -step)
+                              : (forward ? base + step : base)
+            settings.bitrateKbps = min(max(next, Self.bitrateMin), Self.bitrateMax)
+        case .codec: settings.codec = Self.cycle(settings.codec, forward: forward)
+        case .audio: settings.audio = Self.cycle(settings.audio, forward: forward)
+        case .decoder: settings.decoder = Self.cycle(settings.decoder, forward: forward)
         case .hdr: settings.hdr.toggle()
         case .vsync: settings.vsync.toggle()
         case .framePacing: settings.framePacing.toggle()
+        case .gameOpt: settings.gameOptimizations.toggle()
         }
+    }
+
+    /// Cycles a CaseIterable enum value forward/backward, clamped at the ends.
+    private static func cycle<T: CaseIterable & Equatable>(_ value: T, forward: Bool) -> T {
+        let all = Array(T.allCases)
+        guard let i = all.firstIndex(of: value) else { return value }
+        let next = min(max(all.index(i, offsetBy: forward ? 1 : -1), all.startIndex), all.index(before: all.endIndex))
+        return all[next]
     }
 
     private func persistSettings() {

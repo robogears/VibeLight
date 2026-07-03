@@ -58,7 +58,50 @@ struct ClientIdentity: Sendable {
     let uniqueID: String
 }
 
-/// Stream quality defaults imported from the user's Moonlight settings.
+/// Video codec, mapped to the Moonlight CLI's `--video-codec` values.
+enum VideoCodec: String, Codable, CaseIterable, Sendable {
+    case auto, h264, hevc, av1
+    var label: String {
+        switch self {
+        case .auto: "Auto"; case .h264: "H.264"; case .hevc: "HEVC (H.265)"; case .av1: "AV1"
+        }
+    }
+    var cliValue: String {
+        switch self {
+        case .auto: "auto"; case .h264: "H.264"; case .hevc: "HEVC"; case .av1: "AV1"
+        }
+    }
+}
+
+/// Audio channel layout, mapped to `--audio-config`.
+enum AudioConfig: String, Codable, CaseIterable, Sendable {
+    case stereo, surround51, surround71
+    var label: String {
+        switch self {
+        case .stereo: "Stereo"; case .surround51: "5.1 Surround"; case .surround71: "7.1 Surround"
+        }
+    }
+    var cliValue: String {
+        switch self {
+        case .stereo: "stereo"; case .surround51: "5.1-surround"; case .surround71: "7.1-surround"
+        }
+    }
+}
+
+/// Decoder preference, mapped to `--video-decoder`.
+enum VideoDecoder: String, Codable, CaseIterable, Sendable {
+    case auto, hardware, software
+    var label: String {
+        switch self {
+        case .auto: "Auto"; case .hardware: "Hardware"; case .software: "Software"
+        }
+    }
+    var cliValue: String { rawValue }
+}
+
+/// Full streaming configuration — mirrors the meaningful Moonlight settings so
+/// the couch UI has the same control the desktop app does. Imported defaults
+/// come from the user's Moonlight prefs; everything is persisted by VibeLight.
 struct StreamSettings: Sendable, Codable, Equatable {
     var width: Int
     var height: Int
@@ -67,11 +110,43 @@ struct StreamSettings: Sendable, Codable, Equatable {
     var hdr: Bool
     var vsync: Bool
     var framePacing: Bool
+    var codec: VideoCodec
+    var audio: AudioConfig
+    var decoder: VideoDecoder
+    var gameOptimizations: Bool
 
     static let fallback = StreamSettings(
         width: 1920, height: 1080, fps: 60, bitrateKbps: 20000,
-        hdr: false, vsync: true, framePacing: false
+        hdr: false, vsync: true, framePacing: false,
+        codec: .auto, audio: .stereo, decoder: .auto, gameOptimizations: true
     )
+
+    // Decode leniently so older persisted settings (before these fields
+    // existed) still load — missing keys fall back to sensible defaults.
+    init(width: Int, height: Int, fps: Int, bitrateKbps: Int, hdr: Bool,
+         vsync: Bool, framePacing: Bool, codec: VideoCodec, audio: AudioConfig,
+         decoder: VideoDecoder, gameOptimizations: Bool) {
+        self.width = width; self.height = height; self.fps = fps
+        self.bitrateKbps = bitrateKbps; self.hdr = hdr; self.vsync = vsync
+        self.framePacing = framePacing; self.codec = codec; self.audio = audio
+        self.decoder = decoder; self.gameOptimizations = gameOptimizations
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let f = StreamSettings.fallback
+        width = try c.decodeIfPresent(Int.self, forKey: .width) ?? f.width
+        height = try c.decodeIfPresent(Int.self, forKey: .height) ?? f.height
+        fps = try c.decodeIfPresent(Int.self, forKey: .fps) ?? f.fps
+        bitrateKbps = try c.decodeIfPresent(Int.self, forKey: .bitrateKbps) ?? f.bitrateKbps
+        hdr = try c.decodeIfPresent(Bool.self, forKey: .hdr) ?? f.hdr
+        vsync = try c.decodeIfPresent(Bool.self, forKey: .vsync) ?? f.vsync
+        framePacing = try c.decodeIfPresent(Bool.self, forKey: .framePacing) ?? f.framePacing
+        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? f.codec
+        audio = try c.decodeIfPresent(AudioConfig.self, forKey: .audio) ?? f.audio
+        self.decoder = try c.decodeIfPresent(VideoDecoder.self, forKey: .decoder) ?? f.decoder
+        gameOptimizations = try c.decodeIfPresent(Bool.self, forKey: .gameOptimizations) ?? f.gameOptimizations
+    }
 }
 
 extension String {

@@ -65,13 +65,21 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 
     // MARK: - Stream handoff
 
-    /// Called when the Moonlight stream window is coming up: get out of the way.
-    func beginStreamHandoff() {
+    /// Called when the stream window is coming up. We deliberately do NOT hide
+    /// or order our own window back — keeping VibeLight's fullscreen window up
+    /// means the desktop never flashes through while the stream window appears.
+    /// The stream window opens on top of us, and we force it frontmost + focused
+    /// by activating the helper process we launched (the sanctioned way for an
+    /// active app to hand focus to a subprocess under macOS 14+ cooperative
+    /// activation — a plain launch would leave it unfocused).
+    func beginStreamHandoff(helperPID: pid_t?) {
         isHandoffActive = true
         exitImmersiveChrome()
-        // Yield activation so the spawned Moonlight process can come frontmost.
-        NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.moonlight-stream.Moonlight")
-        window?.orderBack(nil)
+        if let helperPID, let helperApp = NSRunningApplication(processIdentifier: helperPID) {
+            helperApp.activate()
+        } else {
+            NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.moonlight-stream.Moonlight")
+        }
     }
 
     /// Called when the stream process exited: reclaim the screen.
