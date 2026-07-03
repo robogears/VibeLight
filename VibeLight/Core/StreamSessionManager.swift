@@ -59,10 +59,27 @@ final class StreamSessionManager {
 
     init(
         api: any HostAPIProviding,
-        moonlightBinary: URL = URL(fileURLWithPath: "/Applications/Moonlight.app/Contents/MacOS/Moonlight")
+        moonlightBinary: URL = StreamSessionManager.resolveStreamBinary()
     ) {
         self.api = api
         self.moonlightBinary = moonlightBinary
+    }
+
+    /// Prefers our chromeless headless helper over stock Moonlight, checking
+    /// (1) the copy embedded in VibeLight.app (production), then (2) the local
+    /// fork dev build, then (3) stock Moonlight as a last resort. The helper
+    /// speaks the `@VL` status protocol and hides its own UI; stock Moonlight
+    /// still works but shows chrome and can hang on dialogs.
+    static func resolveStreamBinary() -> URL {
+        let fm = FileManager.default
+        let candidates = [
+            Bundle.main.bundleURL
+                .appendingPathComponent("Contents/Helpers/StreamHelper.app/Contents/MacOS/Moonlight"),
+            URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Documents/vibelight-moonlight-helper/app/Moonlight.app/Contents/MacOS/Moonlight"),
+            URL(fileURLWithPath: "/Applications/Moonlight.app/Contents/MacOS/Moonlight"),
+        ]
+        return candidates.first { fm.isExecutableFile(atPath: $0.path) } ?? candidates.last!
     }
 
     // MARK: - Private state
@@ -79,6 +96,18 @@ final class StreamSessionManager {
     @ObservationIgnored private var watchdogTask: Task<Void, Never>?
     @ObservationIgnored private var streamPollTask: Task<Void, Never>?
     @ObservationIgnored private var stderrTask: Task<Void, Never>?
+    /// Reads the helper's `@VL` status protocol on stdout.
+    @ObservationIgnored private var stdoutTask: Task<Void, Never>?
+
+    /// App/generation of the live session, so the `@VL STARTED` handler (which
+    /// arrives on stdout, not from a captured closure) can enter the streaming
+    /// phase and start the truth-poll for the right session.
+    @ObservationIgnored private var currentApp: StreamApp?
+    @ObservationIgnored private var currentGen: UInt64 = 0
+
+    /// Last `@VL FAILED reason="…"` from the helper — a precise, human-readable
+    /// failure cause that beats scraping stderr.
+    @ObservationIgnored private var lastStatusFailure: String?
 
     /// Last stderr lines from the child, for failure messages. Best effort:
     /// the reader may still be draining when the termination handler fires.
@@ -166,6 +195,9 @@ final class StreamSessionManager {
                 phase = .failed("\u{201C}\(app.name)\u{201D} is no longer available on \(host.name). The library may be stale — refresh and try again.")
                 return
             }
+
+            currentApp = target
+            currentGen = gen
 
             // 3. Spawn the CLI. Process argv passes the raw name as a single
             // argument — no shell, so no quoting/escaping hazards.
@@ -358,10 +390,19 @@ final class StreamSessionManager {
         process.executableURL = moonlightBinary
         process.arguments = streamArguments(address: address, rawAppName: rawAppName, settings: settings)
         process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
 
-        // stderr carries exactly one thing we need: the first line names the
-        // /tmp/Moonlight-*.log file where the real diagnostics go.
+        // Ask the fork to run headless (chromeless, clean signals). Stock
+        // Moonlight ignores the var, so this is safe even on the fallback path.
+        var environment = ProcessInfo.processInfo.environment
+        environment["VIBELIGHT_HEADLESS"] = "1"
+        process.environment = environment
+
+        // stdout carries the helper's `@VL` status protocol — the authoritative
+        // start/fail/end signal (replaces log-scraping + serverinfo guessing).
+        let stdoutPipe = Pipe()
+        process.standardOutput = stdoutPipe
+
+        // stderr carries the /tmp/Moonlight-*.log path (diagnostics only).
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
 
@@ -382,7 +423,18 @@ final class StreamSessionManager {
         streamProcess = process
         stderrTail = []
         moonlightLogPath = nil
+        lastStatusFailure = nil
         expectingTermination = false
+
+        let outHandle = stdoutPipe.fileHandleForReading
+        stdoutTask = Task { [weak self] in
+            do {
+                for try await line in outHandle.bytes.lines {
+                    guard let self, self.isCurrent(gen) else { return }
+                    self.handleStatusLine(line)
+                }
+            } catch {}
+        }
 
         let handle = stderrPipe.fileHandleForReading
         stderrTask = Task { [weak self] in
@@ -395,6 +447,44 @@ final class StreamSessionManager {
                 }
             } catch {}
         }
+    }
+
+    /// Handles one line of the helper's `@VL` status protocol. `STARTED` is the
+    /// authoritative "stream is live" signal (faster and more accurate than
+    /// serverinfo polling); `FAILED` records a precise cause. `ENDED`/`BYE` are
+    /// informational — the process exit that follows drives `.ending`/`.failed`
+    /// through the termination handler.
+    private func handleStatusLine(_ line: String) {
+        guard line.hasPrefix("@VL ") else { return }
+        let body = line.dropFirst(4)
+        if body.hasPrefix("STARTED") {
+            if let app = currentApp, let host = currentHost {
+                enterStreaming(app: app, host: host, generation: currentGen)
+            }
+        } else if body.hasPrefix("FAILED") {
+            if let reason = Self.parseField("reason", in: String(body)) {
+                lastStatusFailure = reason
+            }
+        }
+    }
+
+    /// Extracts a `key="value"` field from an `@VL` status line.
+    private static func parseField(_ key: String, in line: String) -> String? {
+        guard let start = line.range(of: "\(key)=\"") else { return nil }
+        let rest = line[start.upperBound...]
+        guard let end = rest.firstIndex(of: "\"") else { return nil }
+        let value = String(rest[..<end])
+        return value.isEmpty ? nil : value
+    }
+
+    /// Single funnel for entering the streaming phase, from either the helper's
+    /// `@VL STARTED` (primary) or the serverinfo watchdog (fallback). Idempotent
+    /// — whichever fires first wins; the guard makes the loser a no-op.
+    private func enterStreaming(app: StreamApp, host: StreamHost, generation gen: UInt64) {
+        guard isCurrent(gen), case .launching = phase else { return }
+        phase = .streaming(app)
+        onStreamDidStart?()
+        startStreamingPoll(host: host, generation: gen)
     }
 
     private func recordStderr(line: String) {
@@ -446,6 +536,8 @@ final class StreamSessionManager {
             break // watchdog or teardown already resolved this session
         }
 
+        stdoutTask?.cancel()
+        stdoutTask = nil
         stderrTask?.cancel()
         stderrTask = nil
     }
@@ -478,9 +570,10 @@ final class StreamSessionManager {
                        self.matchesRunningApp(info: info, app: app),
                        clock.now >= earliestDeclare,
                        self.streamProcess?.isRunning == true {
-                        self.phase = .streaming(app)
-                        self.onStreamDidStart?()
-                        self.startStreamingPoll(host: host, generation: gen)
+                        // Fallback path: the helper's `@VL STARTED` usually
+                        // beats us here, but stock Moonlight (no `@VL`) relies
+                        // on this. enterStreaming is idempotent.
+                        self.enterStreaming(app: app, host: host, generation: gen)
                         return
                     }
                 }
@@ -589,6 +682,8 @@ final class StreamSessionManager {
         watchdogTask = nil
         streamPollTask?.cancel()
         streamPollTask = nil
+        stdoutTask?.cancel()
+        stdoutTask = nil
         stderrTask?.cancel()
         stderrTask = nil
         if let process = streamProcess {
@@ -601,12 +696,17 @@ final class StreamSessionManager {
         stderrTail = []
         currentHost = nil
         currentAddress = nil
+        currentApp = nil
     }
 
     // MARK: - Messages
 
     private func startupFailureMessage() -> String {
-        var message = "Moonlight exited before the stream started."
+        // Prefer the helper's precise `@VL FAILED reason="…"` when we have it.
+        if let lastStatusFailure {
+            return lastStatusFailure
+        }
+        var message = "The stream exited before it started."
         let tail = stderrTail
             .filter { !$0.isEmpty && !$0.hasPrefix("Redirecting log output to ") }
             .suffix(5)
