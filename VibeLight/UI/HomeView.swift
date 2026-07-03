@@ -73,7 +73,15 @@ private struct HeaderBar: View {
                     Text(host.name)
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.textPrimary)
-                    if !state.hostOnline {
+                    if let error = state.hostError {
+                        // A real error must never masquerade as "asleep" —
+                        // that hides pairing/TLS problems behind a wake hint.
+                        Text(error)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .frame(maxWidth: 420)
+                    } else if !state.hostOnline {
                         Text(host.macAddress != nil ? "asleep — press ⏻ to wake" : "offline")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Theme.textSecondary)
