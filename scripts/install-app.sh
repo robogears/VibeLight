@@ -20,4 +20,11 @@ if ! rm -rf "$DEST" 2>/dev/null || ! ditto "$APP" "$DEST" 2>/dev/null; then
     rm -rf "$DEST"
     ditto "$APP" "$DEST"
 fi
+
+# Remove the build-product copies from DerivedData so Spotlight only ever
+# shows the one real install (otherwise you get "VibeLight — Debug/Release"
+# duplicates alongside the Applications one).
+find "$HOME/Library/Developer/Xcode/DerivedData" -name 'VibeLight.app' -path '*Products*' \
+    -exec rm -rf {} + 2>/dev/null || true
+
 echo "✅ Installed: $DEST"
