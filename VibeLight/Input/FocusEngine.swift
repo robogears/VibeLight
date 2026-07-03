@@ -171,7 +171,7 @@ final class FocusEngine {
             return jumpSection(step: -1)
         case .nextSection:
             return jumpSection(step: +1)
-        case .select, .back, .contextMenu, .detail, .settings, .quitChord:
+        case .select, .back, .contextMenu, .detail, .settings, .quitChord, .quitApp:
             return false
         }
     }

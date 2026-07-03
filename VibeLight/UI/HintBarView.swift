@@ -30,11 +30,13 @@ struct HintBarView: View {
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
-                ("quit", .quitChord, nil),
+                ("quitgame", .quitChord, nil),
+                ("quitapp", .quitApp, nil),
             ]
         case .settings:
             [
                 ("adjust", .move(.right), "Adjust"),
+                ("tab", .nextSection, "Switch Tab"),
                 ("back", .back, "Done"),
             ]
         }

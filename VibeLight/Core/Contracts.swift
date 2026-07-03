@@ -110,7 +110,8 @@ enum NavigationEvent: Sendable, Equatable {
     case prevSection     // LB / L1
     case nextSection     // RB / R1
     case settings        // Menu / Options / Cmd-,
-    case quitChord       // long-press Menu — global quit action
+    case quitChord       // long-press Menu — quit the remote GAME completely
+    case quitApp         // long-press B/Circle on home — quit VibeLight itself
 }
 
 /// Which glyph family the UI should render for hints.

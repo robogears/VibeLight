@@ -49,7 +49,7 @@ enum InputGlyphs {
         switch event {
         case .move: pad.dpad
         case .select: pad.buttonA
-        case .back: pad.buttonB
+        case .back, .quitApp: pad.buttonB
         case .contextMenu: pad.buttonX
         case .detail: pad.buttonY
         case .prevSection: pad.leftShoulder
@@ -72,7 +72,8 @@ enum InputGlyphs {
         case .prevSection: "Prev"
         case .nextSection: "Next"
         case .settings: "Settings"
-        case .quitChord: style == .keyboard ? "Quit" : "Hold to Quit"
+        case .quitChord: style == .keyboard ? "Quit Game" : "Hold to Quit Game"
+        case .quitApp: style == .keyboard ? "Quit" : "Hold to Quit"
         }
     }
 
@@ -92,7 +93,7 @@ enum InputGlyphs {
         switch event {
         case .move: "dpad"
         case .select: "a.circle"
-        case .back: "b.circle"
+        case .back, .quitApp: "b.circle"
         case .contextMenu: "x.circle"
         case .detail: "y.circle"
         case .prevSection: "lb.button.roundedbottom.horizontal"
@@ -105,7 +106,7 @@ enum InputGlyphs {
         switch event {
         case .move: "dpad"
         case .select: "xmark.circle"        // Cross
-        case .back: "circle.circle"         // Circle
+        case .back, .quitApp: "circle.circle"   // Circle
         case .contextMenu: "square.circle"  // Square
         case .detail: "triangle.circle"     // Triangle
         case .prevSection: "l1.button.roundedbottom.horizontal"
@@ -122,7 +123,7 @@ enum InputGlyphs {
         switch event {
         case .move: "dpad"
         case .select: "b.circle"        // south button, physical B
-        case .back: "a.circle"          // east button, physical A
+        case .back, .quitApp: "a.circle"   // east button, physical A
         case .contextMenu: "y.circle"   // west button, physical Y
         case .detail: "x.circle"        // north button, physical X
         case .prevSection: "l.button.roundedbottom.horizontal"
@@ -138,7 +139,7 @@ enum InputGlyphs {
         switch event {
         case .move: "dpad"
         case .select: "circle.grid.cross.down.filled"
-        case .back: "circle.grid.cross.right.filled"
+        case .back, .quitApp: "circle.grid.cross.right.filled"
         case .contextMenu: "circle.grid.cross.left.filled"
         case .detail: "circle.grid.cross.up.filled"
         case .prevSection: "l1.button.roundedbottom.horizontal"
@@ -151,7 +152,7 @@ enum InputGlyphs {
         switch event {
         case .move: "arrowkeys"
         case .select: "return"
-        case .back: "escape"
+        case .back, .quitApp: "escape"
         case .contextMenu: "space"
         case .detail: "arrow.right.to.line"      // Tab
         case .prevSection: "arrow.backward.square"   // no key bound; hint only

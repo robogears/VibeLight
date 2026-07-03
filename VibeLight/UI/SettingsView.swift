@@ -21,12 +21,16 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 96)
             .padding(.top, 64)
-            .padding(.bottom, 40)
+            .padding(.bottom, 24)
+
+            SettingsTabBar()
+                .padding(.horizontal, 96)
+                .padding(.bottom, 28)
 
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
-                        ForEach(AppState.SettingsRow.allCases, id: \.rawValue) { row in
+                        ForEach(state.settingsTab.rows, id: \.rawValue) { row in
                             SettingsRowView(row: row)
                                 .id(row.focusID)
                         }
@@ -40,6 +44,8 @@ struct SettingsView: View {
                         proxy.scrollTo(new, anchor: .center)
                     }
                 }
+                // Keep the transition snappy when tabs change.
+                .animation(Theme.focusSpring, value: state.settingsTab)
             }
 
             Spacer(minLength: 0)
@@ -48,6 +54,51 @@ struct SettingsView: View {
                 .padding(.horizontal, 96)
                 .padding(.bottom, 36)
         }
+    }
+}
+
+/// The tab strip with L1/R1 bumper glyphs on either side — switched with the
+/// shoulder buttons (or clicked with the mouse).
+private struct SettingsTabBar: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        HStack(spacing: 14) {
+            bumper(.prevSection)
+            ForEach(AppState.SettingsTab.allCases, id: \.rawValue) { tab in
+                let selected = state.settingsTab == tab
+                Text(tab.title)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(selected ? .white : Theme.textSecondary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 9)
+                    .background(
+                        selected ? Theme.accent : Color.white.opacity(0.06),
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
+                    }
+                    .onTapGesture {
+                        // Jump directly on click, keeping controller behavior.
+                        while state.settingsTab != tab {
+                            let forward = (AppState.SettingsTab.allCases.firstIndex(of: tab) ?? 0)
+                                > (AppState.SettingsTab.allCases.firstIndex(of: state.settingsTab) ?? 0)
+                            state.switchSettingsTab(forward: forward)
+                        }
+                    }
+            }
+            bumper(.nextSection)
+            Spacer()
+        }
+        .animation(Theme.focusSpring, value: state.settingsTab)
+    }
+
+    private func bumper(_ event: NavigationEvent) -> some View {
+        let glyph = InputGlyphs.glyph(for: event, style: state.controller.glyphStyle)
+        return Image(systemName: glyph.symbolName)
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(Theme.textPrimary.opacity(0.85))
     }
 }
 

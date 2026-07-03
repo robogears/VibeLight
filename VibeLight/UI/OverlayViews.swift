@@ -127,14 +127,16 @@ private struct CheatSheetCard: View {
                 row(.select, "Play the selected app")
                 row(.back, "Back / close")
                 row(.settings, "Open settings")
+                row(.nextSection, "Switch settings tab (L1/R1)")
                 row(.quitChord, "Quit the remote game completely")
+                row(.quitApp, "Quit VibeLight (hold on home)")
                 keyRow("⌘⇧ Q", "Quit the remote game completely (keyboard)")
 
                 sheetSection("During a stream (Moonlight)")
                 keyRow("⌃⌥⇧ Q", "Disconnect — game keeps running")
+                keyRow("⌃⌥⇧ E", "Quit the game completely")
                 keyRow("⌃⌥⇧ Z", "Release mouse/keyboard capture")
                 keyRow("⌃⌥⇧ S", "Performance overlay")
-                keyRow("Hold ✕/A + Menu", "…then pick Quit in VibeLight to fully close the game")
             }
 
             Text("Press any button to close")

@@ -59,6 +59,10 @@ final class ControllerManager {
         /// Menu held this long fires `.quitChord` once and suppresses the
         /// short-press `.settings` on release.
         static let quitChordHold: Duration = .seconds(1.0)
+        /// B/Circle held this long fires `.quitApp` once and suppresses the
+        /// short-press `.back` on release. Longer than the Menu chord so a
+        /// deliberate "close the app" gesture is never a fumbled Back tap.
+        static let quitAppHold: Duration = .seconds(1.5)
     }
 
     // MARK: - Private state
@@ -71,6 +75,10 @@ final class ControllerManager {
     @ObservationIgnored private var menuIsDown = false
     @ObservationIgnored private var menuLongPressFired = false
     @ObservationIgnored private var menuHoldTask: Task<Void, Never>?
+
+    @ObservationIgnored private var backIsDown = false
+    @ObservationIgnored private var backLongPressFired = false
+    @ObservationIgnored private var backHoldTask: Task<Void, Never>?
 
     @ObservationIgnored private var hapticEngine: CHHapticEngine?
     @ObservationIgnored private var keyMonitor: Any?
@@ -184,11 +192,18 @@ final class ControllerManager {
         }
 
         bind(pad.buttonA, to: .select)
-        bind(pad.buttonB, to: .back)
         bind(pad.buttonX, to: .contextMenu)
         bind(pad.buttonY, to: .detail)
         bind(pad.leftShoulder, to: .prevSection)
         bind(pad.rightShoulder, to: .nextSection)
+
+        // B/Circle is special like Menu: a tap is `.back`, a ≥1.5 s hold is the
+        // `.quitApp` chord (close VibeLight from the couch). Needs both edges.
+        pad.buttonB.pressedChangedHandler = { [weak self] _, _, pressed in
+            MainActor.assumeIsolated {
+                self?.backButtonChanged(pressed: pressed)
+            }
+        }
 
         // Menu is special: short press vs ≥1 s hold diverge (settings vs
         // global quit chord), so it needs both edges, not just the press.
@@ -277,6 +292,34 @@ final class ControllerManager {
         }
     }
 
+    // MARK: - Back button (tap = back, hold = quit app)
+
+    private func backButtonChanged(pressed: Bool) {
+        if pressed {
+            backIsDown = true
+            backLongPressFired = false
+            backHoldTask?.cancel()
+            backHoldTask = Task { [weak self] in
+                try? await Task.sleep(for: Tuning.quitAppHold)
+                guard !Task.isCancelled, let self, self.backIsDown, !self.backLongPressFired else { return }
+                // Fire once at the threshold; the flag suppresses the tap's
+                // `.back` on release. AppState only acts on `.quitApp` from home.
+                self.backLongPressFired = true
+                self.onEvent?(.quitApp)
+            }
+        } else {
+            let wasDown = backIsDown
+            let firedLongPress = backLongPressFired
+            backIsDown = false
+            backLongPressFired = false
+            backHoldTask?.cancel()
+            backHoldTask = nil
+            if wasDown && !firedLongPress {
+                onEvent?(.back)
+            }
+        }
+    }
+
     // MARK: - State reset
 
     /// Clears every piece of transient held/repeat state. Called on
@@ -287,11 +330,15 @@ final class ControllerManager {
         repeatTask = nil
         menuHoldTask?.cancel()
         menuHoldTask = nil
+        backHoldTask?.cancel()
+        backHoldTask = nil
         heldDirection = nil
         dpadLatch.reset()
         stickLatch.reset()
         menuIsDown = false
         menuLongPressFired = false
+        backIsDown = false
+        backLongPressFired = false
     }
 
     // MARK: - Haptics

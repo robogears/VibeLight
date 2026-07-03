@@ -59,6 +59,10 @@ final class AppState {
     /// horizontal moves — that's how value adjustment works).
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
+    /// The active settings tab (L1/R1 switch between them). Grouping keeps each
+    /// screen short instead of one long scroll.
+    var settingsTab: SettingsTab = .video
+
     private static let settingsKey = "vibelight.streamSettings"
 
     // MARK: - Boot
@@ -249,8 +253,9 @@ final class AppState {
                     itemIDs: apps.map { "app:\(appKey($0))" }
                 ))
             case .settings:
+                // Only the active tab's rows are focusable; L1/R1 switch tabs.
                 sections = [FocusSection(id: "settings", kind: .vList,
-                                         itemIDs: Self.settingsRowIDs)]
+                                         itemIDs: settingsTab.rows.map(\.focusID))]
             }
         }
         focus.setSections(sections)
@@ -281,6 +286,15 @@ final class AppState {
         // Global chord: hold Menu → quit the remote game completely.
         if event == .quitChord {
             quitRemoteGameCompletely()
+            return
+        }
+
+        // Hold B/Circle on the home screen → quit VibeLight itself. Gated to
+        // home-with-no-overlay so it can never fire mid-stream or from a menu.
+        if event == .quitApp {
+            if screen == .home, overlay == nil {
+                NSApplication.shared.terminate(nil)
+            }
             return
         }
 
@@ -325,11 +339,27 @@ final class AppState {
                let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }) {
                 adjust(row: row, forward: event == .move(.right))
             }
+        case .prevSection:
+            switchSettingsTab(forward: false)
+        case .nextSection:
+            switchSettingsTab(forward: true)
         case .select:
             break // rows adjust with left/right; select is a no-op for now
         default:
             _ = focus.handle(event)
         }
+    }
+
+    /// Cycles between settings tabs (L1/R1). Clamps at the ends and re-homes
+    /// focus to the first row of the new tab.
+    func switchSettingsTab(forward: Bool) {
+        let all = SettingsTab.allCases
+        guard let i = all.firstIndex(of: settingsTab) else { return }
+        let next = min(max(i + (forward ? 1 : -1), 0), all.count - 1)
+        guard next != i else { return }
+        settingsTab = all[next]
+        rebuildFocus()
+        focus.focusFirst()
     }
 
     private func routeOverlay(_ event: NavigationEvent, overlay: Overlay) {
@@ -437,6 +467,23 @@ final class AppState {
             case .vsync: "V-Sync"
             case .framePacing: "Frame Pacing"
             case .gameOpt: "Game Optimizations"
+            }
+        }
+    }
+
+    /// Settings groups, switched with L1/R1 so each screen stays short.
+    enum SettingsTab: String, CaseIterable {
+        case video, audio, advanced
+        var title: String {
+            switch self {
+            case .video: "Video"; case .audio: "Audio"; case .advanced: "Advanced"
+            }
+        }
+        var rows: [SettingsRow] {
+            switch self {
+            case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder]
+            case .audio: [.audio]
+            case .advanced: [.vsync, .framePacing, .gameOpt]
             }
         }
     }
