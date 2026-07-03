@@ -1,0 +1,61 @@
+name: VibeLight
+options:
+  bundleIdPrefix: com.vibelight
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+targets:
+  VibeLight:
+    type: application
+    platform: macOS
+    sources:
+      - path: VibeLight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.app
+        PRODUCT_NAME: VibeLight
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_GCSupportsControllerUserInteraction: YES
+        INFOPLIST_KEY_NSSupportsAutomaticTermination: NO
+        INFOPLIST_KEY_NSSupportsSuddenTermination: NO
+        SWIFT_STRICT_CONCURRENCY: complete
+  VibeLightTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: VibeLightTests
+    dependencies:
+      - target: VibeLight
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/VibeLight.app/Contents/MacOS/VibeLight"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.tests
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_STRICT_CONCURRENCY: complete
+schemes:
+  VibeLight:
+    build:
+      targets:
+        VibeLight: all
+        VibeLightTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - VibeLightTests
