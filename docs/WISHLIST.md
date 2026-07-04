@@ -6,6 +6,14 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
 - ✅ **In-app pairing / add computer by IP.** Own-identity generation + the full
   GameStream pairing handshake (PIN → host web UI). Crypto unit-tested; the live
   end-to-end handshake still needs a test against an awake host.
+- ✅ **(4) Escapable fullscreen** for VibeLight's own UI — traffic lights reveal
+  on hover at the top-left.
+- ✅ **(5) Custom + native resolution** — native auto-detected in the cycle;
+  select the Resolution row to type an arbitrary WxH.
+- ✅ **(1) Settings presets** — save current settings as a preset; right-side
+  home rail to pick the active one.
+- ✅ **(6) Stream-entry flash** — mitigated (Dock no longer un-hidden during the
+  handoff, on both the launcher and helper sides); needs live confirmation.
 
 ## Planned
 

@@ -132,7 +132,12 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     /// activation — a plain launch would leave it unfocused).
     func beginStreamHandoff(helperPID: pid_t?) {
         isHandoffActive = true
-        exitImmersiveChrome()
+        // Do NOT un-hide the Dock/menu bar here: there's a ~1s gap between the
+        // connection starting (when this fires) and the fullscreen stream window
+        // actually covering the screen, and un-hiding immediately makes the Dock
+        // flash in that gap. Our presentation options simply lapse when the
+        // helper takes frontmost, and its fullscreen-desktop window then covers
+        // everything — so keeping the Dock hidden through the handoff is cleaner.
         if let helperPID, let helperApp = NSRunningApplication(processIdentifier: helperPID) {
             helperApp.activate()
         } else {
