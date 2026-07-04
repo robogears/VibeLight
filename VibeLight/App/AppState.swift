@@ -306,6 +306,15 @@ final class AppState {
 
     // MARK: - Event routing
 
+    /// Mouse selection of a specific control: switch to pointer mode, focus
+    /// exactly what was clicked, then activate it — so a click always hits the
+    /// button under the cursor, never whatever the controller last focused.
+    func pointerSelect(_ id: String) {
+        if inputMode != .pointer { inputMode = .pointer }
+        focus.focus(itemID: id)
+        route(.select)
+    }
+
     func route(_ event: NavigationEvent) {
         // Global chord: hold Menu → quit the remote game completely.
         if event == .quitChord {

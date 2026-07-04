@@ -1,4 +1,4 @@
-# What's new in v0.2.0
+# What's new in v0.1.1
 
 The first release of VibeLight: a Steam Big Picture-style, controller-first
 launcher for Moonlight game streaming on macOS.
@@ -35,7 +35,7 @@ launcher for Moonlight game streaming on macOS.
 
 # Install / update
 
-- **macOS (Apple Silicon):** download `VibeLight-0.2.0-arm64.zip`, unzip, and
+- **macOS (Apple Silicon):** download `VibeLight-0.1.1-arm64.zip`, unzip, and
   drag **VibeLight.app** to Applications. First launch on macOS 15+: right-click
   → Open, or approve it under **System Settings → Privacy & Security → Open
   Anyway** (the app is not notarized).
@@ -53,4 +53,4 @@ Artwork cache lives in `~/Library/Caches/com.vibelight.app/`.
 
 ---
 
-**Full Changelog**: https://github.com/robogears/VibeLight/commits/v0.2.0
+**Full Changelog**: https://github.com/robogears/VibeLight/commits/v0.1.1

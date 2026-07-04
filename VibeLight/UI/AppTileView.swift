@@ -44,7 +44,7 @@ struct AppTileView: View {
                 state.focus.focus(itemID: focusID)
             }
         }
-        .onTapGesture { state.route(.select) }
+        .onTapGesture { state.pointerSelect(focusID) }
         .task(id: taskKey) {
             artwork = await state.artwork.artwork(
                 for: app, host: state.selectedHost ?? placeholderHost, address: state.hostAddress

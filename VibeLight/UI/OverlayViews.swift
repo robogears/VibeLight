@@ -78,7 +78,7 @@ private struct SessionEndedCard: View {
 
             VStack(spacing: 12) {
                 OverlayButton(id: "ended:resume", title: "Resume Stream", symbol: "play.fill")
-                OverlayButton(id: "ended:quit", title: "Quit Game Completely", symbol: "xmark.octagon.fill", destructive: true)
+                OverlayButton(id: "ended:quit", title: "Quit Stream Completely", symbol: "xmark.octagon.fill", destructive: true)
                 OverlayButton(id: "ended:home", title: "Back to Library", symbol: "square.grid.2x2")
             }
         }
@@ -164,8 +164,7 @@ private struct CheatSheetCard: View {
         let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
         GridRow {
             HStack(spacing: 6) {
-                Image(systemName: glyph.symbolName)
-                    .font(.system(size: 15, weight: .semibold))
+                GlyphBadge(glyph: glyph)
                 Text(glyph.label)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
             }
@@ -198,7 +197,11 @@ struct OverlayButton: View {
     let symbol: String
     var destructive = false
 
+    @State private var hovering = false
     private var isFocused: Bool { state.focus.focusedItemID == id }
+    /// Hover feedback only reads while the mouse is the active device, so a
+    /// cursor parked over a button can't glow while you navigate by controller.
+    private var hoverActive: Bool { hovering && state.inputMode == .pointer }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -212,17 +215,24 @@ struct OverlayButton: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 15)
         .frame(width: 360)
+        .contentShape(Rectangle())   // whole button (incl. padding) is clickable
         .background(
-            isFocused ? (destructive ? Color.red.opacity(0.85) : Theme.accent) : Theme.surface,
+            isFocused ? (destructive ? Color.red.opacity(0.85) : Theme.accent)
+                      : (hoverActive ? Color.white.opacity(0.12) : Theme.surface),
             in: RoundedRectangle(cornerRadius: 13)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(.white.opacity(isFocused ? 0.35 : 0.08), lineWidth: 1)
+                .strokeBorder(.white.opacity(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08)), lineWidth: 1)
         }
-        .scaleEffect(isFocused ? 1.04 : 1.0)
+        .scaleEffect(isFocused ? 1.04 : (hoverActive ? 1.02 : 1.0))
         .animation(Theme.focusSpring, value: isFocused)
-        .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) } }
-        .onTapGesture { state.route(.select) }
+        .animation(Theme.focusSpring, value: hoverActive)
+        .onHover { hovering = $0
+            if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) }
+        }
+        // Click activates THIS button (focus it first), not whatever the
+        // controller last focused.
+        .onTapGesture { state.pointerSelect(id) }
     }
 }

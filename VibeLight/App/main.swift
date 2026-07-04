@@ -40,12 +40,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
         appMenu.addItem(.separator())
+        // Native ⌘, so the settings shortcut works through AppKit's menu
+        // system, not just our key monitor. Target is self so it routes to
+        // AppState the same way the on-screen Settings action does.
+        let settingsItem = NSMenuItem(title: "Settings…",
+                                      action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide VibeLight",
                         action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit VibeLight",
                         action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func openSettings() {
+        state?.route(.settings)
     }
 }
 

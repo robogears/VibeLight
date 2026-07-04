@@ -5,6 +5,10 @@ import GameController
 struct InputGlyph: Hashable, Sendable {
     var symbolName: String
     var label: String
+    /// For keyboard chords (⌘,, ⌘⇧Q…) — the UI renders this as a text keycap
+    /// instead of the SF Symbol, so the hint shows the ACTUAL keys to press
+    /// rather than a bare, misleading ⌘.
+    var keyCap: String? = nil
 }
 
 /// Maps (NavigationEvent, ControllerGlyphStyle) → glyphs.
@@ -22,8 +26,19 @@ enum InputGlyphs {
     static func glyph(for event: NavigationEvent, style: ControllerGlyphStyle) -> InputGlyph {
         InputGlyph(
             symbolName: symbolName(for: event, style: style),
-            label: label(for: event, style: style)
+            label: label(for: event, style: style),
+            keyCap: style == .keyboard ? keyboardKeyCap(for: event) : nil
         )
+    }
+
+    /// The literal keys for events bound to keyboard chords, shown as a keycap.
+    private static func keyboardKeyCap(for event: NavigationEvent) -> String? {
+        switch event {
+        case .settings: "⌘ ,"
+        case .quitChord: "⌘ ⇧ Q"
+        case .quitApp: "⌘ Q"
+        default: nil
+        }
     }
 
     /// Live-first lookup: uses the controller's remap-aware element symbol
