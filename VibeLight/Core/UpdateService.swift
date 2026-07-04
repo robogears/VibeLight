@@ -36,12 +36,15 @@ final class UpdateService {
         case upToDate
         case available
         case downloading(Double)  // 0…1
-        case installing
+        case installing           // verifying the downloaded bundle
+        case readyToInstall       // downloaded + verified; waiting for "Restart"
         case failed(String)
     }
 
     private(set) var phase: Phase = .idle
     private(set) var available: Release?
+    /// The unpacked, verified new bundle waiting to be swapped in on Restart.
+    @ObservationIgnored private var stagedApp: URL?
 
     nonisolated private static let owner = "robogears"
     nonisolated private static let repo = "VibeLight"
@@ -50,15 +53,31 @@ final class UpdateService {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
     }
 
-    /// True when we can actually replace our own bundle: a packaged Release
-    /// build, not a translocated/read-only copy, in a writable location.
-    var canSelfInstall: Bool {
+    /// Where the new version gets installed. Update the running bundle in place
+    /// when it's a normal writable location; when we're running from a
+    /// read-only App-Translocation copy (the Gatekeeper quarantine dance) or a
+    /// non-writable spot, install to /Applications — the canonical location —
+    /// and relaunch from there instead.
+    var installDestination: URL {
+        let fm = FileManager.default
         let bundle = Bundle.main.bundleURL
-        if bundle.path.contains("/AppTranslocation/") { return false }
+        let translocated = bundle.path.contains("/AppTranslocation/")
+        if !translocated, fm.isWritableFile(atPath: bundle.deletingLastPathComponent().path) {
+            return bundle
+        }
+        let applications = URL(fileURLWithPath: "/Applications/VibeLight.app")
+        if fm.isWritableFile(atPath: "/Applications") { return applications }
+        return fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/VibeLight.app")
+    }
+
+    /// We can self-install whenever the destination's parent directory is
+    /// writable — which, thanks to the /Applications → ~/Applications fallback,
+    /// is effectively always true for a real install (dev builds excepted).
+    var canSelfInstall: Bool {
         #if DEBUG
         return false
         #else
-        return FileManager.default.isWritableFile(atPath: bundle.deletingLastPathComponent().path)
+        return FileManager.default.isWritableFile(atPath: installDestination.deletingLastPathComponent().path)
         #endif
     }
 
@@ -89,15 +108,16 @@ final class UpdateService {
 
     // MARK: - Download + install
 
+    /// "Update Now": download + verify the new build, then stop at
+    /// `.readyToInstall` so the user chooses when to restart.
     func downloadAndInstall() async {
-        // Reentrancy guard: a double-fire on "Update Now" must not start two
-        // downloads racing the same bundle. Set below before the first await.
+        // Reentrancy guard: a double-fire must not start two downloads.
         switch phase {
-        case .downloading, .installing: return
+        case .downloading, .installing, .readyToInstall: return
         default: break
         }
         guard let release = available else { return }
-        // No self-install (dev build / translocated): fall back to the browser.
+        // No self-install (dev build only, in practice): open the release page.
         guard canSelfInstall else {
             NSWorkspace.shared.open(release.releaseURL)
             return
@@ -107,11 +127,21 @@ final class UpdateService {
             let zipURL = try await Downloader.download(release.assetURL, expectedSize: release.assetSize) { [weak self] fraction in
                 if case .downloading = self?.phase { self?.phase = .downloading(fraction) }
             }
-            phase = .installing
-            let newApp = try Self.unpackAndValidate(zipURL: zipURL, expectedVersion: release.version)
-            try Self.stageRelaunch(replacing: Bundle.main.bundleURL, with: newApp)
-            // The relauncher waits for us to exit before swapping the bundle,
-            // so quit shortly after handing off.
+            phase = .installing  // "verifying"
+            stagedApp = try Self.unpackAndValidate(zipURL: zipURL, expectedVersion: release.version)
+            phase = .readyToInstall
+        } catch {
+            phase = .failed(Self.message(for: error))
+        }
+    }
+
+    /// "Restart Now": swap the staged bundle into place and relaunch it. The
+    /// relauncher waits for us to exit first, so we quit right after handing off.
+    func installStagedUpdate() {
+        guard let newApp = stagedApp else { return }
+        phase = .installing
+        do {
+            try Self.stageRelaunch(replacing: installDestination, with: newApp)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 NSApp.terminate(nil)
             }
@@ -251,10 +281,18 @@ final class UpdateService {
         if kill -0 "$OLD_PID" 2>/dev/null; then
           echo "app did not exit; aborting"; open "$DEST"; cleanup; exit 1
         fi
-        BAK="${DEST}.bak"
-        rm -rf "$BAK"
-        if ! mv "$DEST" "$BAK"; then echo "backup failed"; open "$DEST"; cleanup; exit 1; fi
-        rollback() { echo "rolling back"; rm -rf "$DEST"; mv "$BAK" "$DEST"; open "$DEST"; cleanup; exit 1; }
+        mkdir -p "$(dirname "$DEST")"
+        # Back up an existing install; a fresh install to /Applications has none.
+        BAK=""
+        if [ -e "$DEST" ]; then
+          BAK="${DEST}.bak"; rm -rf "$BAK"
+          if ! mv "$DEST" "$BAK"; then echo "backup failed"; open "$DEST"; cleanup; exit 1; fi
+        fi
+        rollback() {
+          echo "rolling back"; rm -rf "$DEST"
+          if [ -n "$BAK" ]; then mv "$BAK" "$DEST"; open "$DEST"; fi
+          cleanup; exit 1
+        }
         # Copy the new bundle in.
         if ! ditto "$NEW_APP" "$DEST"; then echo "ditto failed"; rollback; fi
         xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
@@ -263,7 +301,8 @@ final class UpdateService {
         if ! codesign --force --deep --sign - "$DEST"; then echo "re-sign failed"; rollback; fi
         if ! codesign --verify --strict "$DEST"; then echo "verify failed"; rollback; fi
         # Verified good: only now is it safe to drop the backup + source.
-        rm -rf "$BAK" "$NEW_APP"
+        [ -n "$BAK" ] && rm -rf "$BAK"
+        rm -rf "$NEW_APP"
         echo "installed; relaunching"
         open "$DEST" || { sleep 1; open "$DEST"; }
         cleanup

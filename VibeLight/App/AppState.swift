@@ -226,7 +226,8 @@ final class AppState {
     /// Settings "Check for Updates": if one's already found, jump to the card;
     /// otherwise run a visible check and surface the result.
     func checkForUpdates() {
-        if updateService.phase == .available {
+        // Already have an update found or staged → jump back to the card.
+        if updateService.phase == .available || updateService.phase == .readyToInstall {
             presentOverlay(.update)
             return
         }
@@ -645,8 +646,12 @@ final class AppState {
             switch event {
             case .select:
                 if focus.focusedItemID == "update:now" {
-                    startUpdate()  // card stays up, showing progress
-                    rebuildFocus() // download/install lock removes focus
+                    if updateService.phase == .readyToInstall {
+                        updateService.installStagedUpdate()  // Restart Now → swap + relaunch
+                    } else {
+                        startUpdate()                          // Update Now → download
+                    }
+                    rebuildFocus() // the download/install lock removes focus
                 } else {
                     dismissOverlay()  // Later
                 }
@@ -837,7 +842,8 @@ final class AppState {
         case .checking: "Checking…"
         case .available: "Update available →"
         case .downloading(let f): "Downloading \(Int(f * 100))%"
-        case .installing: "Installing…"
+        case .installing: "Verifying…"
+        case .readyToInstall: "Restart to update →"
         case .failed: "Check failed — try again"
         case .upToDate, .idle: "Up to date"
         }

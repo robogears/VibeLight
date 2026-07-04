@@ -46,9 +46,14 @@ struct UpdateCard: View {
         case .installing:
             VStack(spacing: 12) {
                 ProgressView().controlSize(.large).tint(Theme.accent)
-                Text("Installing — VibeLight will restart…")
+                Text("Verifying update…")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
+            }
+        case .readyToInstall:
+            VStack(spacing: 12) {
+                OverlayButton(id: "update:now", title: "Restart Now", symbol: "arrow.clockwise.circle.fill")
+                OverlayButton(id: "update:later", title: "Later", symbol: "clock")
             }
         case .failed(let message):
             VStack(spacing: 16) {
@@ -112,7 +117,9 @@ struct UpdateCard: View {
 
     private var title: String {
         switch service.phase {
-        case .installing: "Updating VibeLight"
+        case .installing: "Verifying Update"
+        case .readyToInstall:
+            if let v = service.available?.version { "v\(v) Ready to Install" } else { "Update Ready" }
         case .failed: "Update Failed"
         default:
             if let v = service.available?.version { "Update Available — v\(v)" }
@@ -123,6 +130,7 @@ struct UpdateCard: View {
     private var subtitle: String? {
         switch service.phase {
         case .downloading, .installing, .failed: nil
+        case .readyToInstall: "Downloaded and verified. Restart to finish updating."
         default: "You're on v\(service.currentVersion). A newer version is ready to install."
         }
     }

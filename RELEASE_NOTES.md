@@ -1,20 +1,23 @@
-# What's new in v0.1.3
+# What's new in v0.1.4
 
-## Update card shows what's new
-- When VibeLight offers an update, the card now previews the release's
-  **What's New** notes — so you can see what you're getting before you install.
+## The self-updater actually self-installs now
+- Fixed the updater showing **"Open Release Page"** instead of **"Update Now"**.
+  When macOS runs a freshly-downloaded app from a read-only quarantine location
+  (App Translocation), VibeLight now installs the update straight to
+  **/Applications** and relaunches from there — no manual re-download.
+- New two-step flow, exactly as it should be: **Update Now → download 0–100% →
+  Restart Now → relaunches into the new version.** You choose when it restarts.
 
-## Under the hood
-- First release delivered through the in-app self-updater — if you're on
-  v0.1.2, you should have been offered this update automatically. 🎉
+> Note: this fix lives *in* v0.1.4, so an older v0.1.2/v0.1.3 install still needs
+> one manual download to get here. From v0.1.4 onward, updates are one click.
 
 ---
 
 # Install / update
 
-- **Already on v0.1.2 or later?** Click **Update Now** when VibeLight offers it
-  (or Settings → About → Software Update). No download needed.
-- **Fresh install (macOS, Apple Silicon):** download `VibeLight-0.1.3-arm64.zip`,
+- **On v0.1.4 or later?** Click **Update Now** when offered (or Settings → About
+  → Software Update), then **Restart Now** when it finishes. No download needed.
+- **Fresh install (macOS, Apple Silicon):** download `VibeLight-0.1.4-arm64.zip`,
   unzip, and drag **VibeLight.app** to Applications. First launch on macOS 15+:
   right-click → Open, or approve it under **System Settings → Privacy & Security
   → Open Anyway** (the app is not notarized).
@@ -30,4 +33,4 @@
 
 ---
 
-**Full Changelog**: https://github.com/robogears/VibeLight/compare/v0.1.2...v0.1.3
+**Full Changelog**: https://github.com/robogears/VibeLight/compare/v0.1.3...v0.1.4
