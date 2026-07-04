@@ -63,6 +63,17 @@ final class AppState {
     /// screen short instead of one long scroll.
     var settingsTab: SettingsTab = .video
 
+    /// Which input device is driving right now. Controller/keyboard hides the
+    /// mouse cursor and disables hover-focus (so tiles scrolling under a parked
+    /// cursor can't steal focus); mouse use brings the cursor and hover back.
+    private(set) var inputMode: InputMode = .directed
+
+    /// Glyph family for on-screen hints: controller glyphs while a pad drives,
+    /// keyboard/desk glyphs when the mouse took over.
+    var effectiveGlyphStyle: ControllerGlyphStyle {
+        inputMode == .pointer ? .keyboard : controller.glyphStyle
+    }
+
     private static let settingsKey = "vibelight.streamSettings"
 
     // MARK: - Boot
@@ -113,6 +124,19 @@ final class AppState {
     private func wireCallbacks() {
         controller.onEvent = { [weak self] event in
             self?.route(event)
+        }
+        controller.onInputActivity = { [weak self] mode in
+            guard let self else { return }
+            if mode == .directed {
+                // Console mode: cursor vanishes until the mouse moves again
+                // (the OS auto-reveals it on movement — no unhide bookkeeping).
+                NSCursor.setHiddenUntilMouseMoves(true)
+            }
+            if inputMode != mode { inputMode = mode }
+        }
+        controller.quitAppChordEnabled = { [weak self] in
+            guard let self else { return false }
+            return screen == .home && overlay == nil
         }
         focus.onFocusChange = { [weak self] _, new in
             guard new != nil else { return }

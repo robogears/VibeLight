@@ -43,6 +43,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         win.collectionBehavior = [.fullScreenNone]
         win.contentView = NSHostingView(rootView: content)
         win.delegate = self
+        // Input-mode switching needs mouseMoved events (they're off by default).
+        win.acceptsMouseMovedEvents = true
         win.setFrame(screen.frame, display: true)
         win.makeKeyAndOrderFront(nil)
         window = win
@@ -50,6 +52,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         enterImmersiveChrome()
         preventDisplaySleep()
         NSApp.activate()
+        // Big-picture opens in console mode: no cursor until the mouse moves.
+        NSCursor.setHiddenUntilMouseMoves(true)
     }
 
     /// hideMenuBar REQUIRES hideDock or AppKit throws NSInvalidArgumentException.

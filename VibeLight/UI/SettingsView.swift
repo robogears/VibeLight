@@ -95,7 +95,7 @@ private struct SettingsTabBar: View {
     }
 
     private func bumper(_ event: NavigationEvent) -> some View {
-        let glyph = InputGlyphs.glyph(for: event, style: state.controller.glyphStyle)
+        let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
         return Image(systemName: glyph.symbolName)
             .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(Theme.textPrimary.opacity(0.85))
@@ -144,6 +144,6 @@ private struct SettingsRowView: View {
         .scaleEffect(isFocused ? 1.015 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: state.value(for: row))
-        .onHover { if $0 { state.focus.focus(itemID: row.focusID) } }
+        .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: row.focusID) } }
     }
 }

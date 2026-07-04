@@ -161,7 +161,7 @@ private struct CheatSheetCard: View {
 
     @ViewBuilder
     private func row(_ event: NavigationEvent, _ text: String) -> some View {
-        let glyph = InputGlyphs.glyph(for: event, style: state.controller.glyphStyle)
+        let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
         GridRow {
             HStack(spacing: 6) {
                 Image(systemName: glyph.symbolName)
@@ -222,7 +222,7 @@ struct OverlayButton: View {
         }
         .scaleEffect(isFocused ? 1.04 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
-        .onHover { if $0 { state.focus.focus(itemID: id) } }
+        .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) } }
         .onTapGesture { state.route(.select) }
     }
 }

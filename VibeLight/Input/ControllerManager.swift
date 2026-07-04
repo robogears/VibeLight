@@ -44,6 +44,23 @@ final class ControllerManager {
     /// swallowed by the navigation key monitor.
     var keyboardCaptureEnabled = true
 
+    /// Live press-and-hold progress for the quit chords, published for the
+    /// on-screen ring. Nil when no chord is armed. Appears only after a short
+    /// grace period so quick taps never flash the ring.
+    private(set) var holdProgress: HoldProgress?
+
+    /// Context gate for the hold-B quit-app chord: AppState returns whether
+    /// the chord is meaningful right now (home screen, no overlay). When it
+    /// returns false the chord never arms and B is a plain Back button — a
+    /// hold that visibly fills a ring and then does nothing is worse than
+    /// no ring at all.
+    @ObservationIgnored var quitAppChordEnabled: (@MainActor () -> Bool)?
+
+    /// Fired on every input event with the modality that produced it, so the
+    /// UI can hide the cursor on controller/keyboard use and swap to pointer
+    /// UI on mouse use.
+    @ObservationIgnored var onInputActivity: ((InputMode) -> Void)?
+
     // MARK: - Tuning (values from docs/research/swiftui-bigpicture.md)
 
     private enum Tuning {
@@ -82,6 +99,7 @@ final class ControllerManager {
 
     @ObservationIgnored private var hapticEngine: CHHapticEngine?
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var mouseMonitor: Any?
     @ObservationIgnored private var observerTokens: [NSObjectProtocol] = []
 
     // MARK: - Lifecycle
@@ -93,7 +111,16 @@ final class ControllerManager {
     init() {
         installNotificationObservers()
         installKeyboardMonitor()
+        installMouseMonitor()
         refreshControllers()
+    }
+
+    /// Single funnel for semantic events: every controller/keyboard event is
+    /// directed-modality input activity in addition to its meaning, so the
+    /// activity callback can never drift out of sync with event delivery.
+    private func emit(_ event: NavigationEvent) {
+        onInputActivity?(.directed)
+        onEvent?(event)
     }
 
     /// Tears down observers, the key monitor, timers, and haptics.
@@ -105,6 +132,10 @@ final class ControllerManager {
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
+        }
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+            self.mouseMonitor = nil
         }
         resetTransientInputState()
         hapticEngine?.stop(completionHandler: nil)
@@ -219,7 +250,7 @@ final class ControllerManager {
         button.pressedChangedHandler = { [weak self] _, _, pressed in
             MainActor.assumeIsolated {
                 guard pressed else { return }
-                self?.onEvent?(event)
+                self?.emit(event)
             }
         }
     }
@@ -251,14 +282,47 @@ final class ControllerManager {
         guard let direction else { return }
 
         // Move immediately on engage, then auto-repeat while held.
-        onEvent?(.move(direction))
+        emit(.move(direction))
         repeatTask = Task { [weak self] in
             try? await Task.sleep(for: Tuning.initialRepeatDelay)
             while !Task.isCancelled {
                 guard let self, let held = self.heldDirection else { return }
-                self.onEvent?(.move(held))
+                self.emit(.move(held))
                 try? await Task.sleep(for: Tuning.repeatInterval)
             }
+        }
+    }
+
+    // MARK: - Hold chords (shared runner)
+
+    /// Drives one press-and-hold chord: waits a short grace (so quick taps
+    /// never flash UI), then publishes ring progress at ~30 Hz until the
+    /// threshold, fires the event exactly once, and clears the ring. Release
+    /// or reset cancels the task; the defer clears any leftover ring state.
+    private func runHoldChord(
+        kind: HoldProgress.Kind, duration: Duration, event: NavigationEvent,
+        stillHeld: @escaping @MainActor () -> Bool,
+        markFired: @escaping @MainActor () -> Void
+    ) async {
+        let clock = ContinuousClock()
+        let start = clock.now
+        let grace: Duration = .milliseconds(250)
+        defer {
+            if holdProgress?.kind == kind { holdProgress = nil }
+        }
+        while !Task.isCancelled && stillHeld() {
+            let elapsed = start.duration(to: clock.now)
+            if elapsed >= duration {
+                markFired()
+                holdProgress = nil
+                emit(event)
+                return
+            }
+            if elapsed >= grace {
+                let fraction = (elapsed - grace) / (duration - grace)
+                holdProgress = HoldProgress(kind: kind, fraction: min(max(fraction, 0), 1))
+            }
+            try? await Task.sleep(for: .milliseconds(33))
         }
     }
 
@@ -270,12 +334,12 @@ final class ControllerManager {
             menuLongPressFired = false
             menuHoldTask?.cancel()
             menuHoldTask = Task { [weak self] in
-                try? await Task.sleep(for: Tuning.quitChordHold)
-                guard !Task.isCancelled, let self, self.menuIsDown, !self.menuLongPressFired else { return }
-                // Fire exactly once at the threshold, while still held; the
-                // flag suppresses the short-press action on release.
-                self.menuLongPressFired = true
-                self.onEvent?(.quitChord)
+                guard let self else { return }
+                await self.runHoldChord(
+                    kind: .quitGame, duration: Tuning.quitChordHold, event: .quitChord,
+                    stillHeld: { self.menuIsDown && !self.menuLongPressFired },
+                    markFired: { self.menuLongPressFired = true }
+                )
             }
         } else {
             // `wasDown` guards against a phantom release right after the
@@ -287,7 +351,7 @@ final class ControllerManager {
             menuHoldTask?.cancel()
             menuHoldTask = nil
             if wasDown && !firedLongPress {
-                onEvent?(.settings)
+                emit(.settings)
             }
         }
     }
@@ -299,13 +363,16 @@ final class ControllerManager {
             backIsDown = true
             backLongPressFired = false
             backHoldTask?.cancel()
+            // Only arm the chord where quitting the app is meaningful (home,
+            // no overlay). Elsewhere B is a plain Back button.
+            guard quitAppChordEnabled?() ?? false else { return }
             backHoldTask = Task { [weak self] in
-                try? await Task.sleep(for: Tuning.quitAppHold)
-                guard !Task.isCancelled, let self, self.backIsDown, !self.backLongPressFired else { return }
-                // Fire once at the threshold; the flag suppresses the tap's
-                // `.back` on release. AppState only acts on `.quitApp` from home.
-                self.backLongPressFired = true
-                self.onEvent?(.quitApp)
+                guard let self else { return }
+                await self.runHoldChord(
+                    kind: .quitApp, duration: Tuning.quitAppHold, event: .quitApp,
+                    stillHeld: { self.backIsDown && !self.backLongPressFired },
+                    markFired: { self.backLongPressFired = true }
+                )
             }
         } else {
             let wasDown = backIsDown
@@ -315,7 +382,7 @@ final class ControllerManager {
             backHoldTask?.cancel()
             backHoldTask = nil
             if wasDown && !firedLongPress {
-                onEvent?(.back)
+                emit(.back)
             }
         }
     }
@@ -339,6 +406,7 @@ final class ControllerManager {
         menuLongPressFired = false
         backIsDown = false
         backLongPressFired = false
+        holdProgress = nil
     }
 
     // MARK: - Haptics
@@ -381,6 +449,21 @@ final class ControllerManager {
 
     // MARK: - Keyboard
 
+    /// Pointer activity flips the UI into mouse mode. Observe-only local
+    /// monitor — every event passes through untouched. (mouseMoved events
+    /// require the key window to opt in via acceptsMouseMovedEvents.)
+    private func installMouseMonitor() {
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown,
+                       .otherMouseDown, .scrollWheel, .leftMouseDragged]
+        ) { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.onInputActivity?(.pointer)
+            }
+            return event
+        }
+    }
+
     /// Local (own-app-only, no Accessibility permission) keyDown monitor so
     /// the keyboard drives the exact same NavigationEvent stream as a pad.
     private func installKeyboardMonitor() {
@@ -411,11 +494,11 @@ final class ControllerManager {
         // (plain Cmd-Q quits VibeLight itself via the app menu).
         if flags.contains(.command) {
             if event.charactersIgnoringModifiers == "," {
-                onEvent?(.settings)
+                emit(.settings)
                 return nil
             }
             if flags.contains(.shift), event.charactersIgnoringModifiers?.lowercased() == "q" {
-                onEvent?(.quitChord)
+                emit(.quitChord)
                 return nil
             }
             return event
@@ -440,11 +523,11 @@ final class ControllerManager {
         // must not machine-gun while held.
         if event.isARepeat {
             if case .move = navEvent {
-                onEvent?(navEvent)
+                emit(navEvent)
             }
             return nil
         }
-        onEvent?(navEvent)
+        emit(navEvent)
         return nil
     }
 

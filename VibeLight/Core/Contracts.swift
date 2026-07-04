@@ -119,6 +119,20 @@ enum ControllerGlyphStyle: String, Sendable {
     case xbox, playStation, nintendo, generic, keyboard
 }
 
+/// Which input device the user is currently driving. Controller/keyboard is
+/// `.directed` (hide the mouse cursor, focus-ring UI); the mouse is `.pointer`
+/// (show the cursor, hover UI). The UI swaps live on the last input used.
+enum InputMode: Sendable, Equatable {
+    case directed, pointer
+}
+
+/// Progress of a press-and-hold chord, for the on-screen "keep holding" ring.
+struct HoldProgress: Equatable, Sendable {
+    enum Kind: Sendable, Equatable { case quitApp, quitGame }
+    var kind: Kind
+    var fraction: Double   // 0…1
+}
+
 // MARK: - Artwork
 
 /// Resolved artwork for an app tile.

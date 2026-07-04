@@ -8,7 +8,7 @@ struct HintBarView: View {
     var body: some View {
         HStack(spacing: 26) {
             ForEach(hints, id: \.0) { _, event, label in
-                let glyph = InputGlyphs.glyph(for: event, style: state.controller.glyphStyle)
+                let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
                 HStack(spacing: 7) {
                     Image(systemName: glyph.symbolName)
                         .font(.system(size: 17, weight: .semibold))

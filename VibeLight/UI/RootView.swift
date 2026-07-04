@@ -21,9 +21,15 @@ struct RootView: View {
                 OverlayHost(overlay: overlay)
                     .transition(.opacity)
             }
+
+            if let hold = state.controller.holdProgress {
+                HoldProgressRing(progress: hold)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
         }
         .animation(Theme.focusSpring, value: state.screen)
         .animation(.easeOut(duration: 0.18), value: state.overlay)
+        .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
         .ignoresSafeArea()
     }
 }

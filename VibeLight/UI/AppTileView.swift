@@ -38,7 +38,11 @@ struct AppTileView: View {
         .scaleEffect(isFocused ? 1.11 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .onHover { hovering in
-            if hovering { state.focus.focus(itemID: focusID) }
+            // Hover only steals focus in pointer mode — otherwise tiles
+            // scrolling under a parked cursor would fight the controller.
+            if hovering && state.inputMode == .pointer {
+                state.focus.focus(itemID: focusID)
+            }
         }
         .onTapGesture { state.route(.select) }
         .task(id: taskKey) {
