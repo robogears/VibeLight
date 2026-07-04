@@ -61,13 +61,53 @@ struct UpdateCard: View {
                 OverlayButton(id: "update:later", title: "Later", symbol: "clock")
             }
         default:  // .available
-            VStack(spacing: 12) {
-                OverlayButton(id: "update:now",
-                              title: service.canSelfInstall ? "Update Now" : "Open Release Page",
-                              symbol: service.canSelfInstall ? "arrow.down.circle.fill" : "safari")
-                OverlayButton(id: "update:later", title: "Later", symbol: "clock")
+            VStack(spacing: 16) {
+                if let notes = cleanedNotes {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("What's New")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .tracking(1.2)
+                            .foregroundStyle(Theme.accent)
+                        ScrollView {
+                            Text(notes)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 150)
+                    }
+                    .padding(14)
+                    .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                }
+                VStack(spacing: 12) {
+                    OverlayButton(id: "update:now",
+                                  title: service.canSelfInstall ? "Update Now" : "Open Release Page",
+                                  symbol: service.canSelfInstall ? "arrow.down.circle.fill" : "safari")
+                    OverlayButton(id: "update:later", title: "Later", symbol: "clock")
+                }
             }
         }
+    }
+
+    /// The release body, lightly de-marked for plain display (drop heading
+    /// hashes, bullet stars, and the redundant leading "What's new" title).
+    private var cleanedNotes: String? {
+        guard let raw = service.available?.notes, !raw.isEmpty else { return nil }
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            var s = String(line)
+            if s.hasPrefix("#") { s = String(s.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces) }
+            if s.hasPrefix("- ") { s = "•\(s.dropFirst())" }
+            return s.replacingOccurrences(of: "**", with: "")
+        }
+        // Stop at the install/changelog boilerplate.
+        var kept: [String] = []
+        for line in lines {
+            if line.hasPrefix("Install / update") || line.hasPrefix("Full Changelog")
+                || line.hasPrefix("Requirements") { break }
+            kept.append(line)
+        }
+        let text = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private var title: String {
