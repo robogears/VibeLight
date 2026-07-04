@@ -72,15 +72,19 @@ struct HintBarView: View {
                     ("leaveleft", .move(.left), "Back to Games"),
                 ]
             }
-            return [
+            var home: [(String, NavigationEvent, String?)] = [
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
                 ("quitgame", .quitChord, nil),
                 ("quitapp", .quitApp, nil),
-            ] + (state.presets.isEmpty ? [] : [("presets", .move(.right), "Presets")])
+            ]
+            if !state.presets.isEmpty {
+                home.append(("presets", .move(.right), "Presets"))
+            }
+            return home
         case .settings:
-            [
+            return [
                 ("adjust", .move(.right), "Adjust"),
                 ("tab", .nextSection, "Switch Tab"),
                 ("back", .back, "Done"),
