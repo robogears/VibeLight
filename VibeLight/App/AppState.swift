@@ -14,6 +14,7 @@ enum Overlay: Equatable {
     case sessionEnded(StreamApp)    // stream closed — resume / quit / home
     case error(String)
     case cheatSheet                 // keybind reference
+    case update                     // a newer version is available
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -29,6 +30,7 @@ final class AppState {
     let session: StreamSessionManager
     let focus = FocusEngine()
     let controller = ControllerManager()
+    let updateService = UpdateService()
     @ObservationIgnored weak var windowCoordinator: WindowCoordinator?
 
     // MARK: Library state
@@ -119,6 +121,7 @@ final class AppState {
         rebuildFocus()
         focus.focusFirst()
         startRefreshLoop()
+        checkForUpdatesOnLaunch()
     }
 
     private func wireCallbacks() {
@@ -187,6 +190,41 @@ final class AppState {
                 try? await Task.sleep(for: .seconds(12))
             }
         }
+    }
+
+    /// Silent update check a couple seconds after launch; if a newer version is
+    /// published and nothing else is on screen, greet the user with the card.
+    private func checkForUpdatesOnLaunch() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self else { return }
+            await updateService.check(silent: true)
+            if updateService.phase == .available, overlay == nil, screen == .home {
+                presentOverlay(.update)
+            }
+        }
+    }
+
+    /// Settings "Check for Updates": if one's already found, jump to the card;
+    /// otherwise run a visible check and surface the result.
+    func checkForUpdates() {
+        if updateService.phase == .available {
+            presentOverlay(.update)
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await updateService.check(silent: false)
+            // Re-check after the await: don't stomp a session HUD/error that
+            // appeared while we were checking, or fire mid-stream.
+            if updateService.phase == .available, overlay == nil, session.phase == .idle {
+                presentOverlay(.update)
+            }
+        }
+    }
+
+    func startUpdate() {
+        Task { await updateService.downloadAndInstall() }
     }
 
     func refreshSelectedHost() async {
@@ -259,6 +297,15 @@ final class AppState {
                                      itemIDs: ["ended:resume", "ended:quit", "ended:home"])]
         case .error:
             sections = [FocusSection(id: "error", kind: .vList, itemIDs: ["error:ok"])]
+        case .update:
+            // Buttons are only focusable when there's a choice to make.
+            switch updateService.phase {
+            case .downloading, .installing:
+                return
+            default:
+                sections = [FocusSection(id: "update", kind: .vList,
+                                         itemIDs: ["update:now", "update:later"])]
+            }
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -377,7 +424,10 @@ final class AppState {
         case .nextSection:
             switchSettingsTab(forward: true)
         case .select:
-            break // rows adjust with left/right; select is a no-op for now
+            // Action rows respond to select; value rows adjust with left/right.
+            if focus.focusedItemID == SettingsRow.checkUpdates.focusID {
+                checkForUpdates()
+            }
         default:
             _ = focus.handle(event)
         }
@@ -424,6 +474,27 @@ final class AppState {
                 }
             case .back:
                 session.acknowledgeEnd()
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .update:
+            // Input is locked during the download/install itself.
+            switch updateService.phase {
+            case .downloading, .installing:
+                return
+            default:
+                break
+            }
+            switch event {
+            case .select:
+                if focus.focusedItemID == "update:now" {
+                    startUpdate()  // card stays up, showing progress
+                    rebuildFocus() // download/install lock removes focus
+                } else {
+                    dismissOverlay()  // Later
+                }
+            case .back:
                 dismissOverlay()
             default:
                 _ = focus.handle(event)
@@ -485,8 +556,14 @@ final class AppState {
 
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, audio, decoder, vsync, framePacing, gameOpt
+        case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
+
+        /// Action/readonly rows don't adjust with left/right and render without
+        /// value chevrons (checkUpdates responds to select instead).
+        var isAction: Bool { self == .checkUpdates }
+        var isReadonly: Bool { self == .appVersion }
 
         var title: String {
             switch self {
@@ -500,22 +577,26 @@ final class AppState {
             case .vsync: "V-Sync"
             case .framePacing: "Frame Pacing"
             case .gameOpt: "Game Optimizations"
+            case .appVersion: "Version"
+            case .checkUpdates: "Software Update"
             }
         }
     }
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, advanced
+        case video, audio, advanced, about
         var title: String {
             switch self {
-            case .video: "Video"; case .audio: "Audio"; case .advanced: "Advanced"
+            case .video: "Video"; case .audio: "Audio"
+            case .advanced: "Advanced"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
             switch self {
             case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder]
             case .audio: [.audio]
+            case .about: [.appVersion, .checkUpdates]
             case .advanced: [.vsync, .framePacing, .gameOpt]
             }
         }
@@ -547,6 +628,20 @@ final class AppState {
         case .vsync: settings.vsync ? "On" : "Off"
         case .framePacing: settings.framePacing ? "On" : "Off"
         case .gameOpt: settings.gameOptimizations ? "On" : "Off"
+        case .appVersion: "v\(updateService.currentVersion)"
+        case .checkUpdates: updateStatusText
+        }
+    }
+
+    /// Right-hand status for the "Software Update" row.
+    var updateStatusText: String {
+        switch updateService.phase {
+        case .checking: "Checking…"
+        case .available: "Update available →"
+        case .downloading(let f): "Downloading \(Int(f * 100))%"
+        case .installing: "Installing…"
+        case .failed: "Check failed — try again"
+        case .upToDate, .idle: "Up to date"
         }
     }
 
@@ -580,6 +675,7 @@ final class AppState {
         case .vsync: settings.vsync.toggle()
         case .framePacing: settings.framePacing.toggle()
         case .gameOpt: settings.gameOptimizations.toggle()
+        case .appVersion, .checkUpdates: break  // not value rows
         }
     }
 

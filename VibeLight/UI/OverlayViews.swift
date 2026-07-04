@@ -22,6 +22,8 @@ struct OverlayHost: View {
                 ErrorCard(message: message)
             case .cheatSheet:
                 CheatSheetCard()
+            case .update:
+                UpdateCard()
             }
         }
     }

@@ -117,20 +117,24 @@ private struct SettingsRowView: View {
             Spacer()
 
             HStack(spacing: 16) {
+                // Adjustable rows get ◀ ▶; action/readonly rows don't.
+                let showChevrons = !(row.isAction || row.isReadonly)
                 Image(systemName: "chevron.left")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(isFocused ? .white.opacity(0.8) : .clear)
+                    .foregroundStyle(showChevrons && isFocused ? .white.opacity(0.8) : .clear)
                 Text(state.value(for: row))
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .foregroundStyle(isFocused ? .white : Theme.accent)
                     .monospacedDigit()
                     .frame(minWidth: 120, alignment: .center)
                     .contentTransition(.numericText())
-                Image(systemName: "chevron.right")
+                Image(systemName: row.isAction ? "chevron.forward.circle.fill" : "chevron.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(isFocused ? .white.opacity(0.8) : .clear)
+                    .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
+                                     : (showChevrons && isFocused ? .white.opacity(0.8) : .clear))
             }
         }
+        .contentShape(Rectangle())
         .padding(.horizontal, 28)
         .padding(.vertical, 20)
         .background(
@@ -145,5 +149,11 @@ private struct SettingsRowView: View {
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: state.value(for: row))
         .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: row.focusID) } }
+        .onTapGesture {
+            // Clicking an action row (Software Update) triggers it; value rows
+            // just take focus so the mouse and controller agree.
+            state.focus.focus(itemID: row.focusID)
+            if row.isAction { state.checkForUpdates() }
+        }
     }
 }
