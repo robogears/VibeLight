@@ -62,6 +62,17 @@ final class ClientIdentityProvider: @unchecked Sendable {
         return secIdentity
     }
 
+    /// The client's private key, for signing during pairing.
+    func privateKey() throws -> SecKey {
+        var key: SecKey?
+        let status = SecIdentityCopyPrivateKey(try secIdentity(), &key)
+        guard status == errSecSuccess, let key else { throw IdentityError.importFailed(status) }
+        return key
+    }
+
+    /// The client certificate PEM (for the pairing handshake wire format).
+    var certificatePEM: Data { identity.certificatePEM }
+
     // MARK: - P12 cache
 
     /// Passphrase derived from the key material itself — stable across launches,

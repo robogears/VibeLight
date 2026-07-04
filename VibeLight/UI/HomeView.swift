@@ -66,6 +66,20 @@ private struct HeaderBar: View {
 
             if let host = state.selectedHost {
                 HostChip(host: host)
+            } else {
+                // Fresh user, no computers yet — the way in to add one.
+                Button { state.openHostMenu() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Add Computer")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(Theme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
 
             TimelineView(.everyMinute) { context in

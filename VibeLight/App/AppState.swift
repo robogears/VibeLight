@@ -29,6 +29,8 @@ final class AppState {
 
     @ObservationIgnored let api: HostAPIClient
     @ObservationIgnored let artwork: ArtworkStore
+    @ObservationIgnored let identityProvider: ClientIdentityProvider
+    @ObservationIgnored let clientUniqueID: String
     let session: StreamSessionManager
     let focus = FocusEngine()
     let controller = ControllerManager()
@@ -54,12 +56,27 @@ final class AppState {
     var addHostError: String?
 
     /// A computer the user added by IP (persisted separately from Moonlight's
-    /// read-only plist).
+    /// read-only plist). `serverCert` is filled in once we pair with it.
     struct AddedHost: Codable, Equatable, Sendable {
         var name: String
         var ip: String
         var uuid: String?
+        var serverCert: Data?
     }
+
+    /// Live pairing state for the computer manager.
+    struct PairingState: Equatable, Sendable {
+        var hostID: String
+        var hostName: String
+        var pin: String
+        enum Status: Equatable, Sendable {
+            case waiting, success, wrongPIN, unreachable, failed(String)
+        }
+        var status: Status
+        var webUIURL: String
+    }
+    var pairing: PairingState?
+    @ObservationIgnored private var pairingTask: Task<Void, Never>?
 
     var selectedHost: StreamHost? {
         hosts.first { $0.id == selectedHostID }
@@ -101,10 +118,12 @@ final class AppState {
         let importer = MoonlightConfigImporter()
         let imported = try? importer.importAll()
 
-        let identity = imported?.identity ?? ClientIdentity(
-            certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: "0123456789ABCDEF"
-        )
+        // Reuse Moonlight's identity if present; otherwise generate our own so
+        // a user without Moonlight can still pair hosts in-app.
+        let identity = IdentityStore.resolve(moonlightIdentity: imported?.identity)
         let identityProvider = ClientIdentityProvider(identity: identity)
+        self.identityProvider = identityProvider
+        self.clientUniqueID = identity.uniqueID
         let client = HostAPIClient(identityProvider: identityProvider)
         api = client
         artwork = ArtworkStore(api: client)
@@ -130,10 +149,8 @@ final class AppState {
         rebuildHosts()
         selectedHostID = hosts.first?.id
         apps = displayApps(from: selectedHost?.apps ?? [])
-        if imported == nil {
-            hostError = "Moonlight isn't set up on this Mac. Install and pair Moonlight once, then relaunch VibeLight."
-        } else if hosts.isEmpty {
-            hostError = "No paired hosts found in Moonlight. Pair a host in Moonlight once, then relaunch VibeLight."
+        if hosts.isEmpty {
+            hostError = "No computers yet — open the computer menu (top-right) to add one by IP."
         }
 
         wireCallbacks()
@@ -321,7 +338,56 @@ final class AppState {
                    localAddress: added.ip, localPort: 47989,
                    remoteAddress: nil, remotePort: 47989,
                    manualAddress: added.ip, manualPort: 47989,
-                   macAddress: nil, serverCertPEM: nil, apps: [])
+                   macAddress: nil, serverCertPEM: added.serverCert, apps: [])
+    }
+
+    // MARK: - Pairing
+
+    /// Whether this host still needs pairing (no pinned server cert yet).
+    func needsPairing(_ host: StreamHost) -> Bool { !host.isPaired }
+
+    func beginPairing(_ host: StreamHost) {
+        guard let ip = host.manualAddress ?? host.localAddress ?? host.candidateAddresses.first?.host else { return }
+        pairingTask?.cancel()
+        let pin = HostPairing.generatePIN()
+        pairing = PairingState(hostID: host.id, hostName: host.name, pin: pin,
+                               status: .waiting, webUIURL: "https://\(ip):47990")
+        rebuildFocus()
+        pairingTask = Task { [weak self] in
+            guard let self else { return }
+            let manager = HostPairing(identityProvider: identityProvider, uniqueID: clientUniqueID)
+            let result = await manager.pair(address: ip, pin: pin)
+            guard !Task.isCancelled, pairing?.hostID == host.id else { return }
+            switch result {
+            case .paired(let certPEM):
+                savePairedHost(ip: ip, serverCertPEM: certPEM)
+                pairing?.status = .success
+            case .wrongPIN: pairing?.status = .wrongPIN
+            case .unreachable: pairing?.status = .unreachable
+            case .alreadyInProgress:
+                pairing?.status = .failed("The host is already handling a pairing request — wait a moment and retry.")
+            case .failed(let m): pairing?.status = .failed(m)
+            }
+            rebuildFocus()
+        }
+    }
+
+    func cancelPairing() {
+        pairingTask?.cancel()
+        pairingTask = nil
+        pairing = nil
+        rebuildFocus()
+        if focus.focusedItemID == nil { focus.focusFirst() }
+    }
+
+    private func savePairedHost(ip: String, serverCertPEM: Data) {
+        guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
+        addedHosts[i].serverCert = serverCertPEM
+        persistAddedHosts()
+        rebuildHosts()
+        if let host = hosts.first(where: { $0.manualAddress == ip }) {
+            selectHost(host.id)  // re-probe now that it's paired
+        }
     }
 
     /// Whether a host was added by the user (removable) vs imported from Moonlight.
@@ -489,9 +555,19 @@ final class AppState {
                                          itemIDs: ["update:now", "update:later"])]
             }
         case .hosts:
-            var ids = hosts.map { "hostmenu:\($0.id)" }
-            if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
-            sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
+            if let pairing {
+                let ids: [String]
+                switch pairing.status {
+                case .waiting: ids = ["pair:cancel"]
+                case .success: ids = ["pair:done"]
+                default: ids = ["pair:retry", "pair:cancel"]
+                }
+                sections = [FocusSection(id: "pair", kind: .vList, itemIDs: ids)]
+            } else {
+                var ids = hosts.map { "hostmenu:\($0.id)" }
+                if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
+                sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
+            }
         case .relocate:
             sections = [FocusSection(id: "relocate", kind: .vList,
                                      itemIDs: ["relocate:move", "relocate:later"])]
@@ -699,13 +775,32 @@ final class AppState {
                 _ = focus.handle(event)
             }
         case .hosts:
+            if pairing != nil {
+                switch event {
+                case .select:
+                    switch focus.focusedItemID {
+                    case "pair:cancel": cancelPairing()
+                    case "pair:done": pairing = nil; dismissOverlay()
+                    case "pair:retry":
+                        if let h = hosts.first(where: { $0.id == pairing?.hostID }) { beginPairing(h) }
+                    default: break
+                    }
+                case .back: cancelPairing()
+                default: _ = focus.handle(event)
+                }
+                return
+            }
             switch event {
             case .select:
                 if focus.focusedItemID == "hostmenu:add" {
                     addHost()
                 } else if let id = focus.focusedItemID, id.hasPrefix("hostmenu:") {
-                    selectHost(String(id.dropFirst("hostmenu:".count)))
-                    dismissOverlay()
+                    let hostID = String(id.dropFirst("hostmenu:".count))
+                    if let host = hosts.first(where: { $0.id == hostID }) {
+                        // Unpaired → start pairing; paired → switch to it.
+                        if needsPairing(host) { beginPairing(host) }
+                        else { selectHost(hostID); dismissOverlay() }
+                    }
                 }
             case .back:
                 dismissOverlay()
@@ -732,6 +827,7 @@ final class AppState {
     }
 
     private func dismissOverlay() {
+        pairingTask?.cancel(); pairingTask = nil; pairing = nil
         overlay = nil
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
