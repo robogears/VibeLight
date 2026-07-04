@@ -9,10 +9,19 @@ gorgeous shell that drives the proven moonlight-qt streaming engine underneath.
 ```bash
 xcodegen generate            # project.yml is the source of truth (never edit pbxproj)
 xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Debug build
+./scripts/install-app.sh    # Release build → /Applications + embeds the helper
 ```
 
 Swift 6 strict concurrency is ON. macOS 15+ deployment target. No sandbox
-(we exec Moonlight's binary and read its plist).
+(we exec the stream helper and read Moonlight's plist).
+
+**Streaming helper**: our moonlight-qt fork at `~/Documents/vibelight-moonlight-helper`
+(chromeless, headless `@VL` protocol, LSUIElement agent — see its FORK-CHANGES.md).
+Build it with `export PATH="$(brew --prefix qt)/bin:$PATH" && qmake moonlight-qt.pro
+&& make release`. `scripts/embed-helper.sh` macdeployqt's a copy into
+`VibeLight.app/Contents/Helpers/StreamHelper.app` (relocatable, ad-hoc signed);
+`resolveStreamBinary()` prefers embedded → fork dev build → stock Moonlight.
+Notarization needs a paid Developer ID (not configured); GPL fork = never MAS.
 
 ## Architecture (decided after deep research — see docs/research/)
 

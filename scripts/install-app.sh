@@ -27,4 +27,10 @@ fi
 find "$HOME/Library/Developer/Xcode/DerivedData" -name 'VibeLight.app' -path '*Products*' \
     -exec rm -rf {} + 2>/dev/null || true
 
+# Embed the chromeless streaming helper (skipped with a warning if the fork
+# isn't built — VibeLight then falls back to the dev build or stock Moonlight).
+if ! "$(dirname "$0")/embed-helper.sh" "$DEST"; then
+    echo "⚠️  Helper not embedded — VibeLight will use the dev-build/stock fallback."
+fi
+
 echo "✅ Installed: $DEST"
