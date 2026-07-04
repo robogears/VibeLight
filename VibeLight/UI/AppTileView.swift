@@ -9,7 +9,8 @@ struct AppTileView: View {
     @State private var artwork: TileArtwork = .pending
 
     private var focusID: String { "app:\(state.appKey(app))" }
-    private var isFocused: Bool { state.focus.focusedItemID == focusID }
+    // Not "focused" while the preset rail owns focus — avoids two highlights.
+    private var isFocused: Bool { state.focus.focusedItemID == focusID && !state.isPresetRailActive }
 
     var body: some View {
         VStack(spacing: 14) {

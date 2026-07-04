@@ -17,6 +17,7 @@ enum Overlay: Equatable {
     case update                     // a newer version is available
     case hosts                      // computer list + add-by-IP
     case relocate                   // offer to move into /Applications
+    case customResolution           // type an arbitrary WxH
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -99,6 +100,16 @@ final class AppState {
     /// screen short instead of one long scroll.
     var settingsTab: SettingsTab = .video
 
+    // MARK: Presets
+
+    private(set) var presets: [StreamPreset] = []
+    private(set) var activePresetID: String?
+    /// Non-nil when focus is on the home-screen preset rail (managed outside the
+    /// FocusEngine so it uses left/right to enter/leave the app shelf).
+    var focusedPresetID: String?
+    private static let presetsKey = "vibelight.presets"
+    private static let activePresetKey = "vibelight.activePreset"
+
     /// Which input device is driving right now. Controller/keyboard hides the
     /// mouse cursor and disables hover-focus (so tiles scrolling under a parked
     /// cursor can't steal focus); mouse use brings the cursor and hover back.
@@ -153,11 +164,83 @@ final class AppState {
             hostError = "No computers yet — open the computer menu (top-right) to add one by IP."
         }
 
+        presets = Self.loadPresets()
+        activePresetID = UserDefaults.standard.string(forKey: Self.activePresetKey)
+
         wireCallbacks()
         rebuildFocus()
         focus.focusFirst()
         startRefreshLoop()
         runStartupChecks()
+    }
+
+    // MARK: - Presets
+
+    private static func loadPresets() -> [StreamPreset] {
+        guard let data = UserDefaults.standard.data(forKey: presetsKey),
+              let arr = try? JSONDecoder().decode([StreamPreset].self, from: data) else { return [] }
+        return arr
+    }
+
+    private func persistPresets() {
+        if let data = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(data, forKey: Self.presetsKey)
+        }
+        UserDefaults.standard.set(activePresetID, forKey: Self.activePresetKey)
+    }
+
+    /// Snapshots the current settings as a new preset (from Settings → Presets).
+    func saveCurrentAsPreset() {
+        let preset = StreamPreset(id: UUID().uuidString, name: "Preset \(presets.count + 1)", settings: settings)
+        presets.append(preset)
+        activePresetID = preset.id
+        persistPresets()
+    }
+
+    /// Applies a preset's settings (from the home rail).
+    func applyPreset(_ id: String) {
+        guard let preset = presets.first(where: { $0.id == id }) else { return }
+        settings = preset.settings
+        activePresetID = id
+        persistPresets()
+    }
+
+    func deletePreset(_ id: String) {
+        let idx = presets.firstIndex { $0.id == id }
+        presets.removeAll { $0.id == id }
+        if activePresetID == id { activePresetID = nil }
+        persistPresets()
+        // Keep rail focus sensible after a delete.
+        if focusedPresetID == id {
+            if presets.isEmpty { exitPresetRail() }
+            else {
+                let newIdx = min(idx ?? 0, presets.count - 1)
+                focusedPresetID = presets[newIdx].id
+            }
+        }
+    }
+
+    // MARK: - Home preset rail navigation
+
+    var isPresetRailActive: Bool { focusedPresetID != nil }
+
+    private func enterPresetRail() {
+        guard !presets.isEmpty else { return }
+        focusedPresetID = activePresetID ?? presets.first?.id
+        controller.focusTick()
+    }
+
+    private func exitPresetRail() {
+        focusedPresetID = nil
+        controller.focusTick()
+    }
+
+    private func movePresetFocus(_ delta: Int) {
+        guard let id = focusedPresetID, let i = presets.firstIndex(where: { $0.id == id }) else { return }
+        let next = min(max(i + delta, 0), presets.count - 1)
+        guard next != i else { return }
+        focusedPresetID = presets[next].id
+        controller.focusTick()
     }
 
     private func wireCallbacks() {
@@ -571,6 +654,9 @@ final class AppState {
         case .relocate:
             sections = [FocusSection(id: "relocate", kind: .vList,
                                      itemIDs: ["relocate:move", "relocate:later"])]
+        case .customResolution:
+            sections = [FocusSection(id: "customres", kind: .vList,
+                                     itemIDs: ["customres:set", "customres:cancel"])]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -657,6 +743,22 @@ final class AppState {
     }
 
     private func routeHome(_ event: NavigationEvent) {
+        // Preset rail mode: up/down move within, left leaves, select applies,
+        // X (contextMenu) deletes.
+        if isPresetRailActive {
+            switch event {
+            case .move(.up): movePresetFocus(-1)
+            case .move(.down): movePresetFocus(+1)
+            case .move(.left): exitPresetRail()
+            case .move(.right): break
+            case .select: if let id = focusedPresetID { applyPreset(id) }
+            case .contextMenu: if let id = focusedPresetID { deletePreset(id) }
+            case .back: exitPresetRail()
+            case .settings: openSettings()
+            default: break
+            }
+            return
+        }
         switch event {
         case .select:
             if let id = focus.focusedItemID, id.hasPrefix("host:") {
@@ -668,6 +770,9 @@ final class AppState {
             openSettings()
         case .detail, .contextMenu:
             presentOverlay(.cheatSheet)
+        case .move(.right):
+            // Right off the end of the app shelf enters the preset rail.
+            if !focus.handle(.move(.right)) && !presets.isEmpty { enterPresetRail() }
         case .back:
             break // home is the root — nowhere to go back to
         default:
@@ -692,6 +797,10 @@ final class AppState {
             // Action rows respond to select; value rows adjust with left/right.
             if focus.focusedItemID == SettingsRow.checkUpdates.focusID {
                 checkForUpdates()
+            } else if focus.focusedItemID == SettingsRow.resolution.focusID {
+                openCustomResolution()  // type an arbitrary WxH
+            } else if focus.focusedItemID == SettingsRow.savePreset.focusID {
+                saveCurrentAsPreset()
             }
         default:
             _ = focus.handle(event)
@@ -823,6 +932,16 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
+        case .customResolution:
+            switch event {
+            case .select:
+                if focus.focusedItemID == "customres:set" { applyCustomResolution() }
+                else { dismissOverlay() }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
         }
     }
 
@@ -884,13 +1003,14 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss
         case absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay
+        case savePreset
         case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
 
         /// Action/readonly rows don't adjust with left/right and render without
-        /// value chevrons (checkUpdates responds to select instead).
-        var isAction: Bool { self == .checkUpdates }
+        /// value chevrons (they respond to select instead).
+        var isAction: Bool { self == .checkUpdates || self == .savePreset }
         var isReadonly: Bool { self == .appVersion }
 
         var title: String {
@@ -917,6 +1037,7 @@ final class AppState {
             case .quitAppAfter: "Quit Game on Disconnect"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
+            case .savePreset: "Save Current as Preset"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             }
@@ -925,11 +1046,11 @@ final class AppState {
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, input, advanced, about
+        case video, audio, input, advanced, presets, about
         var title: String {
             switch self {
             case .video: "Video"; case .audio: "Audio"; case .input: "Input"
-            case .advanced: "Advanced"; case .about: "About"
+            case .advanced: "Advanced"; case .presets: "Presets"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
@@ -937,6 +1058,7 @@ final class AppState {
             case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
             case .input: [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+            case .presets: [.savePreset]
             case .about: [.appVersion, .checkUpdates]
             case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay]
             }
@@ -949,6 +1071,52 @@ final class AppState {
     ]
     static let fpsPresets = [30, 60, 90, 120, 144, 165, 240]
 
+    /// The client display's native pixel resolution (backing-scaled).
+    var nativeResolution: (w: Int, h: Int)? {
+        guard let screen = NSScreen.main else { return nil }
+        let scale = screen.backingScaleFactor
+        return (Int((screen.frame.width * scale).rounded()), Int((screen.frame.height * scale).rounded()))
+    }
+
+    /// The resolution values the ◀ ▶ cycle steps through: the built-in presets,
+    /// the display's native resolution, and the current custom value if it's
+    /// none of those — all sorted by pixel count so native lands in the right
+    /// spot (further along when it's higher than the presets).
+    var resolutionOptions: [(w: Int, h: Int, label: String)] {
+        var options = Self.resolutionPresets
+        if let native = nativeResolution,
+           !options.contains(where: { $0.w == native.w && $0.h == native.h }) {
+            options.append((native.w, native.h, "Native (\(native.w)×\(native.h))"))
+        }
+        if !options.contains(where: { $0.w == settings.width && $0.h == settings.height }) {
+            options.append((settings.width, settings.height, "\(settings.width)×\(settings.height)"))
+        }
+        return options.sorted { $0.w * $0.h < $1.w * $1.h }
+    }
+
+    /// Custom-resolution entry (typed via the resolution row → select).
+    var customResText: String = ""
+    var customResError: String?
+
+    func openCustomResolution() {
+        customResText = "\(settings.width)x\(settings.height)"
+        customResError = nil
+        presentOverlay(.customResolution)
+    }
+
+    func applyCustomResolution() {
+        let parts = customResText.lowercased().split(whereSeparator: { $0 == "x" || $0 == "×" || $0 == " " })
+        guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]),
+              w >= 256, h >= 144, w <= 7680, h <= 4320 else {
+            customResError = "Enter a resolution like 2560x1440."
+            return
+        }
+        settings.width = w
+        settings.height = h
+        customResError = nil
+        dismissOverlay()
+    }
+
     /// Bitrate steps in clean 10 Mbps increments (Kbps).
     static let bitrateStep = 10_000
     static let bitrateMin = 10_000
@@ -957,7 +1125,7 @@ final class AppState {
     func value(for row: SettingsRow) -> String {
         switch row {
         case .resolution:
-            Self.resolutionPresets.first { $0.w == settings.width && $0.h == settings.height }?.label
+            resolutionOptions.first { $0.w == settings.width && $0.h == settings.height }?.label
                 ?? "\(settings.width)×\(settings.height)"
         case .fps: "\(settings.fps) fps"
         // Whole-number Mbps now that bitrate snaps to the 10 Mbps grid.
@@ -981,6 +1149,7 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
+        case .savePreset: presets.isEmpty ? "None yet" : "\(presets.count) saved"
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         }
@@ -1002,11 +1171,11 @@ final class AppState {
     func adjust(row: SettingsRow, forward: Bool) {
         switch row {
         case .resolution:
-            let presets = Self.resolutionPresets
-            let current = presets.firstIndex { $0.w == settings.width && $0.h == settings.height } ?? 1
-            let next = min(max(current + (forward ? 1 : -1), 0), presets.count - 1)
-            settings.width = presets[next].w
-            settings.height = presets[next].h
+            let options = resolutionOptions
+            let current = options.firstIndex { $0.w == settings.width && $0.h == settings.height } ?? 0
+            let next = min(max(current + (forward ? 1 : -1), 0), options.count - 1)
+            settings.width = options[next].w
+            settings.height = options[next].h
         case .fps:
             let presets = Self.fpsPresets
             let current = presets.firstIndex(of: settings.fps) ?? 1
@@ -1041,7 +1210,7 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter.toggle()
         case .keepAwake: settings.keepAwake.toggle()
         case .performanceOverlay: settings.performanceOverlay.toggle()
-        case .appVersion, .checkUpdates: break  // not value rows
+        case .appVersion, .checkUpdates, .savePreset: break  // not value rows
         }
     }
 

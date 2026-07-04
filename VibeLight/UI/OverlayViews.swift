@@ -28,6 +28,8 @@ struct OverlayHost: View {
                 HostMenuCard()
             case .relocate:
                 RelocateCard()
+            case .customResolution:
+                CustomResolutionCard()
             }
         }
     }
@@ -240,5 +242,64 @@ struct OverlayButton: View {
         // Click activates THIS button (focus it first), not whatever the
         // controller last focused.
         .onTapGesture { state.pointerSelect(id) }
+    }
+}
+
+/// Type an arbitrary streaming resolution (WxH). Reached by selecting the
+/// Resolution row in Settings.
+struct CustomResolutionCard: View {
+    @Environment(AppState.self) private var state
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "aspectratio")
+                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
+                Text("Custom Resolution")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                if let native = state.nativeResolution {
+                    Text("Your display is \(native.w)×\(native.h)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+
+            let text = Binding(get: { state.customResText }, set: { state.customResText = $0 })
+            TextField("2560x1440", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.center)
+                .focused($fieldFocused)
+                .onSubmit { state.applyCustomResolution() }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .frame(width: 260)
+                .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13)
+                        .strokeBorder(.white.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
+                }
+                .onTapGesture { fieldFocused = true }
+
+            if let error = state.customResError {
+                Text(error).font(.system(size: 13, weight: .medium)).foregroundStyle(.orange)
+            }
+
+            VStack(spacing: 12) {
+                OverlayButton(id: "customres:set", title: "Set Resolution", symbol: "checkmark")
+                OverlayButton(id: "customres:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48)
+        .frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .onChange(of: fieldFocused) { _, focused in
+            state.controller.keyboardCaptureEnabled = !focused
+        }
+        .onAppear { fieldFocused = true }
+        .onDisappear { state.controller.keyboardCaptureEnabled = true }
     }
 }

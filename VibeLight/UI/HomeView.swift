@@ -6,6 +6,18 @@ struct HomeView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
+        content
+            .overlay(alignment: .trailing) {
+                if !state.presets.isEmpty {
+                    PresetRail()
+                        .padding(.trailing, 40)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(Theme.focusSpring, value: state.presets.count)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             HeaderBar()
                 .padding(.horizontal, 72)
@@ -164,7 +176,10 @@ private struct AppShelf: View {
                             .id("app:\(state.appKey(app))")
                     }
                 }
-                .padding(.horizontal, 72)
+                .padding(.leading, 72)
+                // Leave room on the right for the preset rail so tiles don't
+                // scroll under it.
+                .padding(.trailing, state.presets.isEmpty ? 72 : 260)
                 .padding(.vertical, 40) // headroom for the focus scale/glow
             }
             .onChange(of: state.focus.focusedItemID) { _, new in
@@ -174,5 +189,72 @@ private struct AppShelf: View {
                 }
             }
         }
+    }
+}
+
+/// The right-side preset rail: pick which saved settings preset a launch uses.
+/// Reached by pressing right off the end of the app shelf (or clicking).
+private struct PresetRail: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 12) {
+            Text("PRESETS")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .tracking(2)
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(state.presets) { preset in
+                PresetChip(preset: preset)
+            }
+        }
+        .frame(width: 210)
+    }
+}
+
+private struct PresetChip: View {
+    @Environment(AppState.self) private var state
+    let preset: StreamPreset
+    @State private var hovering = false
+
+    private var isActive: Bool { state.activePresetID == preset.id }
+    private var isFocused: Bool { state.focusedPresetID == preset.id }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.name)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(isActive || isFocused ? .white : Theme.textPrimary)
+                Text(preset.summary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isActive || isFocused ? .white.opacity(0.85) : Theme.textSecondary)
+            }
+            Spacer(minLength: 4)
+            if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .background(
+            isActive ? Theme.accent
+                     : (isFocused ? Theme.accent.opacity(0.35)
+                        : Color.white.opacity(hovering && state.inputMode == .pointer ? 0.12 : 0.06)),
+            in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(isFocused ? .white.opacity(0.7) : .white.opacity(isActive ? 0.25 : 0.06),
+                              lineWidth: isFocused ? 2.5 : 1)
+        }
+        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 14, y: 3)
+        .scaleEffect(isFocused ? 1.03 : 1.0)
+        .animation(Theme.focusSpring, value: isActive)
+        .animation(Theme.focusSpring, value: isFocused)
+        .onHover { hovering = $0 }
+        .onTapGesture { state.applyPreset(preset.id) }
     }
 }

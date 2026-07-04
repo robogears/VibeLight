@@ -65,13 +65,20 @@ struct HintBarView: View {
     private var hints: [(String, NavigationEvent, String?)] {
         switch state.screen {
         case .home:
-            [
+            if state.isPresetRailActive {
+                return [
+                    ("use", .select, "Use Preset"),
+                    ("del", .contextMenu, "Delete"),
+                    ("leaveleft", .move(.left), "Back to Games"),
+                ]
+            }
+            return [
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
                 ("quitgame", .quitChord, nil),
                 ("quitapp", .quitApp, nil),
-            ]
+            ] + (state.presets.isEmpty ? [] : [("presets", .move(.right), "Presets")])
         case .settings:
             [
                 ("adjust", .move(.right), "Adjust"),

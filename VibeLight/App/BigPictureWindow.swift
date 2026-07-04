@@ -1,13 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// Borderless screen-sized window that CAN take keyboard focus.
-///
-/// Why not native fullscreen: `.fullScreenPrimary` moves the app into its own
-/// Space, so every stream launch/return triggers the slow Space-swipe
-/// animation. A borderless window on the normal Space hands off to the
-/// Moonlight window instantly. Borderless windows refuse key status unless
-/// these overrides exist — without them the keyboard is silently dead.
+/// Screen-filling window that CAN take keyboard focus. It's a titled window
+/// (not native fullscreen — that would push us into a Space and cause the slow
+/// swipe animation on every stream handoff), sized to the whole screen with a
+/// transparent, hidden title bar. The traffic-light buttons are invisible until
+/// the mouse reaches the top-left, so it feels like an immersive fullscreen app
+/// but stays escapable (close / minimize) without Cmd-Tab.
 final class BigPictureWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -19,6 +18,8 @@ final class BigPictureWindow: NSWindow {
 final class WindowCoordinator: NSObject, NSWindowDelegate {
     private(set) var window: BigPictureWindow?
     private var sleepActivity: NSObjectProtocol?
+    private var buttonRevealMonitor: Any?
+    private var buttonsRevealed = false
 
     /// True between beginStreamHandoff and endStreamHandoff. Failure paths
     /// use this to restore the chrome exactly when a handoff is outstanding —
@@ -33,28 +34,70 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let win = BigPictureWindow(
             contentRect: screen.frame,
-            styleMask: [.borderless],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         win.level = .normal
         win.backgroundColor = NSColor(Theme.background)
         win.isOpaque = true
+        // Escapable-but-immersive: fill the screen, no visible chrome, but the
+        // traffic lights are reachable at the top-left on hover.
         win.collectionBehavior = [.fullScreenNone]
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.isMovableByWindowBackground = false
         win.contentView = NSHostingView(rootView: content)
         win.delegate = self
-        // Input-mode switching needs mouseMoved events (they're off by default).
+        // Input-mode switching + button reveal need mouseMoved events.
         win.acceptsMouseMovedEvents = true
         win.setFrame(screen.frame, display: true)
         win.makeKeyAndOrderFront(nil)
         window = win
 
+        installButtonReveal()
         enterImmersiveChrome()
         preventDisplaySleep()
         NSApp.activate()
         // Big-picture opens in console mode: no cursor until the mouse moves.
         NSCursor.setHiddenUntilMouseMoves(true)
     }
+
+    // MARK: - Hover-revealed window buttons
+
+    private static let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+
+    private func installButtonReveal() {
+        setButtons(alpha: 0)
+        buttonRevealMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            MainActor.assumeIsolated { self?.updateButtonReveal() }
+            return event
+        }
+    }
+
+    /// Reveal the traffic lights when the cursor is in the top-left corner.
+    private func updateButtonReveal() {
+        guard let window, window.isKeyWindow else { return }
+        let p = window.mouseLocationOutsideOfEventStream  // window coords, bottom-left origin
+        let inCorner = p.y >= window.frame.height - 56 && p.y <= window.frame.height
+            && p.x >= 0 && p.x < 220
+        guard inCorner != buttonsRevealed else { return }
+        buttonsRevealed = inCorner
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.14
+            for type in Self.buttonTypes {
+                window.standardWindowButton(type)?.animator().alphaValue = inCorner ? 1 : 0
+            }
+        }
+    }
+
+    private func setButtons(alpha: CGFloat) {
+        for type in Self.buttonTypes {
+            window?.standardWindowButton(type)?.alphaValue = alpha
+        }
+    }
+
+    // MARK: - Immersive chrome
 
     /// hideMenuBar REQUIRES hideDock or AppKit throws NSInvalidArgumentException.
     func enterImmersiveChrome() {
@@ -65,6 +108,17 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     /// fullscreen handling must not fight our presentation options.
     func exitImmersiveChrome() {
         NSApp.presentationOptions = []
+    }
+
+    // MARK: - Minimize / restore (reveal the Dock so a minimized window is reachable)
+
+    func windowWillMiniaturize(_ notification: Notification) {
+        exitImmersiveChrome()  // a hidden Dock would hide the minimized window
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        enterImmersiveChrome()
+        NSApp.activate()
     }
 
     // MARK: - Stream handoff

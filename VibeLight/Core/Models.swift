@@ -196,6 +196,27 @@ struct StreamSettings: Sendable, Codable, Equatable {
     }
 }
 
+/// A named, user-saved snapshot of stream settings — selectable from the home
+/// screen so the user can flip between e.g. "4K 60" and "1080p 120" per session.
+struct StreamPreset: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var settings: StreamSettings
+
+    /// A short "1080p · 120 fps" summary for the home-screen rail.
+    var summary: String {
+        let res: String
+        switch (settings.width, settings.height) {
+        case (1280, 720): res = "720p"
+        case (1920, 1080): res = "1080p"
+        case (2560, 1440), (3440, 1440): res = "1440p"
+        case (3840, 2160): res = "4K"
+        default: res = "\(settings.height)p"
+        }
+        return "\(res) · \(settings.fps) fps"
+    }
+}
+
 extension String {
     /// Apollo-family hosts and MoonDeck prefix app names with U+200B/U+200C/U+200D
     /// to force sort order in Moonlight. Strip them for display and artwork matching.

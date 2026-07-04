@@ -2,11 +2,10 @@
 
 Requested by William (2026-07-04). Not yet implemented (except where noted).
 
-## In progress
-- **In-app pairing / add computer by IP that actually works.** Generate our own
-  client identity when Moonlight isn't installed, and implement the GameStream
-  pairing handshake (PIN → host web UI) so a fresh user never needs the official
-  Moonlight client. This also makes "just download VibeLight and it works" true.
+## Done
+- ✅ **In-app pairing / add computer by IP.** Own-identity generation + the full
+  GameStream pairing handshake (PIN → host web UI). Crypto unit-tested; the live
+  end-to-end handshake still needs a test against an awake host.
 
 ## Planned
 
