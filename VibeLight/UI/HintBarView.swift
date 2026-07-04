@@ -21,6 +21,32 @@ struct GlyphBadge: View {
     }
 }
 
+/// One hint in the bar. Clickable — a mouse user gets the same action a
+/// controller/keyboard does, with a subtle hover lift.
+private struct HintChip: View {
+    @Environment(AppState.self) private var state
+    let event: NavigationEvent
+    let label: String?
+    @State private var hovering = false
+
+    var body: some View {
+        let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
+        HStack(spacing: 7) {
+            GlyphBadge(glyph: glyph)
+            Text(label ?? glyph.label)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { state.route(event) }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
 /// Bottom hint bar: live button glyphs for what each input does right now.
 /// Adapts to the connected controller (Xbox / PlayStation / Nintendo / keyboard).
 struct HintBarView: View {
@@ -29,13 +55,7 @@ struct HintBarView: View {
     var body: some View {
         HStack(spacing: 26) {
             ForEach(hints, id: \.0) { _, event, label in
-                let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
-                HStack(spacing: 7) {
-                    GlyphBadge(glyph: glyph)
-                    Text(label ?? glyph.label)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Theme.textSecondary)
-                }
+                HintChip(event: event, label: label)
             }
             Spacer()
         }

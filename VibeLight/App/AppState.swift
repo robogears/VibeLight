@@ -15,6 +15,7 @@ enum Overlay: Equatable {
     case error(String)
     case cheatSheet                 // keybind reference
     case update                     // a newer version is available
+    case hosts                      // computer list + add-by-IP
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -35,7 +36,7 @@ final class AppState {
 
     // MARK: Library state
 
-    private(set) var hosts: [StreamHost] = []
+    private(set) var hosts: [StreamHost] = []      // merged: Moonlight + user-added, capped at 4
     private(set) var selectedHostID: String?
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
@@ -43,6 +44,21 @@ final class AppState {
     private(set) var isRefreshing = false
     /// Apps to render: fresh from the host when online, else the plist cache.
     private(set) var apps: [StreamApp] = []
+
+    // Host management (the top-right chip menu).
+    @ObservationIgnored private var importedHosts: [StreamHost] = []
+    private(set) var addedHosts: [AddedHost] = []
+    static let maxHosts = 4
+    var addHostIP: String = ""
+    var addHostError: String?
+
+    /// A computer the user added by IP (persisted separately from Moonlight's
+    /// read-only plist).
+    struct AddedHost: Codable, Equatable, Sendable {
+        var name: String
+        var ip: String
+        var uuid: String?
+    }
 
     var selectedHost: StreamHost? {
         hosts.first { $0.id == selectedHostID }
@@ -108,7 +124,9 @@ final class AppState {
                                      Self.bitrateMin), Self.bitrateMax)
         settings = loaded
 
-        hosts = (imported?.hosts ?? []).filter(\.isPaired)
+        importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
+        addedHosts = Self.loadAddedHosts()
+        rebuildHosts()
         selectedHostID = hosts.first?.id
         apps = displayApps(from: selectedHost?.apps ?? [])
         if imported == nil {
@@ -227,6 +245,126 @@ final class AppState {
         Task { await updateService.downloadAndInstall() }
     }
 
+    // MARK: - Host management
+
+    func openHostMenu() {
+        addHostError = nil
+        presentOverlay(.hosts)
+    }
+
+    private static let addedHostsKey = "vibelight.addedHosts"
+
+    private static func loadAddedHosts() -> [AddedHost] {
+        guard let data = UserDefaults.standard.data(forKey: addedHostsKey),
+              let arr = try? JSONDecoder().decode([AddedHost].self, from: data) else { return [] }
+        return arr
+    }
+
+    private func persistAddedHosts() {
+        if let data = try? JSONEncoder().encode(addedHosts) {
+            UserDefaults.standard.set(data, forKey: Self.addedHostsKey)
+        }
+    }
+
+    /// Merges Moonlight's paired hosts with the user-added ones, de-duped by
+    /// address/uuid and capped at `maxHosts`.
+    private func rebuildHosts() {
+        var merged = importedHosts
+        for added in addedHosts {
+            let h = Self.streamHost(from: added)
+            let dupe = merged.contains {
+                $0.id == h.id || $0.manualAddress == added.ip || $0.localAddress == added.ip
+            }
+            if !dupe { merged.append(h) }
+        }
+        hosts = Array(merged.prefix(Self.maxHosts))
+    }
+
+    private static func streamHost(from added: AddedHost) -> StreamHost {
+        StreamHost(id: added.uuid ?? "added:\(added.ip)", name: added.name,
+                   localAddress: added.ip, localPort: 47989,
+                   remoteAddress: nil, remotePort: 47989,
+                   manualAddress: added.ip, manualPort: 47989,
+                   macAddress: nil, serverCertPEM: nil, apps: [])
+    }
+
+    /// Whether a host was added by the user (removable) vs imported from Moonlight.
+    func isAddedHost(_ host: StreamHost) -> Bool {
+        addedHosts.contains { $0.ip == host.manualAddress || "added:\($0.ip)" == host.id }
+    }
+
+    func addHost() {
+        let ip = addHostIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ip.isEmpty else { return }
+        guard hosts.count < Self.maxHosts else {
+            addHostError = "You can have at most \(Self.maxHosts) computers."
+            return
+        }
+        guard Self.isValidHostAddress(ip) else {
+            addHostError = "Enter a valid IP address (e.g. 192.168.1.20)."
+            return
+        }
+        let exists = hosts.contains {
+            $0.manualAddress == ip || $0.localAddress == ip || $0.remoteAddress == ip
+        }
+        guard !exists else { addHostError = "That computer is already in your list."; return }
+
+        addedHosts.append(AddedHost(name: ip, ip: ip, uuid: nil))
+        persistAddedHosts()
+        rebuildHosts()
+        addHostIP = ""
+        addHostError = nil
+        // Switch to it and probe (fills in its real name / online state, and
+        // surfaces "not paired" if the reused cert doesn't cover it yet).
+        if let added = hosts.first(where: { $0.manualAddress == ip }) {
+            selectHost(added.id)
+        }
+        rebuildFocus()
+    }
+
+    func removeAddedHost(_ host: StreamHost) {
+        addedHosts.removeAll { $0.ip == host.manualAddress || "added:\($0.ip)" == host.id }
+        persistAddedHosts()
+        let wasSelected = selectedHostID == host.id
+        rebuildHosts()
+        if wasSelected {
+            selectedHostID = hosts.first?.id
+            serverInfo = nil; hostAddress = nil
+            apps = displayApps(from: selectedHost?.apps ?? [])
+            Task { await refreshSelectedHost() }
+        }
+        rebuildFocus()
+    }
+
+    /// Once a probe learns an added host's real UUID/name, upgrade the stored
+    /// entry so it de-dupes against Moonlight and shows a friendly name.
+    private func upgradeAddedHost(ip: String, uuid: String?, name: String?) {
+        guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
+        var changed = false
+        if let uuid, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
+        if let name, !name.isEmpty, addedHosts[i].name == ip { addedHosts[i].name = name; changed = true }
+        if changed {
+            persistAddedHosts()
+            let keepID = selectedHostID
+            rebuildHosts()
+            // The id may have changed (added:<ip> → uuid); re-point selection.
+            if let match = hosts.first(where: { $0.manualAddress == ip }) { selectedHostID = match.id }
+            else { selectedHostID = keepID }
+        }
+    }
+
+    private static func isValidHostAddress(_ s: String) -> Bool {
+        // Accept an IPv4 dotted quad or a plausible hostname (no spaces).
+        if s.contains(" ") { return false }
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count == 4, parts.allSatisfy({ Int($0).map { $0 >= 0 && $0 <= 255 } ?? false }) {
+            return true
+        }
+        // hostname fallback: letters/digits/dots/hyphens, has a dot
+        let ok = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        return s.contains(".") && s.unicodeScalars.allSatisfy { ok.contains($0) }
+    }
+
     func refreshSelectedHost() async {
         guard let host = selectedHost else { return }
         // The session manager owns host truth while a stream is active.
@@ -238,6 +376,10 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
+            // A freshly-added host reports its real name here.
+            if isAddedHost(host), let ip = host.manualAddress {
+                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname)
+            }
             let fresh = try await api.appList(for: host, at: address)
             apps = displayApps(from: fresh)
         } catch let error as HostAPIError {
@@ -280,7 +422,11 @@ final class AppState {
     }
 
     func wakeSelectedHost() {
-        guard let host = selectedHost, let mac = host.macAddress else { return }
+        if let host = selectedHost { wakeHost(host) }
+    }
+
+    func wakeHost(_ host: StreamHost) {
+        guard let mac = host.macAddress else { return }
         let addresses = host.candidateAddresses.map(\.host)
         try? WakeOnLAN.wake(mac: mac, unicastAddresses: addresses)
     }
@@ -306,6 +452,10 @@ final class AppState {
                 sections = [FocusSection(id: "update", kind: .vList,
                                          itemIDs: ["update:now", "update:later"])]
             }
+        case .hosts:
+            var ids = hosts.map { "hostmenu:\($0.id)" }
+            if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
+            sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -439,8 +589,14 @@ final class AppState {
         let all = SettingsTab.allCases
         guard let i = all.firstIndex(of: settingsTab) else { return }
         let next = min(max(i + (forward ? 1 : -1), 0), all.count - 1)
-        guard next != i else { return }
-        settingsTab = all[next]
+        setSettingsTab(all[next])
+    }
+
+    /// Jumps straight to a tab (mouse click on the tab strip).
+    func setSettingsTab(_ tab: SettingsTab) {
+        guard tab != settingsTab else { return }
+        inputMode = .pointer
+        settingsTab = tab
         rebuildFocus()
         focus.focusFirst()
     }
@@ -493,6 +649,20 @@ final class AppState {
                     rebuildFocus() // download/install lock removes focus
                 } else {
                     dismissOverlay()  // Later
+                }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .hosts:
+            switch event {
+            case .select:
+                if focus.focusedItemID == "hostmenu:add" {
+                    addHost()
+                } else if let id = focus.focusedItemID, id.hasPrefix("hostmenu:") {
+                    selectHost(String(id.dropFirst("hostmenu:".count)))
+                    dismissOverlay()
                 }
             case .back:
                 dismissOverlay()
@@ -555,7 +725,10 @@ final class AppState {
     // MARK: - Settings rows
 
     enum SettingsRow: String, CaseIterable {
-        case resolution, fps, bitrate, codec, hdr, audio, decoder, vsync, framePacing, gameOpt
+        case resolution, fps, bitrate, codec, hdr, decoder, yuv444
+        case audio, muteHostSpeakers, muteOnFocusLoss
+        case absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
+        case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay
         case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
@@ -572,11 +745,23 @@ final class AppState {
             case .bitrate: "Bitrate"
             case .codec: "Video Codec"
             case .hdr: "HDR"
-            case .audio: "Audio"
             case .decoder: "Video Decoder"
+            case .yuv444: "YUV 4:4:4"
+            case .audio: "Audio"
+            case .muteHostSpeakers: "Mute Host Speakers"
+            case .muteOnFocusLoss: "Mute When Inactive"
+            case .absoluteMouse: "Remote Desktop Mouse"
+            case .swapMouseButtons: "Swap Mouse Buttons"
+            case .reverseScrolling: "Reverse Scrolling"
+            case .captureSystemKeys: "Capture System Keys"
+            case .swapGamepadButtons: "Swap A/B & X/Y"
+            case .backgroundGamepad: "Background Gamepad"
             case .vsync: "V-Sync"
             case .framePacing: "Frame Pacing"
             case .gameOpt: "Game Optimizations"
+            case .quitAppAfter: "Quit Game on Disconnect"
+            case .keepAwake: "Keep Display Awake"
+            case .performanceOverlay: "Performance Stats"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             }
@@ -585,19 +770,20 @@ final class AppState {
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, advanced, about
+        case video, audio, input, advanced, about
         var title: String {
             switch self {
-            case .video: "Video"; case .audio: "Audio"
+            case .video: "Video"; case .audio: "Audio"; case .input: "Input"
             case .advanced: "Advanced"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
             switch self {
-            case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder]
-            case .audio: [.audio]
+            case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
+            case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
+            case .input: [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
             case .about: [.appVersion, .checkUpdates]
-            case .advanced: [.vsync, .framePacing, .gameOpt]
+            case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay]
             }
         }
     }
@@ -623,11 +809,23 @@ final class AppState {
         case .bitrate: "\(settings.bitrateKbps / 1000) Mbps"
         case .codec: settings.codec.label
         case .hdr: settings.hdr ? "On" : "Off"
-        case .audio: settings.audio.label
         case .decoder: settings.decoder.label
+        case .yuv444: settings.yuv444 ? "On" : "Off"
+        case .audio: settings.audio.label
+        case .muteHostSpeakers: settings.muteHostSpeakers ? "On" : "Off"
+        case .muteOnFocusLoss: settings.muteOnFocusLoss ? "On" : "Off"
+        case .absoluteMouse: settings.absoluteMouse ? "On" : "Off"
+        case .swapMouseButtons: settings.swapMouseButtons ? "On" : "Off"
+        case .reverseScrolling: settings.reverseScrolling ? "On" : "Off"
+        case .captureSystemKeys: settings.captureSystemKeys.label
+        case .swapGamepadButtons: settings.swapGamepadButtons ? "On" : "Off"
+        case .backgroundGamepad: settings.backgroundGamepad ? "On" : "Off"
         case .vsync: settings.vsync ? "On" : "Off"
         case .framePacing: settings.framePacing ? "On" : "Off"
         case .gameOpt: settings.gameOptimizations ? "On" : "Off"
+        case .quitAppAfter: settings.quitAppAfter ? "On" : "Off"
+        case .keepAwake: settings.keepAwake ? "On" : "Off"
+        case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         }
@@ -671,10 +869,22 @@ final class AppState {
         case .codec: settings.codec = Self.cycle(settings.codec, forward: forward)
         case .audio: settings.audio = Self.cycle(settings.audio, forward: forward)
         case .decoder: settings.decoder = Self.cycle(settings.decoder, forward: forward)
+        case .captureSystemKeys: settings.captureSystemKeys = Self.cycle(settings.captureSystemKeys, forward: forward)
         case .hdr: settings.hdr.toggle()
+        case .yuv444: settings.yuv444.toggle()
+        case .muteHostSpeakers: settings.muteHostSpeakers.toggle()
+        case .muteOnFocusLoss: settings.muteOnFocusLoss.toggle()
+        case .absoluteMouse: settings.absoluteMouse.toggle()
+        case .swapMouseButtons: settings.swapMouseButtons.toggle()
+        case .reverseScrolling: settings.reverseScrolling.toggle()
+        case .swapGamepadButtons: settings.swapGamepadButtons.toggle()
+        case .backgroundGamepad: settings.backgroundGamepad.toggle()
         case .vsync: settings.vsync.toggle()
         case .framePacing: settings.framePacing.toggle()
         case .gameOpt: settings.gameOptimizations.toggle()
+        case .quitAppAfter: settings.quitAppAfter.toggle()
+        case .keepAwake: settings.keepAwake.toggle()
+        case .performanceOverlay: settings.performanceOverlay.toggle()
         case .appVersion, .checkUpdates: break  // not value rows
         }
     }

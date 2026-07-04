@@ -24,6 +24,8 @@ struct OverlayHost: View {
                 CheatSheetCard()
             case .update:
                 UpdateCard()
+            case .hosts:
+                HostMenuCard()
             }
         }
     }

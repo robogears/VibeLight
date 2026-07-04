@@ -373,17 +373,33 @@ final class StreamSessionManager {
             // default from resolution/fps instead of honoring user settings.
             "--bitrate", String(settings.bitrateKbps),
             "--display-mode", "fullscreen",
-            // Ending the local session must never quit the remote app — the
-            // full quit is exclusively quitCompletely()'s /cancel (invariant 6).
-            "--no-quit-after",
         ]
+        // "Quit app on host after ending stream". Default off so a disconnect
+        // keeps the game running (invariant 6) — the full quit is exclusively
+        // quitCompletely()'s /cancel.
+        args.append(settings.quitAppAfter ? "--quit-after" : "--no-quit-after")
         args.append(contentsOf: ["--video-codec", settings.codec.cliValue])
         args.append(contentsOf: ["--audio-config", settings.audio.cliValue])
         args.append(contentsOf: ["--video-decoder", settings.decoder.cliValue])
+        args.append(contentsOf: ["--capture-system-keys", settings.captureSystemKeys.cliValue])
+        // Video
         args.append(settings.hdr ? "--hdr" : "--no-hdr")
+        args.append(settings.yuv444 ? "--yuv444" : "--no-yuv444")
+        // Audio (Moonlight's flag is "audio on host" — the inverse of muting it)
+        args.append(settings.muteHostSpeakers ? "--no-audio-on-host" : "--audio-on-host")
+        args.append(settings.muteOnFocusLoss ? "--mute-on-focus-loss" : "--no-mute-on-focus-loss")
+        // Input
+        args.append(settings.absoluteMouse ? "--absolute-mouse" : "--no-absolute-mouse")
+        args.append(settings.swapMouseButtons ? "--mouse-buttons-swap" : "--no-mouse-buttons-swap")
+        args.append(settings.reverseScrolling ? "--reverse-scroll-direction" : "--no-reverse-scroll-direction")
+        args.append(settings.swapGamepadButtons ? "--swap-gamepad-buttons" : "--no-swap-gamepad-buttons")
+        args.append(settings.backgroundGamepad ? "--background-gamepad" : "--no-background-gamepad")
+        // Advanced
         args.append(settings.vsync ? "--vsync" : "--no-vsync")
         args.append(settings.framePacing ? "--frame-pacing" : "--no-frame-pacing")
         args.append(settings.gameOptimizations ? "--game-optimization" : "--no-game-optimization")
+        args.append(settings.keepAwake ? "--keep-awake" : "--no-keep-awake")
+        args.append(settings.performanceOverlay ? "--performance-overlay" : "--no-performance-overlay")
         return args
     }
 

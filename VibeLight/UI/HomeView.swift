@@ -65,32 +65,7 @@ private struct HeaderBar: View {
             Spacer()
 
             if let host = state.selectedHost {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(state.hostOnline ? .green : .orange)
-                        .frame(width: 9, height: 9)
-                        .shadow(color: state.hostOnline ? .green.opacity(0.8) : .clear, radius: 5)
-                    Text(host.name)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Theme.textPrimary)
-                    if let error = state.hostError {
-                        // A real error must never masquerade as "asleep" —
-                        // that hides pairing/TLS problems behind a wake hint.
-                        Text(error)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.orange)
-                            .lineLimit(1)
-                            .frame(maxWidth: 420)
-                    } else if !state.hostOnline {
-                        Text(host.macAddress != nil ? "asleep — press ⏻ to wake" : "offline")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background(.white.opacity(0.06), in: Capsule())
-                .onTapGesture { state.wakeSelectedHost() }
+                HostChip(host: host)
             }
 
             TimelineView(.everyMinute) { context in
@@ -100,6 +75,49 @@ private struct HeaderBar: View {
                     .monospacedDigit()
             }
         }
+    }
+}
+
+/// The top-right computer chip. Clicking it opens the computer manager
+/// (switch computers / add one by IP); a chevron hints it's a menu.
+private struct HostChip: View {
+    @Environment(AppState.self) private var state
+    let host: StreamHost
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(state.hostOnline ? .green : .orange)
+                .frame(width: 9, height: 9)
+                .shadow(color: state.hostOnline ? .green.opacity(0.8) : .clear, radius: 5)
+            Text(host.name)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+            if let error = state.hostError {
+                // A real error must never masquerade as "asleep" —
+                // that hides pairing/TLS problems behind a wake hint.
+                Text(error)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .frame(maxWidth: 420)
+            } else if !state.hostOnline {
+                Text(host.macAddress != nil ? "asleep" : "offline")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Image(systemName: "chevron.down")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(.white.opacity(hovering ? 0.12 : 0.06), in: Capsule())
+        .contentShape(Capsule())
+        .onHover { hovering = $0 }
+        .onTapGesture { state.openHostMenu() }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

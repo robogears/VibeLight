@@ -66,27 +66,7 @@ private struct SettingsTabBar: View {
         HStack(spacing: 14) {
             bumper(.prevSection)
             ForEach(AppState.SettingsTab.allCases, id: \.rawValue) { tab in
-                let selected = state.settingsTab == tab
-                Text(tab.title)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(selected ? .white : Theme.textSecondary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 9)
-                    .background(
-                        selected ? Theme.accent : Color.white.opacity(0.06),
-                        in: Capsule()
-                    )
-                    .overlay {
-                        Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
-                    }
-                    .onTapGesture {
-                        // Jump directly on click, keeping controller behavior.
-                        while state.settingsTab != tab {
-                            let forward = (AppState.SettingsTab.allCases.firstIndex(of: tab) ?? 0)
-                                > (AppState.SettingsTab.allCases.firstIndex(of: state.settingsTab) ?? 0)
-                            state.switchSettingsTab(forward: forward)
-                        }
-                    }
+                TabChip(tab: tab)
             }
             bumper(.nextSection)
             Spacer()
@@ -99,6 +79,37 @@ private struct SettingsTabBar: View {
         return Image(systemName: glyph.symbolName)
             .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(Theme.textPrimary.opacity(0.85))
+    }
+}
+
+/// One clickable tab chip with a clear selected highlight and hover feedback.
+private struct TabChip: View {
+    @Environment(AppState.self) private var state
+    let tab: AppState.SettingsTab
+    @State private var hovering = false
+
+    private var selected: Bool { state.settingsTab == tab }
+
+    var body: some View {
+        Text(tab.title)
+            .font(.system(size: 16, weight: .bold, design: .rounded))
+            .foregroundStyle(selected ? .white : Theme.textSecondary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 9)
+            .background(
+                selected ? Theme.accent
+                         : Color.white.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
+            }
+            .scaleEffect(selected ? 1.0 : (hovering && state.inputMode == .pointer ? 1.03 : 1.0))
+            .contentShape(Capsule())
+            .onHover { hovering = $0 }
+            .onTapGesture { state.setSettingsTab(tab) }
+            .animation(Theme.focusSpring, value: selected)
+            .animation(Theme.focusSpring, value: hovering)
     }
 }
 

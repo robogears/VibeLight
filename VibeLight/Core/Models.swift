@@ -99,37 +99,72 @@ enum VideoDecoder: String, Codable, CaseIterable, Sendable {
     var cliValue: String { rawValue }
 }
 
+/// When Moonlight grabs system keyboard shortcuts (Cmd-Tab etc.), mapped to
+/// `--capture-system-keys`.
+enum CaptureSystemKeys: String, Codable, CaseIterable, Sendable {
+    case never, fullscreen, always
+    var label: String {
+        switch self {
+        case .never: "Never"; case .fullscreen: "In Fullscreen"; case .always: "Always"
+        }
+    }
+    var cliValue: String { rawValue }
+}
+
 /// Full streaming configuration — mirrors the meaningful Moonlight settings so
 /// the couch UI has the same control the desktop app does. Imported defaults
 /// come from the user's Moonlight prefs; everything is persisted by VibeLight.
+///
+/// Codable is DECODE-lenient (custom `init(from:)` with `decodeIfPresent`) so
+/// adding a field never invalidates a user's saved settings — missing keys just
+/// take the fallback default.
 struct StreamSettings: Sendable, Codable, Equatable {
+    // Video
     var width: Int
     var height: Int
     var fps: Int
     var bitrateKbps: Int
+    var codec: VideoCodec
     var hdr: Bool
+    var decoder: VideoDecoder
+    var yuv444: Bool
+    // Audio
+    var audio: AudioConfig
+    var muteHostSpeakers: Bool     // → --no-audio-on-host
+    var muteOnFocusLoss: Bool
+    // Input
+    var absoluteMouse: Bool        // "optimize mouse for remote desktop"
+    var swapMouseButtons: Bool
+    var reverseScrolling: Bool
+    var captureSystemKeys: CaptureSystemKeys
+    var swapGamepadButtons: Bool
+    var backgroundGamepad: Bool
+    // Advanced
     var vsync: Bool
     var framePacing: Bool
-    var codec: VideoCodec
-    var audio: AudioConfig
-    var decoder: VideoDecoder
     var gameOptimizations: Bool
+    var quitAppAfter: Bool         // quit the app on the host after the stream ends
+    var keepAwake: Bool
+    var performanceOverlay: Bool
 
-    static let fallback = StreamSettings(
-        width: 1920, height: 1080, fps: 60, bitrateKbps: 20000,
-        hdr: false, vsync: true, framePacing: false,
-        codec: .auto, audio: .stereo, decoder: .auto, gameOptimizations: true
-    )
+    static let fallback = StreamSettings()
 
-    // Decode leniently so older persisted settings (before these fields
-    // existed) still load — missing keys fall back to sensible defaults.
-    init(width: Int, height: Int, fps: Int, bitrateKbps: Int, hdr: Bool,
-         vsync: Bool, framePacing: Bool, codec: VideoCodec, audio: AudioConfig,
-         decoder: VideoDecoder, gameOptimizations: Bool) {
-        self.width = width; self.height = height; self.fps = fps
-        self.bitrateKbps = bitrateKbps; self.hdr = hdr; self.vsync = vsync
-        self.framePacing = framePacing; self.codec = codec; self.audio = audio
-        self.decoder = decoder; self.gameOptimizations = gameOptimizations
+    init(width: Int = 1920, height: Int = 1080, fps: Int = 60, bitrateKbps: Int = 20000,
+         codec: VideoCodec = .auto, hdr: Bool = false, decoder: VideoDecoder = .auto,
+         yuv444: Bool = false, audio: AudioConfig = .stereo, muteHostSpeakers: Bool = true,
+         muteOnFocusLoss: Bool = false, absoluteMouse: Bool = false, swapMouseButtons: Bool = false,
+         reverseScrolling: Bool = false, captureSystemKeys: CaptureSystemKeys = .fullscreen,
+         swapGamepadButtons: Bool = false, backgroundGamepad: Bool = false, vsync: Bool = true,
+         framePacing: Bool = false, gameOptimizations: Bool = true, quitAppAfter: Bool = false,
+         keepAwake: Bool = true, performanceOverlay: Bool = false) {
+        self.width = width; self.height = height; self.fps = fps; self.bitrateKbps = bitrateKbps
+        self.codec = codec; self.hdr = hdr; self.decoder = decoder; self.yuv444 = yuv444
+        self.audio = audio; self.muteHostSpeakers = muteHostSpeakers; self.muteOnFocusLoss = muteOnFocusLoss
+        self.absoluteMouse = absoluteMouse; self.swapMouseButtons = swapMouseButtons
+        self.reverseScrolling = reverseScrolling; self.captureSystemKeys = captureSystemKeys
+        self.swapGamepadButtons = swapGamepadButtons; self.backgroundGamepad = backgroundGamepad
+        self.vsync = vsync; self.framePacing = framePacing; self.gameOptimizations = gameOptimizations
+        self.quitAppAfter = quitAppAfter; self.keepAwake = keepAwake; self.performanceOverlay = performanceOverlay
     }
 
     init(from decoder: any Decoder) throws {
@@ -139,13 +174,25 @@ struct StreamSettings: Sendable, Codable, Equatable {
         height = try c.decodeIfPresent(Int.self, forKey: .height) ?? f.height
         fps = try c.decodeIfPresent(Int.self, forKey: .fps) ?? f.fps
         bitrateKbps = try c.decodeIfPresent(Int.self, forKey: .bitrateKbps) ?? f.bitrateKbps
+        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? f.codec
         hdr = try c.decodeIfPresent(Bool.self, forKey: .hdr) ?? f.hdr
+        self.decoder = try c.decodeIfPresent(VideoDecoder.self, forKey: .decoder) ?? f.decoder
+        yuv444 = try c.decodeIfPresent(Bool.self, forKey: .yuv444) ?? f.yuv444
+        audio = try c.decodeIfPresent(AudioConfig.self, forKey: .audio) ?? f.audio
+        muteHostSpeakers = try c.decodeIfPresent(Bool.self, forKey: .muteHostSpeakers) ?? f.muteHostSpeakers
+        muteOnFocusLoss = try c.decodeIfPresent(Bool.self, forKey: .muteOnFocusLoss) ?? f.muteOnFocusLoss
+        absoluteMouse = try c.decodeIfPresent(Bool.self, forKey: .absoluteMouse) ?? f.absoluteMouse
+        swapMouseButtons = try c.decodeIfPresent(Bool.self, forKey: .swapMouseButtons) ?? f.swapMouseButtons
+        reverseScrolling = try c.decodeIfPresent(Bool.self, forKey: .reverseScrolling) ?? f.reverseScrolling
+        captureSystemKeys = try c.decodeIfPresent(CaptureSystemKeys.self, forKey: .captureSystemKeys) ?? f.captureSystemKeys
+        swapGamepadButtons = try c.decodeIfPresent(Bool.self, forKey: .swapGamepadButtons) ?? f.swapGamepadButtons
+        backgroundGamepad = try c.decodeIfPresent(Bool.self, forKey: .backgroundGamepad) ?? f.backgroundGamepad
         vsync = try c.decodeIfPresent(Bool.self, forKey: .vsync) ?? f.vsync
         framePacing = try c.decodeIfPresent(Bool.self, forKey: .framePacing) ?? f.framePacing
-        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? f.codec
-        audio = try c.decodeIfPresent(AudioConfig.self, forKey: .audio) ?? f.audio
-        self.decoder = try c.decodeIfPresent(VideoDecoder.self, forKey: .decoder) ?? f.decoder
         gameOptimizations = try c.decodeIfPresent(Bool.self, forKey: .gameOptimizations) ?? f.gameOptimizations
+        quitAppAfter = try c.decodeIfPresent(Bool.self, forKey: .quitAppAfter) ?? f.quitAppAfter
+        keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? f.keepAwake
+        performanceOverlay = try c.decodeIfPresent(Bool.self, forKey: .performanceOverlay) ?? f.performanceOverlay
     }
 }
 
