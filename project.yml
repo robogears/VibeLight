@@ -17,6 +17,8 @@ targets:
     info:
       path: VibeLight/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # GameStream hosts are self-signed BY DESIGN; VibeLight does byte-exact
         # certificate pinning in HostAPIClient (stronger than ATS CA-trust for
         # this protocol). Without this, ATS kills the TLS handshake before our
