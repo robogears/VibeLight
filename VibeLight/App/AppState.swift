@@ -16,6 +16,7 @@ enum Overlay: Equatable {
     case cheatSheet                 // keybind reference
     case update                     // a newer version is available
     case hosts                      // computer list + add-by-IP
+    case relocate                   // offer to move into /Applications
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -139,7 +140,7 @@ final class AppState {
         rebuildFocus()
         focus.focusFirst()
         startRefreshLoop()
-        checkForUpdatesOnLaunch()
+        runStartupChecks()
     }
 
     private func wireCallbacks() {
@@ -208,6 +209,40 @@ final class AppState {
                 try? await Task.sleep(for: .seconds(12))
             }
         }
+    }
+
+    private static let skipRelocationKey = "vibelight.skipRelocation"
+
+    /// Launch sequence: first offer to move into /Applications (if we're running
+    /// from Downloads / a translocated copy), otherwise go straight to the
+    /// update check. Relocation takes priority because it relaunches the app.
+    private func runStartupChecks() {
+        let skipped = UserDefaults.standard.bool(forKey: Self.skipRelocationKey)
+        if AppRelocator.shouldOfferRelocation() && !skipped {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                if overlay == nil, screen == .home { presentOverlay(.relocate) }
+            }
+        } else {
+            checkForUpdatesOnLaunch()
+        }
+    }
+
+    func moveToApplications() {
+        if !AppRelocator.moveToApplications() {
+            overlay = .error("Couldn't move VibeLight to Applications. Drag it there manually from Finder.")
+            rebuildFocus()
+            if focus.focusedItemID == nil { focus.focusFirst() }
+        }
+        // On success the app relaunches from /Applications and this instance quits.
+    }
+
+    /// "Not Now" — don't nag about relocation again, then resume the update check.
+    func declineRelocation() {
+        UserDefaults.standard.set(true, forKey: Self.skipRelocationKey)
+        dismissOverlay()
+        checkForUpdatesOnLaunch()
     }
 
     /// Silent update check a couple seconds after launch; if a newer version is
@@ -457,6 +492,9 @@ final class AppState {
             var ids = hosts.map { "hostmenu:\($0.id)" }
             if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
             sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
+        case .relocate:
+            sections = [FocusSection(id: "relocate", kind: .vList,
+                                     itemIDs: ["relocate:move", "relocate:later"])]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -671,6 +709,22 @@ final class AppState {
                 }
             case .back:
                 dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .relocate:
+            switch event {
+            case .select:
+                if focus.focusedItemID == "relocate:move" {
+                    moveToApplications()  // relaunches on success
+                } else {
+                    declineRelocation()
+                }
+            case .back:
+                // Back = just dismiss (we'll ask again next launch); the
+                // explicit "Not Now" button is what silences future prompts.
+                dismissOverlay()
+                checkForUpdatesOnLaunch()
             default:
                 _ = focus.handle(event)
             }

@@ -26,6 +26,8 @@ struct OverlayHost: View {
                 UpdateCard()
             case .hosts:
                 HostMenuCard()
+            case .relocate:
+                RelocateCard()
             }
         }
     }
