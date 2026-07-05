@@ -29,10 +29,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    /// Stop any running stream helper so it isn't orphaned when VibeLight quits
-    /// (macOS doesn't kill children on parent exit). SIGTERM ends only the LOCAL
-    /// client — the remote game keeps running (invariant 6), the correct quit
-    /// semantics. (SEV-03)
+    /// "Quit Game on App Exit" (default on): when VibeLight quits with a live
+    /// session, fully stop the game on the host (`/cancel`) so nothing is left
+    /// streaming/running there. That's an async network call, so we defer
+    /// termination until it finishes (or its watchdog fires). Also covers logout/
+    /// shutdown, where macOS honors terminateLater up to its own timeout.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let state, state.settings.stopStreamOnExit, state.hasActiveRemoteSession else {
+            return .terminateNow
+        }
+        Task { @MainActor in
+            await state.stopStreamForAppExit()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    /// Belt-and-suspenders on the way out: SIGTERM any still-running stream helper
+    /// so it isn't orphaned (macOS doesn't kill children on parent exit). If the
+    /// exit-quit above ran, the local client is already gone and this no-ops.
+    /// (SEV-03)
     func applicationWillTerminate(_ notification: Notification) {
         state?.session.disconnect()
     }

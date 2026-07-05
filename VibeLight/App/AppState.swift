@@ -25,6 +25,8 @@ enum Overlay: Equatable {
     case confirmOverridePreset(Int) // slot already taken — override it?
     case presetSlotMenu(Int)        // rename / clear a filled slot
     case renamePreset(Int)          // type a new preset name
+    case moonDeckSetup(String)      // set up / pair MoonDeckBuddy for host id
+    case confirmRestartPC(String)   // confirm force-restarting host id
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -121,6 +123,40 @@ final class AppState {
     }
     var pairing: PairingState?
     @ObservationIgnored private var pairingTask: Task<Void, Never>?
+
+    // MARK: MoonDeckBuddy (force-restart the host PC)
+
+    /// Per-host MoonDeckBuddy settings, keyed by the host's stable primary
+    /// address. Persisted; the port defaults to MoonDeckBuddy's 59999.
+    struct MoonDeckConfig: Codable, Equatable, Sendable {
+        var port: Int = MoonDeckBuddyClient.defaultPort
+        var paired: Bool = false
+        /// Leaf TLS cert captured at first pairing; pinned on later connections
+        /// so an active MITM can't hijack the restart credential.
+        var pinnedCert: Data?
+    }
+    /// Live pairing progress shown in the MoonDeckBuddy setup overlay.
+    struct MoonDeckPairing: Equatable, Sendable {
+        var hostID: String
+        var pin: String
+        enum Status: Equatable, Sendable {
+            case connecting, waiting, paired, offline, failed(String)
+        }
+        var status: Status
+    }
+    @ObservationIgnored let moonDeck = MoonDeckBuddyClient()
+    /// One client identity for this VibeLight install (the whole Basic-auth
+    /// credential). Generated once, reused for every host.
+    private(set) var moonDeckClientID: String = ""
+    private(set) var moonDeckConfigs: [String: MoonDeckConfig] = [:]
+    var moonDeckPairing: MoonDeckPairing?
+    /// The port field text in the setup overlay.
+    var moonDeckPortText: String = String(MoonDeckBuddyClient.defaultPort)
+    /// True while a restart request is in flight (locks the confirm overlay).
+    private(set) var moonDeckRestarting = false
+    @ObservationIgnored private var moonDeckPairingTask: Task<Void, Never>?
+    private static let moonDeckClientKey = "vibelight.moondeck.clientid"
+    private static let moonDeckConfigsKey = "vibelight.moondeck.configs"
 
     var selectedHost: StreamHost? {
         hosts.first { $0.id == selectedHostID }
@@ -225,6 +261,18 @@ final class AppState {
         presets = Self.loadPresets()
         let savedSlot = UserDefaults.standard.object(forKey: Self.activePresetKey) as? Int
         activePresetSlot = savedSlot.flatMap { (0..<Self.presetSlotCount).contains($0) ? $0 : nil }
+
+        // MoonDeckBuddy: a stable per-install client id + saved per-host configs.
+        if let existing = UserDefaults.standard.string(forKey: Self.moonDeckClientKey), !existing.isEmpty {
+            moonDeckClientID = existing
+        } else {
+            moonDeckClientID = UUID().uuidString
+            UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
+        }
+        if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey),
+           let decoded = try? JSONDecoder().decode([String: MoonDeckConfig].self, from: data) {
+            moonDeckConfigs = decoded
+        }
 
         wireCallbacks()
         rebuildFocus()
@@ -563,6 +611,154 @@ final class AppState {
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
+    // MARK: - MoonDeckBuddy (force-restart the host PC)
+
+    /// Stable key for per-host MoonDeckBuddy config: the host's primary address.
+    private func moonDeckKey(for host: StreamHost) -> String? {
+        host.candidateAddresses.first?.host
+    }
+    /// Address to actually connect to: the resolved address GameStream reached
+    /// (works over Tailscale / when remote), falling back to the primary. Config
+    /// stays keyed by the stable primary via `moonDeckKey`.
+    private func moonDeckConnectAddress(for host: StreamHost) -> String? {
+        if host.id == selectedHostID, let resolved = hostAddress, !resolved.isEmpty { return resolved }
+        return moonDeckKey(for: host)
+    }
+    func moonDeckConfig(for host: StreamHost) -> MoonDeckConfig? {
+        guard let key = moonDeckKey(for: host) else { return nil }
+        return moonDeckConfigs[key]
+    }
+    func isMoonDeckPaired(_ host: StreamHost) -> Bool {
+        moonDeckConfig(for: host)?.paired == true
+    }
+    private func updateMoonDeckConfig(for host: StreamHost, _ mutate: (inout MoonDeckConfig) -> Void) {
+        guard let key = moonDeckKey(for: host) else { return }
+        var cfg = moonDeckConfigs[key] ?? MoonDeckConfig()
+        mutate(&cfg)
+        moonDeckConfigs[key] = cfg
+        if let data = try? JSONEncoder().encode(moonDeckConfigs) {
+            UserDefaults.standard.set(data, forKey: Self.moonDeckConfigsKey)
+        }
+    }
+
+    /// The "Restart PC" button in the header. Paired → confirm; otherwise walk
+    /// the user through installing/pairing MoonDeckBuddy first.
+    func requestRestartPC() {
+        guard let host = selectedHost else { return }
+        moonDeckRestarting = false
+        if isMoonDeckPaired(host) {
+            presentOverlay(.confirmRestartPC(host.id))
+        } else {
+            moonDeckPairing = nil
+            moonDeckPortText = String(moonDeckConfig(for: host)?.port ?? MoonDeckBuddyClient.defaultPort)
+            presentOverlay(.moonDeckSetup(host.id))
+        }
+    }
+
+    /// Kick off MoonDeckBuddy PIN pairing from the setup overlay: reach the
+    /// buddy, POST /pair, then poll until the user approves the PIN on the PC.
+    func beginMoonDeckPairing() {
+        guard case .moonDeckSetup(let hostID)? = overlay,
+              let host = hosts.first(where: { $0.id == hostID }),
+              let addr = moonDeckConnectAddress(for: host) else { return }
+        let port = Int(moonDeckPortText.trimmingCharacters(in: .whitespaces)) ?? MoonDeckBuddyClient.defaultPort
+        let pin = String(format: "%04d", Int.random(in: 0...9999))
+        updateMoonDeckConfig(for: host) { $0.port = port }
+        moonDeckPairing = MoonDeckPairing(hostID: hostID, pin: pin, status: .connecting)
+        rebuildFocus()
+
+        moonDeckPairingTask?.cancel()
+        moonDeckPairingTask = Task { [weak self] in
+            guard let self else { return }
+            let clientID = moonDeckClientID
+            // TOFU pinning: require the saved cert if we have one; otherwise accept
+            // and capture this first cert so every later connection is pinned to it.
+            moonDeck.setExpectedCert(moonDeckConfig(for: host)?.pinnedCert, forHost: addr)
+            do {
+                try await moonDeck.checkReachable(host: addr, port: port)
+                if moonDeckConfig(for: host)?.pinnedCert == nil,
+                   let cert = moonDeck.observedCert(forHost: addr) {
+                    updateMoonDeckConfig(for: host) { $0.pinnedCert = cert }
+                    moonDeck.setExpectedCert(cert, forHost: addr)
+                }
+                try await moonDeck.startPairing(host: addr, port: port, clientID: clientID, pin: pin)
+                guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
+                moonDeckPairing?.status = .waiting
+                rebuildFocus()
+                // Poll ~2 minutes for the user to type the PIN into MoonDeckBuddy.
+                for _ in 0..<60 {
+                    try await Task.sleep(for: .seconds(2))
+                    guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
+                    if try await moonDeck.pairState(host: addr, port: port, clientID: clientID) == .paired {
+                        updateMoonDeckConfig(for: host) { $0.paired = true; $0.port = port }
+                        moonDeckPairing?.status = .paired
+                        rebuildFocus()
+                        return
+                    }
+                }
+                moonDeckPairing?.status = .failed("Timed out. Enter the PIN in the MoonDeckBuddy pop-up on your PC, then try again.")
+                rebuildFocus()
+            } catch {
+                guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
+                if let mdError = error as? MoonDeckBuddyClient.MDError, case .offline = mdError {
+                    moonDeckPairing?.status = .offline
+                } else {
+                    moonDeckPairing?.status = .failed((error as? LocalizedError)?.errorDescription ?? "Pairing failed.")
+                }
+                rebuildFocus()
+            }
+        }
+    }
+
+    func cancelMoonDeckPairing() {
+        moonDeckPairingTask?.cancel()
+        moonDeckPairingTask = nil
+        moonDeckPairing = nil
+    }
+
+    /// Still showing the restart flow for this host? Guards the async completion
+    /// from clobbering whatever overlay the user moved on to.
+    private func inRestartFlow(for hostID: String) -> Bool {
+        switch overlay {
+        case .confirmRestartPC(let id), .moonDeckSetup(let id): return id == hostID
+        default: return false
+        }
+    }
+
+    /// Fire the restart. Called from the confirm overlay's "Restart" and from the
+    /// setup overlay's "Restart now" (right after a successful pair).
+    func performRestartPC(hostID: String) {
+        guard let host = hosts.first(where: { $0.id == hostID }),
+              let addr = moonDeckConnectAddress(for: host),
+              let cfg = moonDeckConfig(for: host) else { return }
+        moonDeckRestarting = true
+        rebuildFocus()
+        Task { [weak self] in
+            guard let self else { return }
+            // Pin to the cert captured at pairing (nil → accept+capture if the
+            // host was paired before pinning existed).
+            moonDeck.setExpectedCert(cfg.pinnedCert, forHost: addr)
+            do {
+                try await moonDeck.restart(host: addr, port: cfg.port,
+                                           clientID: moonDeckClientID, delaySeconds: 5)
+                moonDeckRestarting = false
+                guard inRestartFlow(for: hostID) else { return }
+                cancelMoonDeckPairing()
+                dismissOverlay()
+                // The PC is rebooting; drop the live connection state so the UI
+                // shows it going offline rather than a stale "online".
+                serverInfo = nil
+                hostError = "Restarting \(host.name)…"
+            } catch {
+                moonDeckRestarting = false
+                guard inRestartFlow(for: hostID) else { return }
+                let message = (error as? LocalizedError)?.errorDescription ?? "Restart failed."
+                cancelMoonDeckPairing()
+                presentOverlay(.error(message))
+            }
+        }
+    }
+
     private func savePairedHost(ip: String, serverCertPEM: Data) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         addedHosts[i].serverCert = serverCertPEM
@@ -766,6 +962,18 @@ final class AppState {
         case .renamePreset:
             sections = [FocusSection(id: "rename", kind: .vList,
                                      itemIDs: ["rename:set", "rename:cancel"])]
+        case .moonDeckSetup:
+            let ids: [String]
+            switch moonDeckPairing?.status {
+            case .some(.connecting), .some(.waiting): ids = ["moondeck:cancel"]
+            case .some(.paired):                      ids = ["moondeck:restart", "moondeck:done"]
+            default:                                  ids = ["moondeck:pair", "moondeck:cancel"]
+            }
+            sections = [FocusSection(id: "moondeck", kind: .vList, itemIDs: ids)]
+        case .confirmRestartPC:
+            if moonDeckRestarting { return }   // locked while the request is in flight
+            sections = [FocusSection(id: "restartpc", kind: .vList,
+                                     itemIDs: ["restartpc:yes", "restartpc:cancel"])]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -1100,11 +1308,38 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
+        case .moonDeckSetup(let hostID):
+            if moonDeckRestarting { break }   // locked while a restart is in flight
+            switch event {
+            case .select:
+                switch focus.focusedItemID {
+                case "moondeck:pair":    beginMoonDeckPairing()
+                case "moondeck:restart": performRestartPC(hostID: hostID)
+                case "moondeck:done":    cancelMoonDeckPairing(); dismissOverlay()
+                default:                 cancelMoonDeckPairing(); dismissOverlay()  // cancel
+                }
+            case .back:
+                cancelMoonDeckPairing(); dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .confirmRestartPC(let hostID):
+            if moonDeckRestarting { break }   // locked while in flight
+            switch event {
+            case .select:
+                if focus.focusedItemID == "restartpc:yes" { performRestartPC(hostID: hostID) }
+                else { dismissOverlay() }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
         }
     }
 
     private func dismissOverlay() {
         pairingTask?.cancel(); pairingTask = nil; pairing = nil
+        moonDeckPairingTask?.cancel(); moonDeckPairingTask = nil; moonDeckPairing = nil
         overlay = nil
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
@@ -1161,13 +1396,31 @@ final class AppState {
         }
     }
 
+    /// A stream is active, or the host is still running a game — something the
+    /// host would keep doing after VibeLight closes.
+    var hasActiveRemoteSession: Bool {
+        session.phase != .idle || (serverInfo?.currentGameID ?? 0) != 0
+    }
+
+    /// Called by the app delegate when VibeLight is quitting. With "Quit Game on
+    /// App Exit" on (default), fully stop the remote game (`/cancel`, invariant 3)
+    /// so nothing is left streaming/running on the PC after the app closes.
+    /// Bounded by a watchdog so a hung/unreachable host can't block termination.
+    func stopStreamForAppExit() async {
+        guard settings.stopStreamOnExit, let host = selectedHost, hasActiveRemoteSession else { return }
+        let work = Task { await session.quitCompletely(host: host) }
+        let watchdog = Task { try? await Task.sleep(for: .seconds(7)); work.cancel() }
+        await work.value
+        watchdog.cancel()
+    }
+
     // MARK: - Settings rows
 
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss
         case absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
-        case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay
+        case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
@@ -1201,6 +1454,7 @@ final class AppState {
             case .quitAppAfter: "Quit Game on Disconnect"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
+            case .stopStreamOnExit: "Quit Game on App Exit"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             }
@@ -1222,7 +1476,7 @@ final class AppState {
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
             case .input: [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
             case .about: [.appVersion, .checkUpdates]
-            case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay]
+            case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
             }
         }
     }
@@ -1317,6 +1571,7 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
+        case .stopStreamOnExit: settings.stopStreamOnExit ? "On" : "Off"
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         }
@@ -1377,6 +1632,7 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter.toggle()
         case .keepAwake: settings.keepAwake.toggle()
         case .performanceOverlay: settings.performanceOverlay.toggle()
+        case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
         case .appVersion, .checkUpdates: break  // not value rows
         }
     }

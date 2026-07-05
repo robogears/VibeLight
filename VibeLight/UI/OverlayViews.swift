@@ -36,6 +36,10 @@ struct OverlayHost: View {
                 PresetSlotMenuCard(slot: slot)
             case .renamePreset(let slot):
                 RenamePresetCard(slot: slot)
+            case .moonDeckSetup(let hostID):
+                MoonDeckSetupCard(hostID: hostID)
+            case .confirmRestartPC(let hostID):
+                ConfirmRestartCard(hostID: hostID)
             }
         }
     }
@@ -351,6 +355,156 @@ private struct RenamePresetCard: View {
         }
         .onAppear { fieldFocused = true }
         .onDisappear { state.controller.keyboardCaptureEnabled = true }
+    }
+}
+
+/// Confirm a force-restart of an already-paired host (destructive).
+private struct ConfirmRestartCard: View {
+    @Environment(AppState.self) private var state
+    let hostID: String
+    private var hostName: String { state.hosts.first { $0.id == hostID }?.name ?? "this PC" }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "restart")
+                    .font(.system(size: 34)).foregroundStyle(.orange)
+                Text("Restart \(hostName)?")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                Text("Windows will reboot right away, closing anything that's running.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+            }
+            if state.moonDeckRestarting {
+                ProgressView().controlSize(.large).tint(Theme.accent).frame(height: 96)
+            } else {
+                VStack(spacing: 12) {
+                    OverlayButton(id: "restartpc:yes", title: "Restart PC", symbol: "restart", destructive: true)
+                    OverlayButton(id: "restartpc:cancel", title: "Cancel", symbol: "xmark")
+                }
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+/// Set up / PIN-pair MoonDeckBuddy for a host, then offer to restart. Adapts to
+/// the live pairing status.
+private struct MoonDeckSetupCard: View {
+    @Environment(AppState.self) private var state
+    let hostID: String
+    @FocusState private var portFocused: Bool
+    private var hostName: String { state.hosts.first { $0.id == hostID }?.name ?? "this PC" }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 6) {
+                Image(systemName: "restart.circle")
+                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
+                Text("Restart via MoonDeckBuddy")
+                    .font(.system(size: 23, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+            content
+        }
+        .padding(44).frame(width: 480)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .onChange(of: portFocused) { _, focused in
+            state.controller.keyboardCaptureEnabled = !focused
+        }
+        .onDisappear { state.controller.keyboardCaptureEnabled = true }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch state.moonDeckPairing?.status {
+        case .some(.connecting):
+            VStack(spacing: 12) {
+                ProgressView().tint(Theme.accent)
+                Text("Connecting to MoonDeckBuddy…")
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            }
+            .frame(height: 90)
+            OverlayButton(id: "moondeck:cancel", title: "Cancel", symbol: "xmark")
+
+        case .some(.waiting):
+            VStack(spacing: 10) {
+                Text("Type this PIN into the MoonDeckBuddy pop-up on \(hostName):")
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 360)
+                Text(state.moonDeckPairing?.pin ?? "")
+                    .font(.system(size: 46, weight: .black, design: .rounded))
+                    .tracking(10).foregroundStyle(Theme.textPrimary)
+                ProgressView().tint(Theme.accent)
+            }
+            OverlayButton(id: "moondeck:cancel", title: "Cancel", symbol: "xmark")
+
+        case .some(.paired):
+            VStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 30)).foregroundStyle(.green)
+                Text("Paired! You can restart \(hostName) from VibeLight any time.")
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 360)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "moondeck:restart", title: "Restart PC Now", symbol: "restart", destructive: true)
+                OverlayButton(id: "moondeck:done", title: "Done", symbol: "checkmark")
+            }
+
+        default:   // initial / failed / offline
+            VStack(spacing: 14) {
+                Text("Install MoonDeckBuddy on \(hostName) and start it, then pair once. VibeLight will show a PIN to enter on the PC.")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 390)
+                HStack(spacing: 10) {
+                    Text("Port").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    TextField("59999", text: portBinding)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 96)
+                        .focused($portFocused)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(.white.opacity(portFocused ? 0.3 : 0.08), lineWidth: 1)
+                        }
+                        .onTapGesture { portFocused = true }
+                    #if os(iOS)
+                        .keyboardType(.numberPad)
+                    #endif
+                }
+                if let msg = errorMessage {
+                    Text(msg)
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center).frame(maxWidth: 390)
+                }
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "moondeck:pair", title: "Pair with MoonDeckBuddy", symbol: "link")
+                OverlayButton(id: "moondeck:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+    }
+
+    private var portBinding: Binding<String> {
+        Binding(get: { state.moonDeckPortText }, set: { state.moonDeckPortText = $0 })
+    }
+
+    private var errorMessage: String? {
+        switch state.moonDeckPairing?.status {
+        case .some(.offline): return MoonDeckBuddyClient.MDError.offline.errorDescription
+        case .some(.failed(let m)): return m
+        default: return nil
+        }
     }
 }
 

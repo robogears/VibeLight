@@ -75,7 +75,10 @@ private struct HeaderBar: View {
             Spacer()
 
             if let host = state.selectedHost {
-                HostChip(host: host)
+                HStack(spacing: 12) {
+                    RestartPCButton()
+                    HostChip(host: host)
+                }
             } else {
                 // Fresh user, no computers yet — the way in to add one.
                 Button { state.openHostMenu() } label: {
@@ -141,6 +144,28 @@ private struct HostChip: View {
         .contentShape(Capsule())
         .onHover { hovering = $0 }
         .onTapGesture { state.openHostMenu() }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Header button, left of the host chip: force-restart the selected PC via
+/// MoonDeckBuddy. First use walks the user through pairing; after that it's a
+/// one-tap confirm → reboot (no dialog on the PC).
+private struct RestartPCButton: View {
+    @Environment(AppState.self) private var state
+    @State private var hovering = false
+
+    var body: some View {
+        Button { state.requestRestartPC() } label: {
+            Image(systemName: "restart")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(hovering ? 0.12 : 0.06), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Restart PC")
         .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }

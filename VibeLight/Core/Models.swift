@@ -146,6 +146,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
     var quitAppAfter: Bool         // quit the app on the host after the stream ends
     var keepAwake: Bool
     var performanceOverlay: Bool
+    var stopStreamOnExit: Bool     // /cancel the running game on the host when VibeLight quits
 
     static let fallback = StreamSettings()
 
@@ -156,7 +157,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
          reverseScrolling: Bool = false, captureSystemKeys: CaptureSystemKeys = .fullscreen,
          swapGamepadButtons: Bool = false, backgroundGamepad: Bool = false, vsync: Bool = true,
          framePacing: Bool = false, gameOptimizations: Bool = true, quitAppAfter: Bool = false,
-         keepAwake: Bool = true, performanceOverlay: Bool = false) {
+         keepAwake: Bool = true, performanceOverlay: Bool = false, stopStreamOnExit: Bool = true) {
         self.width = width; self.height = height; self.fps = fps; self.bitrateKbps = bitrateKbps
         self.codec = codec; self.hdr = hdr; self.decoder = decoder; self.yuv444 = yuv444
         self.audio = audio; self.muteHostSpeakers = muteHostSpeakers; self.muteOnFocusLoss = muteOnFocusLoss
@@ -165,6 +166,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
         self.swapGamepadButtons = swapGamepadButtons; self.backgroundGamepad = backgroundGamepad
         self.vsync = vsync; self.framePacing = framePacing; self.gameOptimizations = gameOptimizations
         self.quitAppAfter = quitAppAfter; self.keepAwake = keepAwake; self.performanceOverlay = performanceOverlay
+        self.stopStreamOnExit = stopStreamOnExit
     }
 
     init(from decoder: any Decoder) throws {
@@ -193,6 +195,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
         quitAppAfter = try c.decodeIfPresent(Bool.self, forKey: .quitAppAfter) ?? f.quitAppAfter
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? f.keepAwake
         performanceOverlay = try c.decodeIfPresent(Bool.self, forKey: .performanceOverlay) ?? f.performanceOverlay
+        stopStreamOnExit = try c.decodeIfPresent(Bool.self, forKey: .stopStreamOnExit) ?? f.stopStreamOnExit
     }
 }
 
