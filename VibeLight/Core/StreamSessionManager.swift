@@ -364,7 +364,10 @@ final class StreamSessionManager: StreamEngine {
 
     // MARK: - Child process
 
-    private func streamArguments(address: String, rawAppName: String, settings: StreamSettings) -> [String] {
+    /// `nonisolated static` (a pure function of its inputs) so the argument-
+    /// injection guard — host-controlled operands after a `--` separator — can
+    /// be unit-tested without a live session.
+    nonisolated static func streamArguments(address: String, rawAppName: String, settings: StreamSettings) -> [String] {
         var args = [
             "stream",
             "--resolution", "\(settings.width)x\(settings.height)",
@@ -414,7 +417,7 @@ final class StreamSessionManager: StreamEngine {
     ) throws {
         let process = Process()
         process.executableURL = moonlightBinary
-        process.arguments = streamArguments(address: address, rawAppName: rawAppName, settings: settings)
+        process.arguments = Self.streamArguments(address: address, rawAppName: rawAppName, settings: settings)
         process.standardInput = FileHandle.nullDevice
 
         // Ask the fork to run headless (chromeless, clean signals). Stock
