@@ -1,5 +1,19 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
+
+/// Locks the app to landscape. The Info.plist orientation keys +
+/// `UIRequiresFullScreen` are no longer honored on modern iOS/iPadOS (Apple
+/// deprecated them), so a real device still rotates to portrait — where the
+/// landscape big-picture layout collapses (title squished up top, the bottom
+/// command bar buried). `supportedInterfaceOrientationsFor` IS authoritative and
+/// forces landscape on both iPhone and iPad.
+final class VibeLightAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        .landscape
+    }
+}
 
 /// iOS / iPadOS entry point. Unlike macOS (which boots `NSApplication` manually
 /// in App/main.swift to get a borderless big-picture key window), iOS is
@@ -9,6 +23,8 @@ import SwiftUI
 /// host `RootView`, inject via `.environment`, force dark mode.
 @main
 struct VibeLightApp: App {
+    /// Owns the landscape orientation lock (see VibeLightAppDelegate).
+    @UIApplicationDelegateAdaptor(VibeLightAppDelegate.self) private var appDelegate
     /// One AppState for the app's lifetime (same single-owner model as macOS,
     /// where the AppDelegate holds the sole instance).
     @State private var state = AppState()

@@ -26,3 +26,6 @@ Local.xcconfig
 *.pem
 *.key
 CLAUDE.local.md
+
+# iOS streaming deps (rebuild with scripts/ios/build-deps.sh)
+ThirdParty/ios/

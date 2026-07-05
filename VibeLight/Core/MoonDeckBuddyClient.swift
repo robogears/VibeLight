@@ -38,7 +38,7 @@ final class MoonDeckBuddyClient: Sendable {
         case apiVersionTooOld(Int)       // buddy older than we support
         case unauthorized                // 401 — this client isn't paired
         case http(Int)                   // other non-2xx
-        case badResponse                 // unparseable / unexpected JSON
+        case badResponse(String)         // unparseable / unexpected JSON (detail = endpoint + body)
         case restartRejected             // {"result": false}
 
         var errorDescription: String? {
@@ -51,8 +51,8 @@ final class MoonDeckBuddyClient: Sendable {
                 return "VibeLight isn't paired with MoonDeckBuddy on this PC yet."
             case .http(let code):
                 return "MoonDeckBuddy returned HTTP \(code)."
-            case .badResponse:
-                return "MoonDeckBuddy sent an unexpected response."
+            case .badResponse(let detail):
+                return "MoonDeckBuddy sent an unexpected response (\(detail))."
             case .restartRejected:
                 return "MoonDeckBuddy declined the restart."
             }
@@ -114,15 +114,31 @@ final class MoonDeckBuddyClient: Sendable {
 
     func apiVersion(host: String, port: Int) async throws -> Int {
         let data = try await send("GET", host: host, port: port, path: "/apiVersion")
-        guard let obj = Self.json(data), let v = obj["version"] as? Int else { throw MDError.badResponse }
-        return v
+        // `version` is an Int in current builds; tolerate a stringified number too.
+        if let obj = Self.json(data) {
+            if let v = obj["version"] as? Int { return v }
+            if let s = obj["version"] as? String, let v = Int(s) { return v }
+        }
+        throw MDError.badResponse("apiVersion: \(Self.snippet(data))")
     }
 
     func pairState(host: String, port: Int, clientID: String) async throws -> PairState {
         let data = try await send("GET", host: host, port: port, path: "/pairingState/\(clientID)")
-        guard let obj = Self.json(data), let raw = obj["state"] as? Int,
-              let state = PairState(rawValue: raw) else { throw MDError.badResponse }
-        return state
+        guard let obj = Self.json(data), let raw = obj["state"] else {
+            throw MDError.badResponse("pairingState: \(Self.snippet(data))")
+        }
+        // `state` is 0/1/2 in current builds; older/other builds may send a
+        // string enum ("Paired"/"Pairing"/"NotPaired"). Accept both.
+        if let i = raw as? Int, let s = PairState(rawValue: i) { return s }
+        if let str = (raw as? String)?.lowercased().replacingOccurrences(of: "_", with: "") {
+            switch str {
+            case "paired":    return .paired
+            case "pairing":   return .pairing
+            case "notpaired": return .notPaired
+            default: break
+            }
+        }
+        throw MDError.badResponse("pairingState state=\(raw)")
     }
 
     /// Begin pairing: the PC pops a PIN dialog the user fills in. `hashed_id`
@@ -150,7 +166,7 @@ final class MoonDeckBuddyClient: Sendable {
                       body: [String: Any]? = nil, authClientID: String? = nil) async throws -> Data {
         var comps = URLComponents()
         comps.scheme = "https"; comps.host = host; comps.port = port; comps.path = path
-        guard let url = comps.url else { throw MDError.badResponse }
+        guard let url = comps.url else { throw MDError.badResponse("bad url") }
 
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -180,6 +196,13 @@ final class MoonDeckBuddyClient: Sendable {
 
     private static func json(_ data: Data) -> [String: Any]? {
         try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// A short, log-safe preview of a response body for diagnostics.
+    private static func snippet(_ data: Data) -> String {
+        let s = String(decoding: data.prefix(160), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? "empty body" : s
     }
 }
 
