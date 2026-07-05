@@ -15,16 +15,24 @@ verification only — which needs the iPad in hand + the host awake._
 
 ## Streaming — where it actually stands
 
-Connection **establishes** against the host (all RTSP stages complete). Last
-on-device test showed a **black screen** with these log signatures:
-- `Failed to decrypt audio packet` on every packet
-- `Waiting for IDR frame` forever / `Unrecoverable frame … 26 received < 103 needed`
-- `Failed to send ENet control packet` / control stream disconnect
+Connection **establishes** every time (all RTSP stages complete). On-device logs
+pinned down THREE real causes of the black screen — now fixed:
 
-Diagnosis (from reading vendored common-c + moonlight-ios/qt): the non-standard
-`ENCFLG_AUDIO` flag created an inconsistent encryption negotiation. **Fix applied:
-`encryptionFlags = ENCFLG_ALL`** (what the reference clients use) + a connect-time
-log line.
+1. **4K120 @ 150 Mbps over a Tailscale relay** (`connect: … 3840x2160@120 150000kbps`).
+   Impossible through DERP — IDR frames shatter into ~103 FEC shards, only ~26
+   arrive → `lack of a successful video frame`. **Fix:** `relayCapped()` in
+   `InProcessStreamEngine` caps non-LAN streams to ≤1080p / ≤60fps / ≤25 Mbps,
+   applied to BOTH `/launch` mode and the stream config.
+2. **`malloc: pointer being freed was not allocated` crash** — the connection
+   relaunched repeatedly and moonlight-common-c is single-connection, so
+   overlapping `LiStartConnection`/`LiStopConnection` double-freed (and scrambled
+   the per-session AES keys → the 100% `Failed to decrypt audio packet`). **Fix:**
+   all lifecycle calls serialized through one `LifecycleQueue` in
+   `MoonlightSession.mm`; the engine fully stops the prior session before launching.
+3. `encryptionFlags = ENCFLG_ALL` (matches moonlight-ios/qt) from the prior pass.
+
+Host's real appVersion (from the connect log) = `7.1.431` — so encrypted control
+is correct; no appVersion change needed.
 
 ## To resume — do this on the iPad (host awake)
 

@@ -42,12 +42,28 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {
+        // Tear down any prior connection FIRST — moonlight-common-c is
+        // single-connection, and a second LiStartConnection over a live one
+        // double-frees + scrambles the per-session AES keys (observed on-device as
+        // a malloc crash + 100% audio-decrypt failures on relaunch).
+        if let existing = session {
+            existing.stop()
+            session = nil
+            proxy = nil
+        }
         connectedOnce = false
         remoteQuitRequested = false
         phase = .launching(app)
         do {
             // Fresh serverinfo for the working address + host generation/codecs.
             let (info, address) = try await api.serverInfo(for: host)
+
+            // Over a relay (Tailscale/WAN), 4K120 @ 150 Mbps can't traverse DERP —
+            // IDR frames fragment into ~100 FEC shards and starve ("26 < 103
+            // needed" → no video). Cap remote streams to a relay-survivable
+            // profile. The SAME capped values must drive /launch (mode=…) and the
+            // stream config, or host and client disagree on geometry.
+            let effective = Self.relayCapped(settings, address: address)
 
             // Remote-input AES material: rikey = 16 random bytes (hex), rikeyid =
             // a positive 31-bit int whose big-endian bytes seed the IV.
@@ -58,7 +74,7 @@ final class InProcessStreamEngine: StreamEngine {
             iv[2] = UInt8((rikeyId >> 8) & 0xFF);  iv[3] = UInt8(rikeyId & 0xFF)
 
             let sessionUrl = try await api.launch(
-                app: app, on: host, at: address, settings: settings,
+                app: app, on: host, at: address, settings: effective,
                 rikeyHex: key.lowercaseHex, rikeyId: rikeyId,
                 extraLaunchParams: MoonlightSession.launchUrlQueryParameters())
 
@@ -71,8 +87,8 @@ final class InProcessStreamEngine: StreamEngine {
                 gfeVersion: nil,
                 rtspUrl: sessionUrl,
                 codecModeSupport: Int32(info.serverCodecModeSupport),
-                width: Int32(settings.width), height: Int32(settings.height),
-                fps: Int32(settings.fps), bitrateKbps: Int32(settings.bitrateKbps),
+                width: Int32(effective.width), height: Int32(effective.height),
+                fps: Int32(effective.fps), bitrateKbps: Int32(effective.bitrateKbps),
                 enableHevc: false, enableHdr: false,   // H.264 for the first connect
                 aesKey: key, aesIv: iv)
             session.delegate = proxy
@@ -92,6 +108,48 @@ final class InProcessStreamEngine: StreamEngine {
     func disconnect() {
         session?.stop()
         session = nil
+        proxy = nil
+    }
+
+    // MARK: - Relay-safe capping
+
+    /// Caps a stream profile for connections that leave the LAN. 4K120@150Mbps is
+    /// fine on a gigabit LAN but hopeless over a Tailscale DERP relay, where huge
+    /// IDR frames shatter into more FEC shards than the link can deliver. On a
+    /// local address the user's settings pass through untouched.
+    static func relayCapped(_ s: StreamSettings, address: String) -> StreamSettings {
+        guard isRemoteAddress(address) else { return s }
+        var c = s
+        // Fit to 1080p, preserving aspect (never upscale).
+        let maxW = 1920, maxH = 1080
+        if c.width > maxW || c.height > maxH {
+            let r = min(Double(maxW) / Double(c.width), Double(maxH) / Double(c.height))
+            c.width  = (Int(Double(c.width) * r) / 2) * 2   // keep even dimensions
+            c.height = (Int(Double(c.height) * r) / 2) * 2
+        }
+        c.fps = min(c.fps, 60)
+        c.bitrateKbps = min(c.bitrateKbps, 25_000)   // 25 Mbps ceiling for a relay
+        return c
+    }
+
+    /// True for anything that isn't a private-LAN address — including Tailscale's
+    /// 100.64.0.0/10 CGNAT range, which is relayed and bandwidth-limited.
+    static func isRemoteAddress(_ address: String) -> Bool {
+        // Strip any port/zone suffix.
+        let host = address.split(separator: "%").first.map(String.init) ?? address
+        let a = host.split(separator: ":").count > 2 ? host   // IPv6 → treat as remote unless link-local
+                                                     : String(host.split(separator: ":").first ?? "")
+        let o = a.split(separator: ".").map { Int($0) ?? -1 }
+        guard o.count == 4 else {
+            // Non-IPv4 (hostname or IPv6): assume remote unless obviously local.
+            return !(a.hasPrefix("fe80") || a == "::1" || a.lowercased().hasSuffix(".local"))
+        }
+        switch (o[0], o[1]) {
+        case (10, _), (192, 168), (169, 254): return false          // private / link-local LAN
+        case (172, 16...31): return false                            // private LAN
+        case (127, _): return false                                  // loopback
+        default: return true                                         // incl. 100.64/10 Tailscale, public
+        }
     }
 
     func quitCompletely(host: StreamHost) async {

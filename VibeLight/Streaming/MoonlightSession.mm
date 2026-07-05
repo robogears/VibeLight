@@ -7,6 +7,23 @@
 // as moonlight-ios Connection.m.)
 static __weak MoonlightSession *sActive = nil;
 
+// LiStartConnection / LiStopConnection must never overlap — the library holds one
+// connection's worth of global state, and a second LiStartConnection before the
+// first is torn down double-frees (seen on-device as a malloc crash) and mixes up
+// the per-session AES keys (stale audio packets then fail to decrypt). Serializing
+// every lifecycle call through one queue guarantees old-stop-then-new-start
+// ordering. LiStartConnection returns once the connection is established (the
+// session then runs on its own internal threads), so a serial queue never
+// deadlocks; LiInterruptConnection is called inline to unblock an in-flight start.
+static dispatch_queue_t LifecycleQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("com.vibelight.moonlight.lifecycle", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
 @implementation MoonlightSession {
     SERVER_INFORMATION _serverInfo;
     STREAM_CONFIGURATION _streamConfig;
@@ -17,6 +34,9 @@ static __weak MoonlightSession *sActive = nil;
     CMVideoFormatDescriptionRef _formatDesc;
     NSData *_sps, *_pps, *_vps;
     int _videoFormat;
+    // Set (on LifecycleQueue) once LiStartConnection has actually run, so stop only
+    // calls LiStopConnection for a connection that was really started.
+    BOOL _didStart;
 }
 
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
@@ -88,7 +108,11 @@ static __weak MoonlightSession *sActive = nil;
           _serverInfo.serverInfoAppVersion ?: "(nil)", _streamConfig.encryptionFlags,
           _streamConfig.width, _streamConfig.height, _streamConfig.fps, _streamConfig.bitrate,
           _streamConfig.supportedVideoFormats, _serverInfo.serverCodecModeSupport);
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+    dispatch_async(LifecycleQueue(), ^{
+        // A newer session may have superseded us while queued — don't start a
+        // connection nobody is listening to (and that would overlap the new one).
+        if (sActive != self) return;
+
         CONNECTION_LISTENER_CALLBACKS cl = {0};
         cl.stageStarting = ClStageStarting;
         cl.stageComplete = ClStageComplete;
@@ -114,17 +138,25 @@ static __weak MoonlightSession *sActive = nil;
         ar.cleanup = ArCleanup;
         ar.decodeAndPlaySample = ArDecode;
 
+        self->_didStart = YES;
         LiStartConnection(&self->_serverInfo, &self->_streamConfig, &cl, &dr, &ar,
                           NULL, 0, NULL, 0);
     });
 }
 
 - (void)stop {
-    LiInterruptConnection();
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        LiStopConnection();
-    });
     if (sActive == self) sActive = nil;
+    // Unblock any in-flight LiStartConnection so the serial queue drains and the
+    // teardown below can run (and complete before the next session's start).
+    LiInterruptConnection();
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(LifecycleQueue(), ^{
+        typeof(self) s = weakSelf;
+        if (s && s->_didStart) {
+            s->_didStart = NO;
+            LiStopConnection();
+        }
+    });
 }
 
 // MARK: - Delegate marshalling (called from C callbacks below, on the main queue)
