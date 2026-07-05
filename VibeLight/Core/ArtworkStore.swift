@@ -349,7 +349,9 @@ actor ArtworkStore: ArtworkProviding {
     /// verbatim; anything else (contains "/" "\\", is "." / "..", non-ASCII, or
     /// over-long) is replaced with a deterministic SHA-256 hash — stable for
     /// caching, and guaranteed to contain no path separators.
-    private nonisolated static func safeComponent(_ raw: String) -> String {
+    ///
+    /// `internal` (not `private`) only so the traversal guard can be unit-tested.
+    nonisolated static func safeComponent(_ raw: String) -> String {
         let isSafe = !raw.isEmpty && raw.count <= 128
             && raw != "." && raw != ".."
             && raw.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == ".") }
