@@ -44,7 +44,7 @@ final class AppState {
     #if os(macOS)
     let session: StreamSessionManager
     #else
-    let session: DisabledStreamEngine
+    let session: InProcessStreamEngine
     #endif
     let focus = FocusEngine()
     let controller = ControllerManager()
@@ -227,7 +227,7 @@ final class AppState {
         #if os(macOS)
         session = StreamSessionManager(api: client)
         #else
-        session = DisabledStreamEngine()
+        session = InProcessStreamEngine(api: client)
         #endif
 
         // Our settings: previously persisted > imported Moonlight defaults > fallback.

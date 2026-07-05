@@ -40,14 +40,7 @@ struct VibeLightApp: App {
                 .preferredColorScheme(.dark)
                 .statusBarHidden(true)
                 .persistentSystemOverlays(.hidden)
-                .task {
-                    state.chrome = chrome
-                    #if DEBUG
-                    // Streaming Phase-2 smoke check: proves Swift → ObjC++ →
-                    // moonlight-common-c linkage end-to-end ("none" = STAGE_NONE).
-                    print("MoonlightCore linked; LiGetStageName(0) = \(MoonlightSession.stageName(0))")
-                    #endif
-                }
+                .task { state.chrome = chrome }
                 .onChange(of: scenePhase) { _, phase in
                     // Runaway-repeat guard: controller button releases are
                     // dropped while backgrounded, so reset transient input state

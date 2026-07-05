@@ -144,6 +144,51 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         }
     }
 
+    /// Starts a game on the host over mTLS 47984 and returns its RTSP session URL
+    /// (`<sessionUrl0>`) for `LiStartConnection`. `rikeyHex`/`rikeyId` are the
+    /// remote-input AES key/iv the caller also feeds to the stream engine;
+    /// `extraLaunchParams` is moonlight-common-c's `LiGetLaunchUrlQueryParameters`
+    /// output appended verbatim. Query shape mirrors moonlight-qt's launchApp().
+    func launch(app: StreamApp, on host: StreamHost, at address: String, settings: StreamSettings,
+                rikeyHex: String, rikeyId: Int, extraLaunchParams: String) async throws -> String? {
+        // surroundAudioInfo = channelCount | (channelMask << 16); stereo = 2 | (0x3<<16).
+        let surround = 2 | (0x3 << 16)
+        var items = [
+            URLQueryItem(name: "appid", value: String(app.id)),
+            URLQueryItem(name: "mode", value: "\(settings.width)x\(settings.height)x\(settings.fps)"),
+            URLQueryItem(name: "additionalStates", value: "1"),
+            URLQueryItem(name: "sops", value: settings.gameOptimizations ? "1" : "0"),
+            URLQueryItem(name: "rikey", value: rikeyHex),
+            URLQueryItem(name: "rikeyid", value: String(rikeyId)),
+            URLQueryItem(name: "localAudioPlayMode", value: settings.muteHostSpeakers ? "0" : "1"),
+            URLQueryItem(name: "surroundAudioInfo", value: String(surround)),
+            URLQueryItem(name: "remoteControllersBitmap", value: "1"),
+            URLQueryItem(name: "gcmap", value: "1"),
+            URLQueryItem(name: "gcpersist", value: "0"),
+        ]
+        if settings.hdr {
+            items.append(URLQueryItem(name: "hdrMode", value: "1"))
+            items.append(URLQueryItem(name: "clientHdrCapVersion", value: "0"))
+        }
+        var request = try makeRequest(
+            address: address, port: httpsPort(for: host, at: address), path: "/launch", extraQuery: items)
+        // LiGetLaunchUrlQueryParameters() is a raw pre-formed query fragment.
+        if !extraLaunchParams.isEmpty, let url = request.url {
+            let joiner = url.absoluteString.contains("?") ? "&" : "?"
+            request.url = URL(string: url.absoluteString + joiner + extraLaunchParams)
+        }
+        let session = try session(for: host)
+        let data: Data
+        do {
+            data = try await session.data(for: request).0
+        } catch is URLError {
+            if Task.isCancelled { throw CancellationError() }
+            throw HostAPIError.unreachable(host.name)
+        }
+        let root = try Self.verifiedRoot(in: data, context: "launch")   // throws on status_code != 200
+        return root.child("sessionUrl0")?.text.trimmed
+    }
+
     // MARK: - Request plumbing
 
     /// Sunshine-family port map: HTTPS API sits at base − 5 (47989 → 47984).
