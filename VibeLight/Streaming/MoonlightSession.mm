@@ -37,6 +37,11 @@ static dispatch_queue_t LifecycleQueue(void) {
     // Set (on LifecycleQueue) once LiStartConnection has actually run, so stop only
     // calls LiStopConnection for a connection that was really started.
     BOOL _didStart;
+    // Diagnostics: distinguish "frames never reached the decoder" (network/FEC)
+    // from "frames decoded but nothing on screen" (display-layer/view) without
+    // spamming the log.
+    int _framesEnqueued;
+    BOOL _loggedLayerFail;
 }
 
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
@@ -89,11 +94,16 @@ static dispatch_queue_t LifecycleQueue(void) {
     _streamConfig.clientRefreshRateX100 = fps * 100;
     _streamConfig.colorSpace = COLORSPACE_REC_709;
     _streamConfig.colorRange = COLOR_RANGE_LIMITED;
-    // ENCFLG_ALL matches moonlight-ios/qt: request full encryption and let the
-    // host negotiate. Partial flags (audio-only) create an inconsistent SDP
-    // negotiation with Apollo/Vibepollo hosts (audio decrypt then fails every
-    // packet, control stream drops → no IDR → black screen).
-    _streamConfig.encryptionFlags = ENCFLG_ALL;
+    // ENCFLG_NONE: don't REQUEST audio/video encryption. On-device, RTSP+control
+    // (AES-GCM) succeed but every audio packet (AES-CBC) fails to decrypt and no
+    // video IDR ever assembles — the signature of a broken mbedcrypto CBC path
+    // (the working moonlight-qt helper uses OpenSSL; only our iOS build uses
+    // mbedcrypto). Requesting no encryption makes the host send plaintext A/V
+    // (Sunshine's default — encryption is optional unless the host requires it),
+    // sidestepping the CBC path entirely. If the host *requires* encryption,
+    // common-c re-enables it and the failures return — which itself tells us the
+    // mbedcrypto build needs fixing rather than this flag.
+    _streamConfig.encryptionFlags = ENCFLG_NONE;
     memcpy(_streamConfig.remoteInputAesKey, aesKey.bytes, MIN((NSUInteger)16, aesKey.length));
     memcpy(_streamConfig.remoteInputAesIv, aesIv.bytes, MIN((NSUInteger)16, aesIv.length));
 
@@ -213,6 +223,11 @@ static int startCodeLen(const uint8_t *p, int len) {
 - (int)submit:(PDECODE_UNIT)du {
     if (!_displayLayer) return DR_OK;
     if (_displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
+        if (!_loggedLayerFail) {
+            _loggedLayerFail = YES;   // once — decode/format problem, not network
+            NSLog(@"[VibeLight] display layer FAILED after %d frames: %@",
+                  _framesEnqueued, _displayLayer.error);
+        }
         [_displayLayer flush];
         return DR_NEED_IDR;   // ask the host to resend keyframe data
     }
@@ -260,11 +275,17 @@ static int startCodeLen(const uint8_t *p, int len) {
     }
     [_displayLayer enqueueSampleBuffer:sb];
     CFRelease(sb);
+    if (_framesEnqueued++ == 0) {
+        CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(_formatDesc);
+        NSLog(@"[VibeLight] first video frame enqueued (%dx%d) — decode path OK", dim.width, dim.height);
+    }
     return DR_OK;
 }
 
 static int  DrSetup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
-    MoonlightSession *s = sActive; if (s) s->_videoFormat = videoFormat; return 0;
+    MoonlightSession *s = sActive; if (s) s->_videoFormat = videoFormat;
+    NSLog(@"[VibeLight] video decode setup: format=0x%x %dx%d@%d", videoFormat, width, height, redrawRate);
+    return 0;
 }
 static void DrStart(void) {}
 static void DrStop(void) {}
