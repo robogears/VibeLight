@@ -40,11 +40,12 @@ VibeLight is the shell Moonlight never had.
   focus engine (43 unit tests) makes every shelf, tile, setting, and dialog fully
   navigable by controller — the thing macOS SwiftUI can't do on its own. The
   keyboard feeds the exact same engine.
-- **Zero-setup pairing reuse.** VibeLight imports your existing Moonlight setup —
-  hosts, apps, the client certificate/key, and your stream defaults — straight
-  from `com.moonlight-stream.Moonlight.plist`. **No re-pairing, no new
-  credentials, no configuration.** If Moonlight already talks to your PC, so does
-  VibeLight.
+- **Pair in-app, or import from Moonlight.** Add a computer by IP and pair it
+  right inside VibeLight (enter the PIN on your host's web UI) — the full
+  GameStream handshake, no Moonlight required. Already use Moonlight? VibeLight
+  also imports your existing setup — hosts, apps, the client certificate/key, and
+  your stream defaults — straight from `com.moonlight-stream.Moonlight.plist`, so
+  **there's nothing to re-pair or reconfigure.**
 - **Chromeless embedded streaming engine.** Streaming runs through
   `StreamHelper.app`, a headless fork of moonlight-qt bundled inside VibeLight. It
   shows no Moonlight UI, keeps no Dock icon (`LSUIElement` agent), never pops a
@@ -88,11 +89,11 @@ VibeLight is the shell Moonlight never had.
 ## Requirements
 
 - **Apple Silicon Mac** (arm64) running **macOS 15 (Sequoia) or later**.
-- **[Moonlight](https://moonlight-stream.org)** installed and **already paired
-  with your host once.** VibeLight imports that pairing — it does not pair on its
-  own (v1). If you can stream in Moonlight, you're ready.
 - A **Sunshine-family host** on your gaming PC: **Sunshine**, **Apollo**, or
   **Vibepollo**. VibeLight talks the GameStream API these expose.
+- **[Moonlight](https://moonlight-stream.org) is optional.** VibeLight can pair
+  your PC itself (add-by-IP → PIN). If you already run Moonlight, VibeLight
+  imports its hosts + pairing for zero setup — but it's no longer required.
 
 ---
 
@@ -307,8 +308,9 @@ VibeLight stands on the shoulders of:
 ## Status / roadmap
 
 VibeLight is an **early but working** project (v0.1.x) — it streams end-to-end
-today, with the full big-picture UI, controller navigation, zero-setup pairing
-reuse, the embedded chromeless engine, and the in-app updater all functional.
+today, with the full big-picture UI, controller navigation, in-app pairing (and
+zero-setup Moonlight import), the embedded chromeless engine, and the in-app
+updater all functional.
 
 Deferred / not yet shipped:
 

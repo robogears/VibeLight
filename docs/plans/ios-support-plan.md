@@ -297,7 +297,7 @@ byte-exact pinning stronger than CA trust). **The same key is required in the iO
 target's Info.plist.** On iOS, `NSAllowsArbitraryLoads` + `NSAllowsLocalNetworking`
 plus the **Local Network privacy permission** (`NSLocalNetworkUsageDescription`,
 already present) and a **Bonjour usage** entry if we ever mDNS-discover. Without
-these the mTLS handshake to `100.126.190.18:47984` / `192.168.x` dies before our
+these the mTLS handshake to `<HOST_IP>:47984` / `192.168.x` dies before our
 pinning delegate runs — exactly the `-1200` failure the macOS comment describes.
 The C stream engine's raw UDP/TCP sockets are **not** subject to ATS (ATS only
 governs URLSession/CFNetwork HTTP), so the moonlight-common-c stream itself is
@@ -577,7 +577,7 @@ protocol seam.
 generate the RSA key with `SecKeyCreateRandomKey` and the self-signed X.509 cert
 with `apple/swift-certificates`, eliminating every `/usr/bin/openssl` `Process`
 call — landing and verifying it on macOS first** (against the existing
-`GameStreamCryptoTests` + a live pair with "UAE Server"). It is the only shared
+`GameStreamCryptoTests` + a live pair with "MyServer"). It is the only shared
 blocker, it strictly improves the current macOS app, and it is a self-contained,
 independently shippable change that unblocks the entire iOS Core in Phase 1.
 

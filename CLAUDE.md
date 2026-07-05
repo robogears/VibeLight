@@ -12,13 +12,20 @@ xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Debug b
 ./scripts/install-app.sh    # Release build → /Applications + embeds the helper
 ```
 
+Schemes: **VibeLight** (macOS release), **VibeLight-Dev** (coexisting macOS dev
+build — "VibeLight Dev", amber icon, `com.vibelight.app.dev`), **VibeLight-iOS**
+(iPhone/iPad — Phase 1: launcher + pairing, no streaming yet). iOS device builds
+need a team: `export VIBELIGHT_TEAM=YOURTEAMID` before `xcodegen generate` (kept
+out of the repo; the Simulator builds without it).
+
 Swift 6 strict concurrency is ON. macOS 15+ deployment target. No sandbox
 (we exec the stream helper and read Moonlight's plist).
 
 **Streaming helper**: our moonlight-qt fork at `~/Documents/vibelight-moonlight-helper`
 (chromeless, headless `@VL` protocol, LSUIElement agent — see its FORK-CHANGES.md).
-Build it with `export PATH="$(brew --prefix qt)/bin:$PATH" && qmake moonlight-qt.pro
-&& make release`. `scripts/embed-helper.sh` macdeployqt's a copy into
+Build it with `git submodule update --init --recursive && python3 setup-deps.py`
+(MANDATORY before qmake), then `export PATH="$(brew --prefix qt)/bin:$PATH" &&
+qmake moonlight-qt.pro && make release`. `scripts/embed-helper.sh` macdeployqt's a copy into
 `VibeLight.app/Contents/Helpers/StreamHelper.app` (relocatable, ad-hoc signed);
 `resolveStreamBinary()` prefers embedded → fork dev build → stock Moonlight.
 Notarization needs a paid Developer ID (not configured); GPL fork = never MAS.
@@ -29,9 +36,13 @@ Notarization needs a paid Developer ID (not configured); GPL fork = never MAS.
 `/Applications/Moonlight.app/Contents/MacOS/Moonlight stream …` owns the pixels.
 
 **Host protocol** (Vibepollo host = Sunshine → Apollo → Vibepollo fork):
-- v1 talks ONLY to the GameStream API: HTTPS 47984 with mTLS using the client
-  cert/key reused from `~/Library/Preferences/com.moonlight-stream.Moonlight.plist`.
-  Zero new credentials, zero re-pairing.
+- v1 talks ONLY to the GameStream API: HTTPS 47984 with mTLS. The client identity
+  is either **reused** from `~/Library/Preferences/com.moonlight-stream.Moonlight.plist`
+  (zero-setup for existing Moonlight users, no re-pairing) OR, for a user without
+  Moonlight, **VibeLight's own generated identity** — and VibeLight can **pair a
+  new host in-app** (add-by-IP → PIN, the full 5-phase NvPairingManager handshake:
+  `Core/IdentityStore`, `HostPairing`, `GameStreamCrypto`, `UI/HostMenuCard`). So
+  Moonlight is no longer required to add a computer.
 - The Vibepollo REST API on 47990 (Basic/Bearer auth) is a v2 optional tier.
 - Errors arrive as XML `<root status_code="401">` over a *successful* TLS
   handshake — always parse the attribute, never expect TLS-level rejection.
@@ -84,6 +95,24 @@ Notarization needs a paid Developer ID (not configured); GPL fork = never MAS.
 - `VibeLight/Input/` — controller manager, keyboard routing, focus engine
 - `VibeLight/UI/` — theme, screens, components (consumes Core/Input only
   through contracts in `Core/Contracts.swift`)
+- `VibeLight/App/iOS/` — iOS-only shell (entry point, `DisabledStreamEngine`,
+  `iOSPlatformChrome`); `VibeLight/Streaming/` — the in-process engine bridge
+  (WIP, iOS streaming).
+
+## iOS / iPadOS (Phase 1 shipped; streaming is WIP)
+
+VibeLight also builds for iOS 17+ (`VibeLight-iOS` target). Shared Core/Input/UI
+compile on both platforms; the split is behind two seams in `Core/Contracts.swift`:
+**`StreamEngine`** (macOS = `StreamSessionManager` subprocess; iOS =
+`DisabledStreamEngine` stub) and **`PlatformChrome`** (macOS = `WindowCoordinator`;
+iOS = `iOSPlatformChrome`). Convention: AppKit/`Process`/macOS-only code is under
+`#if os(macOS)`; iOS identity self-generates via `SecKeyCreateRandomKey` +
+swift-certificates in `Core/iOSIdentity.swift` (`#if os(iOS)`, needs the
+`keychain-access-groups` entitlement — see `VibeLightiOS.entitlements`). **Real
+streaming isn't built for iOS yet** — that needs the in-process moonlight-common-c
+engine (the C core already compiles/links/runs on iOS; see
+`docs/plans/ios-support-plan.md` + `scripts/ios/`). GPLv3 = no App Store on iOS
+either (sideload/AltStore).
 
 ## User's setup (test environment)
 
