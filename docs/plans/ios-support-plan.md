@@ -8,6 +8,51 @@ Cite the file/API by name; do not restate it.
 
 ---
 
+## ⓪·⁵ Phase 1 — IMPLEMENTED (2026-07-05) + hard-won findings
+
+Phase 1 (shared launcher on iOS, streaming disabled) is **built, running, and
+partly verified**. What landed and what the next attempt must know:
+
+- **Targets/seam.** `project.yml` has a `VibeLight-iOS` app target + a
+  `VibeLightiOSTests` unit-test target (both iOS 17). Streaming sits behind
+  `StreamEngine` (Contracts.swift): macOS keeps `StreamSessionManager`; iOS uses
+  `DisabledStreamEngine` (`App/iOS/`). OS chrome is behind `PlatformChrome`
+  (`WindowCoordinator` on macOS, `iOSPlatformChrome` on iOS). AppKit/Process
+  files are `#if os(macOS)`; `AppRelocator`/`UpdateService` gained iOS stubs;
+  `ControllerManager` split (GCController shared, NSEvent gated); the entry point
+  is `App/iOS/VibeLightApp.swift`.
+
+- **Identity — the macOS path was deliberately NOT changed.** macOS keeps
+  openssl→P12→`SecPKCS12Import` (it must handle Moonlight-**imported** PEM
+  identities, which can't be keychain-assembled ad-hoc). iOS (no Moonlight plist,
+  no `Process`) self-generates via `SecKeyCreateRandomKey(kSecAttrIsPermanent)` +
+  apple/swift-certificates, assembling a `SecIdentity` from the keychain
+  (`Core/iOSIdentity.swift`, `#if os(iOS)`). swift-certificates is an **iOS-only**
+  SPM dependency (macOS never links it).
+
+- **⚠️ THE GOTCHA that will bite the next person: iOS keychain needs an
+  entitlement.** An unsigned/adhoc iOS build with no entitlements CANNOT write a
+  permanent key — `SecKeyCreateRandomKey` fails with `errSecMissingEntitlement`
+  (-34018) and identity generation returns nil *silently* (pairing then just
+  fails). Fix already in tree: `VibeLightiOS.entitlements` declares
+  `keychain-access-groups` and the iOS target is ad-hoc **signed** (not
+  `CODE_SIGNING_ALLOWED=NO`). On a real device, provisioning supplies the
+  team-prefixed default group. This entitlement wall is the same one that blocks
+  keychain-assembled identities on macOS-adhoc — hence macOS staying on P12.
+
+- **Verified:** `VibeLightiOSTests.IOSIdentityTests` runs in the simulator and
+  proves key-gen → `SecIdentity` assembly → RSA-2048 signing → cert CN → PEM
+  byte-stability. The launcher builds + runs + renders (controller/focus UI,
+  pairing panel, settings). **Not verified (needs a device + an awake host):** the
+  live GameStream pairing/serverinfo network handshake.
+
+- **Phase 2+ (streaming) is unchanged below and remains the real remaining work.**
+  It is device-gated (VideoToolbox/CoreAudio) and needs the moonlight-common-c +
+  mbedTLS + libopus iOS build. Start there. The `StreamEngine` seam means it
+  drops in behind `DisabledStreamEngine` with zero AppState changes.
+
+---
+
 ## 0. The one-paragraph answer
 
 On macOS, VibeLight is a **shell** that shells out to an embedded moonlight-qt
