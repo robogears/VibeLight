@@ -42,6 +42,7 @@ static dispatch_queue_t LifecycleQueue(void) {
     // spamming the log.
     int _framesEnqueued;
     BOOL _loggedLayerFail;
+    int _videoWidth, _videoHeight;
 }
 
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
@@ -167,6 +168,16 @@ static dispatch_queue_t LifecycleQueue(void) {
             LiStopConnection();
         }
     });
+}
+
+// MARK: - Perf stats (int reads are single-copy atomic on arm64; 1 Hz HUD polling)
+
+- (int32_t)framesEnqueuedCount { return _framesEnqueued; }
+- (int)videoWidth  { return _videoWidth; }
+- (int)videoHeight { return _videoHeight; }
+- (BOOL)getEstimatedRtt:(uint32_t *)rttMs variance:(uint32_t *)varianceMs {
+    if (sActive != self) return NO;
+    return LiGetEstimatedRttInfo(rttMs, varianceMs) ? YES : NO;
 }
 
 - (void)sendControllerButtonFlags:(int)buttonFlags
@@ -337,7 +348,8 @@ static int startCodeLen(const uint8_t *p, int len) {
 }
 
 static int  DrSetup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
-    MoonlightSession *s = sActive; if (s) s->_videoFormat = videoFormat;
+    MoonlightSession *s = sActive;
+    if (s) { s->_videoFormat = videoFormat; s->_videoWidth = width; s->_videoHeight = height; }
     NSLog(@"[VibeLight] video decode setup: format=0x%x %dx%d@%d", videoFormat, width, height, redrawRate);
     return 0;
 }

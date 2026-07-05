@@ -71,6 +71,14 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// (that's "disconnect but keep playing"; full quit goes through /cancel).
 - (void)stop;
 
+/// Total video frames enqueued to the display layer (perf HUD).
+- (int32_t)framesEnqueuedCount;
+/// Negotiated stream dimensions (0 until the decoder is set up).
+- (int)videoWidth;
+- (int)videoHeight;
+/// Estimated control-stream round-trip time; NO when unavailable.
+- (BOOL)getEstimatedRtt:(uint32_t *)rttMs variance:(uint32_t *)varianceMs;
+
 /// Forwards a complete player-1 gamepad snapshot to the host
 /// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
 /// Triggers: 0…255. No-op when this session isn't the active connection.

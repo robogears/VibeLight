@@ -29,6 +29,18 @@ struct RootView: View {
             if case .streaming = state.session.phase {
                 StreamView(layer: state.session.displayLayer)
                     .ignoresSafeArea()
+                    .overlay(alignment: .topLeading) {
+                        // Performance HUD (Settings ▸ Advanced ▸ Performance Stats).
+                        if let stats = state.session.perfStats {
+                            Text(stats)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.black.opacity(0.45), in: Capsule())
+                                .padding(24)
+                        }
+                    }
                     .overlay(alignment: .topTrailing) {
                         // Until input lands (Phase 4), a tappable way back out so
                         // the stream screen isn't a trap.
