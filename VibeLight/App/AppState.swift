@@ -54,7 +54,15 @@ final class AppState {
     // MARK: Library state
 
     private(set) var hosts: [StreamHost] = []      // merged: Moonlight + user-added, capped at 4
-    private(set) var selectedHostID: String?
+    /// Persisted so a relaunch reopens on the PC you last used (not whichever
+    /// host happens to sort first). Restored in init when the host still exists.
+    private(set) var selectedHostID: String? {
+        didSet {
+            guard selectedHostID != oldValue else { return }
+            UserDefaults.standard.set(selectedHostID, forKey: Self.selectedHostKey)
+        }
+    }
+    private static let selectedHostKey = "vibelight.lastSelectedHost"
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
     private(set) var hostError: String?
@@ -182,7 +190,9 @@ final class AppState {
         importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
         addedHosts = Self.loadAddedHosts()
         rebuildHosts()
-        selectedHostID = hosts.first?.id
+        // Reopen on the last-used PC if it's still around; else the first host.
+        let savedHostID = UserDefaults.standard.string(forKey: Self.selectedHostKey)
+        selectedHostID = hosts.contains(where: { $0.id == savedHostID }) ? savedHostID : hosts.first?.id
         apps = displayApps(from: selectedHost?.apps ?? [])
         if hosts.isEmpty {
             hostError = "No computers yet — open the computer menu (top-right) to add one by IP."
