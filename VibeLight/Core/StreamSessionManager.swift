@@ -366,7 +366,7 @@ final class StreamSessionManager: StreamEngine {
 
     private func streamArguments(address: String, rawAppName: String, settings: StreamSettings) -> [String] {
         var args = [
-            "stream", address, rawAppName,
+            "stream",
             "--resolution", "\(settings.width)x\(settings.height)",
             "--fps", String(settings.fps),
             // Always pass --bitrate: omitting it makes the CLI recompute a
@@ -400,6 +400,11 @@ final class StreamSessionManager: StreamEngine {
         args.append(settings.gameOptimizations ? "--game-optimization" : "--no-game-optimization")
         args.append(settings.keepAwake ? "--keep-awake" : "--no-keep-awake")
         args.append(settings.performanceOverlay ? "--performance-overlay" : "--no-performance-overlay")
+        // Positional operands LAST, after "--", so a host-controlled app name
+        // (or address) beginning with "-" can never be parsed as a CLI option —
+        // Qt's QCommandLineParser treats everything after "--" as positional.
+        // (Argument-injection hardening; the values are argv, never a shell.)
+        args.append(contentsOf: ["--", address, rawAppName])
         return args
     }
 

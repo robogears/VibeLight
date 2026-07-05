@@ -382,8 +382,10 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
 
     private init(expectedSize: Int64, onProgress: @escaping @Sendable (Double) -> Void) {
         // Hard ceiling so a tampered/oversized asset can't fill the disk:
-        // 10% over the advertised size, or 500 MB, whichever is larger.
-        self.byteCap = max(Int64(Double(expectedSize) * 1.1), 500_000_000)
+        // 10% over the advertised size, or 500 MB, whichever is larger — but
+        // never more than 2 GB, so a hostile advertised size (on the same channel
+        // as the payload) can't inflate the cap itself. (SEV-11)
+        self.byteCap = min(max(Int64(Double(expectedSize) * 1.1), 500_000_000), 2_000_000_000)
         self.onProgress = onProgress
     }
 

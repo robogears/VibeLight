@@ -55,8 +55,11 @@ struct MoonlightConfigImporter {
     private func parseHosts(_ dict: [String: Any]) -> [StreamHost] {
         let count = intValue(dict["hosts.size"]) ?? inferredCount(in: dict, prefix: "hosts.", field: "uuid")
         guard count > 0 else { return [] }
+        // Clamp so a corrupt/hostile "hosts.size" (e.g. Int.max) can't spin the
+        // loop for billions of iterations and hang launch. Real installs have a
+        // handful of hosts. (SEV-10)
         var hosts: [StreamHost] = []
-        for i in 1...count {
+        for i in 1...min(count, 64) {
             let p = "hosts.\(i)."
             guard let uuid = dict[p + "uuid"] as? String, !uuid.isEmpty else { continue }
             let mac = dict[p + "mac"] as? Data

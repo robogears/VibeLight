@@ -297,7 +297,11 @@ final class AppState {
         }
         session.onStreamDidEnd = { [weak self] _ in
             guard let self else { return }
-            chrome?.endStreamPresentation()
+            // Only reclaim the screen if a presentation actually began. A stream
+            // that ends while still .launching (STARTED never arrived) never ran
+            // beginStreamPresentation, so an unconditional call here would
+            // spuriously re-activate + restore immersive chrome. (SEV-07)
+            chrome?.endStreamPresentationIfActive()
             if case .ending(let app) = session.phase {
                 if session.remoteQuitRequested {
                     // The user explicitly quit the game — no "still running"

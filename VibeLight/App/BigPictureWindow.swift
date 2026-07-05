@@ -121,6 +121,16 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
         NSApp.activate()
     }
 
+    /// Release the mouse-moved monitor when the window goes away, mirroring
+    /// ControllerManager.stop(). Benign today (window close terminates the app)
+    /// but prevents a dangling monitor if the window is ever recreated. (SEV-09)
+    func windowWillClose(_ notification: Notification) {
+        if let buttonRevealMonitor {
+            NSEvent.removeMonitor(buttonRevealMonitor)
+            self.buttonRevealMonitor = nil
+        }
+    }
+
     // MARK: - Stream handoff
 
     /// Called when the stream window is coming up. We deliberately do NOT hide

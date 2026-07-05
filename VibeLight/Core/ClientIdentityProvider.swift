@@ -118,8 +118,12 @@ final class ClientIdentityProvider: @unchecked Sendable {
         let certURL = supportDirectory.appendingPathComponent("tmp-cert.pem")
         let keyURL = supportDirectory.appendingPathComponent("tmp-key.pem")
         try identity.certificatePEM.write(to: certURL)
-        try identity.privateKeyPEM.write(to: keyURL)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
+        // Create the plaintext private-key temp file 0600 from birth rather than
+        // write-then-chmod, which leaves a brief world-readable window. (SEV-04)
+        guard fm.createFile(atPath: keyURL.path, contents: identity.privateKeyPEM,
+                            attributes: [.posixPermissions: 0o600]) else {
+            throw IdentityError.opensslFailed("Could not write client key material.")
+        }
         defer {
             try? fm.removeItem(at: certURL)
             try? fm.removeItem(at: keyURL)

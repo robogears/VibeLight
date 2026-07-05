@@ -29,6 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// Stop any running stream helper so it isn't orphaned when VibeLight quits
+    /// (macOS doesn't kill children on parent exit). SIGTERM ends only the LOCAL
+    /// client — the remote game keeps running (invariant 6), the correct quit
+    /// semantics. (SEV-03)
+    func applicationWillTerminate(_ notification: Notification) {
+        state?.session.disconnect()
+    }
+
     /// Minimal main menu so ⌘Q / ⌘H / ⌘M work — a borderless app still needs
     /// standard app-level shortcuts.
     private func installMainMenu() {

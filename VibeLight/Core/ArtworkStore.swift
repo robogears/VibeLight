@@ -338,8 +338,24 @@ actor ArtworkStore: ArtworkProviding {
 
     private nonisolated static func cacheFileURL(for key: Key) -> URL {
         cacheRootURL()
-            .appendingPathComponent(key.hostID, isDirectory: true)
-            .appendingPathComponent(key.appKey + ".png", isDirectory: false)
+            .appendingPathComponent(Self.safeComponent(key.hostID), isDirectory: true)
+            .appendingPathComponent(Self.safeComponent(key.appKey) + ".png", isDirectory: false)
+    }
+
+    /// hostID and appKey come from the host (host.id, app.uuid from /applist XML)
+    /// and are used as filesystem path components. A hostile value like
+    /// "../../../../tmp/evil" would escape the cache dir and let a malicious host
+    /// write/delete/read arbitrary .png files. Only a strict token is used
+    /// verbatim; anything else (contains "/" "\\", is "." / "..", non-ASCII, or
+    /// over-long) is replaced with a deterministic SHA-256 hash — stable for
+    /// caching, and guaranteed to contain no path separators.
+    private nonisolated static func safeComponent(_ raw: String) -> String {
+        let isSafe = !raw.isEmpty && raw.count <= 128
+            && raw != "." && raw != ".."
+            && raw.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == ".") }
+        if isSafe { return raw }
+        let digest = SHA256.hash(data: Data(raw.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private nonisolated static func modificationDate(of url: URL) -> Date? {
