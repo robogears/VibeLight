@@ -21,56 +21,77 @@ struct GlyphBadge: View {
     }
 }
 
-/// One hint in the bar. Clickable — a mouse user gets the same action a
-/// controller/keyboard does, with a subtle hover lift.
+/// One hint in the bar. In bind mode it shows the input glyph + label (and is
+/// still clickable); in touch mode it's a plain tappable pill with just the
+/// label — no controller/keyboard glyph.
 private struct HintChip: View {
     @Environment(AppState.self) private var state
     let event: NavigationEvent
     let label: String?
+    var touch = false
     @State private var hovering = false
 
     var body: some View {
-        let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
-        HStack(spacing: 7) {
-            GlyphBadge(glyph: glyph)
-            Text(label ?? glyph.label)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+        if touch {
+            Text(label ?? InputGlyphs.glyph(for: event, style: .keyboard).label)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary.opacity(0.95))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                .contentShape(Capsule())
+                .onTapGesture { state.route(event) }
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        } else {
+            let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
+            HStack(spacing: 7) {
+                GlyphBadge(glyph: glyph)
+                Text(label ?? glyph.label)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { state.route(event) }
+            .animation(.easeOut(duration: 0.12), value: hovering)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { state.route(event) }
-        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
-/// Bottom hint bar: live button glyphs for what each input does right now.
-/// Adapts to the connected controller (Xbox / PlayStation / Nintendo / keyboard).
+/// Bottom hint bar: what each input does right now. With a controller/keyboard
+/// driving it shows the live button glyphs; on touch it becomes a row of plain
+/// tappable buttons (no glyphs — you can't press a controller button by touch).
 struct HintBarView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        // iOS/iPadOS is touch-first: show the controller/keyboard bind hints ONLY
-        // when a controller is actually connected AND driving (`.directed`). A
-        // touch-only iPad never shows them (even at launch); touching a device
-        // that has a controller flips to `.pointer` and hides them too.
-        #if os(iOS)
-        if !state.controller.connectedControllers.isEmpty && state.inputMode != .pointer { bar }
-        #else
-        bar
-        #endif
-    }
-
-    private var bar: some View {
-        HStack(spacing: 26) {
-            ForEach(hints, id: \.0) { _, event, label in
-                HintChip(event: event, label: label)
+        HStack(spacing: touchButtons ? 12 : 26) {
+            ForEach(shownHints, id: \.0) { _, event, label in
+                HintChip(event: event, label: label, touch: touchButtons)
             }
             Spacer()
         }
+    }
+
+    /// Touch presentation on iOS: no controller connected, or the user is
+    /// touching (`.pointer`). A connected controller that's driving keeps glyphs.
+    private var touchButtons: Bool {
+        #if os(iOS)
+        return state.controller.connectedControllers.isEmpty || state.inputMode == .pointer
+        #else
+        return false
+        #endif
+    }
+
+    /// Touch buttons only make sense for hints that carry a label (the glyph-only
+    /// hold-chords like quit have no tappable equivalent).
+    private var shownHints: [(String, NavigationEvent, String?)] {
+        touchButtons ? hints.filter { $0.2 != nil } : hints
     }
 
     /// (stable id, event, label override)
