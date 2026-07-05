@@ -20,6 +20,10 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     private var sleepActivity: NSObjectProtocol?
     private var buttonRevealMonitor: Any?
     private var buttonsRevealed = false
+    private var activationBounceObserver: (any NSObjectProtocol)?
+    /// The embedded helper we handed the screen to (nil when the stock-Moonlight
+    /// fallback was used — that app has its own Cmd-Tab identity).
+    private var handoffHelperPID: pid_t?
     /// True while the window does NOT fill its screen (the user resized it into a
     /// window). Drives the chrome: filling → immersive (menu bar/dock hidden,
     /// traffic lights hover-revealed); windowed → normal (menu bar/dock reachable,
@@ -61,11 +65,34 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
         window = win
 
         installButtonReveal()
+        installActivationBounce()
         enterImmersiveChrome()
         preventDisplaySleep()
         NSApp.activate()
         // Big-picture opens in console mode: no cursor until the mouse moves.
         NSCursor.setHiddenUntilMouseMoves(true)
+    }
+
+    // MARK: - Cmd-Tab back to the stream
+
+    /// The embedded helper is an LSUIElement agent — it never appears in the
+    /// Cmd-Tab switcher, so while a stream owns the screen VibeLight IS the
+    /// stream's Cmd-Tab identity. Without this bounce, Cmd-Tabbing "back" raises
+    /// the launcher window over the live stream and the stream becomes
+    /// unreachable (the user has to relaunch to see it again).
+    private func installActivationBounce() {
+        activationBounceObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { [weak self] in self?.bounceToStreamIfHandoffActive() }
+        }
+    }
+
+    private func bounceToStreamIfHandoffActive() {
+        guard isHandoffActive, let pid = handoffHelperPID,
+              let helper = NSRunningApplication(processIdentifier: pid),
+              !helper.isTerminated else { return }
+        helper.activate()
     }
 
     // MARK: - Hover-revealed window buttons
@@ -178,6 +205,10 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
             NSEvent.removeMonitor(buttonRevealMonitor)
             self.buttonRevealMonitor = nil
         }
+        if let activationBounceObserver {
+            NotificationCenter.default.removeObserver(activationBounceObserver)
+            self.activationBounceObserver = nil
+        }
     }
 
     // MARK: - Stream handoff
@@ -191,6 +222,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     /// activation — a plain launch would leave it unfocused).
     func beginStreamHandoff(helperPID: pid_t?) {
         isHandoffActive = true
+        handoffHelperPID = helperPID
         // Do NOT un-hide the Dock/menu bar here: there's a ~1s gap between the
         // connection starting (when this fires) and the fullscreen stream window
         // actually covering the screen, and un-hiding immediately makes the Dock
@@ -206,7 +238,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
 
     /// Called when the stream process exited: reclaim the screen.
     func endStreamHandoff() {
-        isHandoffActive = false
+        isHandoffActive = false   // before activate(): didBecomeActive must not bounce
+        handoffHelperPID = nil
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
         syncChromeToWindowState()   // restore whichever mode the user was in
