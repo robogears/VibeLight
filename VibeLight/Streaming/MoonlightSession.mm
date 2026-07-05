@@ -69,7 +69,11 @@ static __weak MoonlightSession *sActive = nil;
     _streamConfig.clientRefreshRateX100 = fps * 100;
     _streamConfig.colorSpace = COLORSPACE_REC_709;
     _streamConfig.colorRange = COLOR_RANGE_LIMITED;
-    _streamConfig.encryptionFlags = ENCFLG_AUDIO;   // input always encrypted; audio too. Video off for a safe first connect.
+    // ENCFLG_ALL matches moonlight-ios/qt: request full encryption and let the
+    // host negotiate. Partial flags (audio-only) create an inconsistent SDP
+    // negotiation with Apollo/Vibepollo hosts (audio decrypt then fails every
+    // packet, control stream drops → no IDR → black screen).
+    _streamConfig.encryptionFlags = ENCFLG_ALL;
     memcpy(_streamConfig.remoteInputAesKey, aesKey.bytes, MIN((NSUInteger)16, aesKey.length));
     memcpy(_streamConfig.remoteInputAesIv, aesIv.bytes, MIN((NSUInteger)16, aesIv.length));
 
@@ -78,6 +82,12 @@ static __weak MoonlightSession *sActive = nil;
 
 - (void)start {
     sActive = self;
+    // Surfaces the host's REAL appVersion (drives control-stream encryption) +
+    // the negotiated config, so a failed connect is diagnosable from the console.
+    NSLog(@"[VibeLight] connect: appVersion=%s enc=0x%x %dx%d@%d %dkbps fmts=0x%x codecMode=%d",
+          _serverInfo.serverInfoAppVersion ?: "(nil)", _streamConfig.encryptionFlags,
+          _streamConfig.width, _streamConfig.height, _streamConfig.fps, _streamConfig.bitrate,
+          _streamConfig.supportedVideoFormats, _serverInfo.serverCodecModeSupport);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
         CONNECTION_LISTENER_CALLBACKS cl = {0};
         cl.stageStarting = ClStageStarting;
