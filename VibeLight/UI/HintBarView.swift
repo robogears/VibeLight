@@ -66,24 +66,33 @@ struct HintBarView: View {
         switch state.screen {
         case .home:
             if state.isPresetRailActive {
-                return [
+                let filled = state.focusedPresetSlot.map { state.presets[$0] != nil } ?? false
+                var rail: [(String, NavigationEvent, String?)] = [
                     ("use", .select, "Use Preset"),
-                    ("del", .contextMenu, "Delete"),
-                    ("leaveleft", .move(.left), "Back to Games"),
                 ]
+                if filled { rail.append(("opts", .contextMenu, "Rename / Clear")) }
+                rail.append(("leaveleft", .move(.left), "Back to Games"))
+                return rail
             }
-            var home: [(String, NavigationEvent, String?)] = [
+            return [
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
                 ("quitgame", .quitChord, nil),
                 ("quitapp", .quitApp, nil),
+                ("presets", .move(.right), "Presets"),
             ]
-            if !state.presets.isEmpty {
-                home.append(("presets", .move(.right), "Presets"))
-            }
-            return home
         case .settings:
+            // On a preset slot: save into it / manage it. On a row: adjust.
+            if let i = state.presetSlotIndex(state.focus.focusedItemID) {
+                var slot: [(String, NavigationEvent, String?)] = [
+                    ("save", .select, "Save to Preset"),
+                ]
+                if state.presets[i] != nil { slot.append(("opts", .contextMenu, "Rename / Clear")) }
+                slot.append(("tab", .nextSection, "Switch Tab"))
+                slot.append(("back", .back, "Done"))
+                return slot
+            }
             return [
                 ("adjust", .move(.right), "Adjust"),
                 ("tab", .nextSection, "Switch Tab"),

@@ -7,14 +7,12 @@ struct HomeView: View {
 
     var body: some View {
         content
+            // The six preset slots always live on the right edge, vertically
+            // centered.
             .overlay(alignment: .trailing) {
-                if !state.presets.isEmpty {
-                    PresetRail()
-                        .padding(.trailing, 40)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+                PresetRail()
+                    .padding(.trailing, 40)
             }
-            .animation(Theme.focusSpring, value: state.presets.count)
     }
 
     private var content: some View {
@@ -177,9 +175,9 @@ private struct AppShelf: View {
                     }
                 }
                 .padding(.leading, 72)
-                // Leave room on the right for the preset rail so tiles don't
-                // scroll under it.
-                .padding(.trailing, state.presets.isEmpty ? 72 : 260)
+                // Leave room on the right for the always-present preset rail so
+                // tiles don't scroll under it.
+                .padding(.trailing, 260)
                 .padding(.vertical, 40) // headroom for the focus scale/glow
             }
             .onChange(of: state.focus.focusedItemID) { _, new in
@@ -198,63 +196,97 @@ private struct PresetRail: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 12) {
+        VStack(alignment: .trailing, spacing: 10) {
             Text("PRESETS")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
                 .tracking(2)
                 .foregroundStyle(Theme.textSecondary)
-            ForEach(state.presets) { preset in
-                PresetChip(preset: preset)
+            ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
+                PresetSlotChip(slot: slot)
             }
         }
         .frame(width: 210)
     }
 }
 
-private struct PresetChip: View {
+/// One of the six fixed slots. Empty slots show a dashed, ghosted "Empty N";
+/// filled slots show the name + summary. Active slot glows with a checkmark;
+/// focused slot gets the white ring. Tap a filled slot to apply it; right-click
+/// a filled slot to rename or clear it.
+private struct PresetSlotChip: View {
     @Environment(AppState.self) private var state
-    let preset: StreamPreset
+    let slot: Int
     @State private var hovering = false
 
-    private var isActive: Bool { state.activePresetID == preset.id }
-    private var isFocused: Bool { state.focusedPresetID == preset.id }
+    private var preset: StreamPreset? { state.presets[slot] }
+    private var isFilled: Bool { preset != nil }
+    private var isActive: Bool { state.activePresetSlot == slot }
+    private var isFocused: Bool { state.focusedPresetSlot == slot }
+    private var lit: Bool { isActive || isFocused }
 
     var body: some View {
         HStack(spacing: 10) {
+            Text("\(slot + 1)")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(lit ? .white : (isFilled ? Theme.accent : Theme.textSecondary))
+                .frame(width: 22, height: 22)
+                .background(Color.white.opacity(lit ? 0.22 : (isFilled ? 0.1 : 0.05)), in: Circle())
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(preset.name)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(isActive || isFocused ? .white : Theme.textPrimary)
-                Text(preset.summary)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(isActive || isFocused ? .white.opacity(0.85) : Theme.textSecondary)
+                Text(preset?.name ?? "Empty")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(isFilled ? (lit ? .white : Theme.textPrimary)
+                                     : Theme.textSecondary.opacity(0.7))
+                    .lineLimit(1)
+                if let preset {
+                    Text(preset.summary)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
             if isActive {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                     .foregroundStyle(.white)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
         .contentShape(Rectangle())
-        .background(
-            isActive ? Theme.accent
-                     : (isFocused ? Theme.accent.opacity(0.35)
-                        : Color.white.opacity(hovering && state.inputMode == .pointer ? 0.12 : 0.06)),
-            in: RoundedRectangle(cornerRadius: 14))
+        .background(fill, in: RoundedRectangle(cornerRadius: 13))
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(isFocused ? .white.opacity(0.7) : .white.opacity(isActive ? 0.25 : 0.06),
-                              lineWidth: isFocused ? 2.5 : 1)
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(border, style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1,
+                                                         dash: isFilled ? [] : [4, 3]))
         }
-        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 14, y: 3)
+        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 12, y: 3)
         .scaleEffect(isFocused ? 1.03 : 1.0)
+        .opacity(isFilled || isFocused ? 1 : 0.6)
         .animation(Theme.focusSpring, value: isActive)
         .animation(Theme.focusSpring, value: isFocused)
+        .animation(Theme.focusSpring, value: isFilled)
         .onHover { hovering = $0 }
-        .onTapGesture { state.applyPreset(preset.id) }
+        .onTapGesture { if isFilled { state.applySlot(slot) } }
+        .contextMenu {
+            if isFilled {
+                Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
+                Button(role: .destructive) { state.clearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+            }
+        }
+    }
+
+    private var fill: AnyShapeStyle {
+        if isActive { return AnyShapeStyle(Theme.accent) }
+        if isFocused { return AnyShapeStyle(Theme.accent.opacity(0.35)) }
+        if isFilled { return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.12 : 0.07)) }
+        return AnyShapeStyle(Color.white.opacity(0.03))
+    }
+    private var border: Color {
+        if isFocused { return .white.opacity(0.7) }
+        if isActive { return .white.opacity(0.25) }
+        return .white.opacity(isFilled ? 0.08 : 0.14)
     }
 }

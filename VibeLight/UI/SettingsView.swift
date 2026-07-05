@@ -63,13 +63,30 @@ private struct SettingsTabBar: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        HStack(spacing: 14) {
-            bumper(.prevSection)
-            ForEach(AppState.SettingsTab.allCases, id: \.rawValue) { tab in
-                TabChip(tab: tab)
+        // Horizontal scroll so the tabs + preset slots never compress on a
+        // narrow window (on a wide Mac it all fits with no scrolling).
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                bumper(.prevSection)
+                ForEach(AppState.SettingsTab.allCases, id: \.rawValue) { tab in
+                    TabChip(tab: tab)
+                }
+                bumper(.nextSection)
+
+                // Divider, then the six preset slots. Clicking a slot saves the
+                // current settings into it (override-confirm if taken).
+                Rectangle().fill(.white.opacity(0.12))
+                    .frame(width: 1, height: 26)
+                    .padding(.horizontal, 6)
+                Text("PRESETS")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize()
+                ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
+                    SettingsPresetSlot(slot: slot)
+                }
             }
-            bumper(.nextSection)
-            Spacer()
         }
         .animation(Theme.focusSpring, value: state.settingsTab)
     }
@@ -94,6 +111,7 @@ private struct TabChip: View {
         Text(tab.title)
             .font(.system(size: 16, weight: .bold, design: .rounded))
             .foregroundStyle(selected ? .white : Theme.textSecondary)
+            .fixedSize()
             .padding(.horizontal, 20)
             .padding(.vertical, 9)
             .background(
@@ -110,6 +128,70 @@ private struct TabChip: View {
             .onTapGesture { state.setSettingsTab(tab) }
             .animation(Theme.focusSpring, value: selected)
             .animation(Theme.focusSpring, value: hovering)
+    }
+}
+
+/// One of the six preset slots in the settings header. Number always shown; a
+/// filled slot gets a solid look + dot, empty is a dashed ghost. Click = save
+/// current settings here (override-confirm if taken); right-click = rename/clear.
+private struct SettingsPresetSlot: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+    @State private var hovering = false
+
+    private var preset: StreamPreset? { state.presets[slot] }
+    private var isFilled: Bool { preset != nil }
+    private var isActive: Bool { state.activePresetSlot == slot }
+    private var focusID: String { "presetslot:\(slot)" }
+    private var isFocused: Bool { state.focus.focusedItemID == focusID }
+    private var lit: Bool { isActive || isFocused }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text("\(slot + 1)")
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .foregroundStyle(lit || isFilled ? .white : Theme.textSecondary)
+            Circle()
+                .fill(isFilled ? (lit ? Color.white : Theme.accent) : .clear)
+                .frame(width: 5, height: 5)
+        }
+        .frame(width: 44, height: 44)
+        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(border, style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1,
+                                                         dash: isFilled ? [] : [4, 3]))
+        }
+        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 10, y: 2)
+        .scaleEffect(isFocused ? 1.07 : 1.0)
+        .help(preset?.name ?? "Empty — click to save the current settings here")
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onHover {
+            hovering = $0
+            if $0 && state.inputMode == .pointer { state.focus.focus(itemID: focusID) }
+        }
+        .onTapGesture { state.requestSaveToSlot(slot) }
+        .contextMenu {
+            if isFilled {
+                Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
+                Button(role: .destructive) { state.clearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+            }
+        }
+        .animation(Theme.focusSpring, value: isActive)
+        .animation(Theme.focusSpring, value: isFocused)
+        .animation(Theme.focusSpring, value: isFilled)
+    }
+
+    private var fill: AnyShapeStyle {
+        if isActive { return AnyShapeStyle(Theme.accent) }
+        if isFocused { return AnyShapeStyle(Theme.accent.opacity(0.4)) }
+        if isFilled { return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.16 : 0.1)) }
+        return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.08 : 0.035))
+    }
+    private var border: Color {
+        if isFocused { return .white.opacity(0.8) }
+        if isActive { return .white.opacity(0.3) }
+        return .white.opacity(isFilled ? 0.15 : 0.2)
     }
 }
 

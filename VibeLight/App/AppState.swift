@@ -22,6 +22,9 @@ enum Overlay: Equatable {
     case hosts                      // computer list + add-by-IP
     case relocate                   // offer to move into /Applications
     case customResolution           // type an arbitrary WxH
+    case confirmOverridePreset(Int) // slot already taken — override it?
+    case presetSlotMenu(Int)        // rename / clear a filled slot
+    case renamePreset(Int)          // type a new preset name
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -110,15 +113,22 @@ final class AppState {
     /// screen short instead of one long scroll.
     var settingsTab: SettingsTab = .video
 
-    // MARK: Presets
+    // MARK: Presets — six fixed slots (nil = empty)
 
-    private(set) var presets: [StreamPreset] = []
-    private(set) var activePresetID: String?
+    static let presetSlotCount = 6
+    /// Exactly `presetSlotCount` entries; `nil` = an empty slot. Slot index i
+    /// (0-based) is shown as "Preset i+1".
+    private(set) var presets: [StreamPreset?] = Array(repeating: nil, count: presetSlotCount)
+    /// Which slot's settings are currently loaded (nil once settings diverge or
+    /// a slot is cleared).
+    private(set) var activePresetSlot: Int?
     /// Non-nil when focus is on the home-screen preset rail (managed outside the
     /// FocusEngine so it uses left/right to enter/leave the app shelf).
-    var focusedPresetID: String?
-    private static let presetsKey = "vibelight.presets"
-    private static let activePresetKey = "vibelight.activePreset"
+    var focusedPresetSlot: Int?
+    private static let presetsKey = "vibelight.presets.v2"
+    private static let activePresetKey = "vibelight.activePresetSlot"
+
+    func defaultPresetName(forSlot i: Int) -> String { "Preset \(i + 1)" }
 
     /// Which input device is driving right now. Controller/keyboard hides the
     /// mouse cursor and disables hover-focus (so tiles scrolling under a parked
@@ -179,7 +189,8 @@ final class AppState {
         }
 
         presets = Self.loadPresets()
-        activePresetID = UserDefaults.standard.string(forKey: Self.activePresetKey)
+        let savedSlot = UserDefaults.standard.object(forKey: Self.activePresetKey) as? Int
+        activePresetSlot = savedSlot.flatMap { (0..<Self.presetSlotCount).contains($0) ? $0 : nil }
 
         wireCallbacks()
         rebuildFocus()
@@ -190,70 +201,107 @@ final class AppState {
 
     // MARK: - Presets
 
-    private static func loadPresets() -> [StreamPreset] {
+    private static func loadPresets() -> [StreamPreset?] {
+        let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
         guard let data = UserDefaults.standard.data(forKey: presetsKey),
-              let arr = try? JSONDecoder().decode([StreamPreset].self, from: data) else { return [] }
-        return arr
+              let arr = try? JSONDecoder().decode([StreamPreset?].self, from: data) else { return empty }
+        // Normalize to exactly the slot count (tolerate an older/shorter blob).
+        var slots = Array(arr.prefix(presetSlotCount))
+        while slots.count < presetSlotCount { slots.append(nil) }
+        return slots
     }
 
     private func persistPresets() {
         if let data = try? JSONEncoder().encode(presets) {
             UserDefaults.standard.set(data, forKey: Self.presetsKey)
         }
-        UserDefaults.standard.set(activePresetID, forKey: Self.activePresetKey)
+        UserDefaults.standard.set(activePresetSlot, forKey: Self.activePresetKey)
     }
 
-    /// Snapshots the current settings as a new preset (from Settings → Presets).
-    func saveCurrentAsPreset() {
-        let preset = StreamPreset(id: UUID().uuidString, name: "Preset \(presets.count + 1)", settings: settings)
-        presets.append(preset)
-        activePresetID = preset.id
-        persistPresets()
-    }
-
-    /// Applies a preset's settings (from the home rail).
-    func applyPreset(_ id: String) {
-        guard let preset = presets.first(where: { $0.id == id }) else { return }
-        settings = preset.settings
-        activePresetID = id
-        persistPresets()
-    }
-
-    func deletePreset(_ id: String) {
-        let idx = presets.firstIndex { $0.id == id }
-        presets.removeAll { $0.id == id }
-        if activePresetID == id { activePresetID = nil }
-        persistPresets()
-        // Keep rail focus sensible after a delete.
-        if focusedPresetID == id {
-            if presets.isEmpty { exitPresetRail() }
-            else {
-                let newIdx = min(idx ?? 0, presets.count - 1)
-                focusedPresetID = presets[newIdx].id
-            }
+    /// Settings-header click / select on slot `i`: snapshot the current settings
+    /// into that slot. If it's already taken, confirm the override first.
+    func requestSaveToSlot(_ i: Int) {
+        guard presets.indices.contains(i) else { return }
+        if presets[i] != nil {
+            presentOverlay(.confirmOverridePreset(i))
+        } else {
+            performSaveToSlot(i)
         }
     }
 
-    // MARK: - Home preset rail navigation
+    /// Actually writes the current settings into slot `i` (keeps the slot's
+    /// existing name on override).
+    func performSaveToSlot(_ i: Int) {
+        guard presets.indices.contains(i) else { return }
+        let name = presets[i]?.name ?? defaultPresetName(forSlot: i)
+        presets[i] = StreamPreset(id: UUID().uuidString, name: name, settings: settings)
+        activePresetSlot = i
+        persistPresets()
+        controller.focusTick()
+    }
 
-    var isPresetRailActive: Bool { focusedPresetID != nil }
+    /// Home rail: load slot `i`'s settings (no-op for an empty slot).
+    func applySlot(_ i: Int) {
+        guard presets.indices.contains(i), let preset = presets[i] else { return }
+        settings = preset.settings
+        activePresetSlot = i
+        persistPresets()
+    }
+
+    func clearSlot(_ i: Int) {
+        guard presets.indices.contains(i) else { return }
+        presets[i] = nil
+        if activePresetSlot == i { activePresetSlot = nil }
+        persistPresets()
+    }
+
+    func renameSlot(_ i: Int, to name: String) {
+        guard presets.indices.contains(i), presets[i] != nil else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        presets[i]?.name = trimmed.isEmpty ? defaultPresetName(forSlot: i) : trimmed
+        persistPresets()
+    }
+
+    /// Parses a "presetslot:N" focus id.
+    func presetSlotIndex(_ id: String?) -> Int? {
+        guard let id, id.hasPrefix("presetslot:") else { return nil }
+        return Int(id.dropFirst("presetslot:".count))
+    }
+
+    /// Bound to the rename overlay's text field.
+    var renameText: String = ""
+
+    /// Seeds + opens the rename overlay for slot `i`.
+    func openRename(_ i: Int) {
+        guard presets.indices.contains(i) else { return }
+        renameText = presets[i]?.name ?? defaultPresetName(forSlot: i)
+        presentOverlay(.renamePreset(i))
+    }
+
+    func applyRename(_ i: Int) {
+        renameSlot(i, to: renameText)
+        dismissOverlay()
+    }
+
+    // MARK: - Home preset rail navigation (all six slots always present)
+
+    var isPresetRailActive: Bool { focusedPresetSlot != nil }
 
     private func enterPresetRail() {
-        guard !presets.isEmpty else { return }
-        focusedPresetID = activePresetID ?? presets.first?.id
+        focusedPresetSlot = activePresetSlot ?? 0
         controller.focusTick()
     }
 
     private func exitPresetRail() {
-        focusedPresetID = nil
+        focusedPresetSlot = nil
         controller.focusTick()
     }
 
     private func movePresetFocus(_ delta: Int) {
-        guard let id = focusedPresetID, let i = presets.firstIndex(where: { $0.id == id }) else { return }
-        let next = min(max(i + delta, 0), presets.count - 1)
+        guard let i = focusedPresetSlot else { return }
+        let next = min(max(i + delta, 0), Self.presetSlotCount - 1)
         guard next != i else { return }
-        focusedPresetID = presets[next].id
+        focusedPresetSlot = next
         controller.focusTick()
     }
 
@@ -675,6 +723,15 @@ final class AppState {
         case .customResolution:
             sections = [FocusSection(id: "customres", kind: .vList,
                                      itemIDs: ["customres:set", "customres:cancel"])]
+        case .confirmOverridePreset:
+            sections = [FocusSection(id: "override", kind: .vList,
+                                     itemIDs: ["override:yes", "override:cancel"])]
+        case .presetSlotMenu:
+            sections = [FocusSection(id: "slotmenu", kind: .vList,
+                                     itemIDs: ["slotmenu:rename", "slotmenu:clear", "slotmenu:cancel"])]
+        case .renamePreset:
+            sections = [FocusSection(id: "rename", kind: .vList,
+                                     itemIDs: ["rename:set", "rename:cancel"])]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -693,9 +750,15 @@ final class AppState {
                     itemIDs: apps.map { "app:\(appKey($0))" }
                 ))
             case .settings:
-                // Only the active tab's rows are focusable; L1/R1 switch tabs.
-                sections = [FocusSection(id: "settings", kind: .vList,
-                                         itemIDs: settingsTab.rows.map(\.focusID))]
+                // The six preset slots sit above the rows (up from a row reaches
+                // them); L1/R1 still switch tabs. Default focus is the first row
+                // (openSettings/switchSettingsTab focus it explicitly).
+                sections = [
+                    FocusSection(id: "presetslots", kind: .shelf,
+                                 itemIDs: (0..<Self.presetSlotCount).map { "presetslot:\($0)" }),
+                    FocusSection(id: "settings", kind: .vList,
+                                 itemIDs: settingsTab.rows.map(\.focusID)),
+                ]
             }
         }
         focus.setSections(sections)
@@ -764,15 +827,16 @@ final class AppState {
 
     private func routeHome(_ event: NavigationEvent) {
         // Preset rail mode: up/down move within, left leaves, select applies,
-        // X (contextMenu) deletes.
+        // X (contextMenu) opens rename/clear on a filled slot.
         if isPresetRailActive {
             switch event {
             case .move(.up): movePresetFocus(-1)
             case .move(.down): movePresetFocus(+1)
             case .move(.left): exitPresetRail()
             case .move(.right): break
-            case .select: if let id = focusedPresetID { applyPreset(id) }
-            case .contextMenu: if let id = focusedPresetID { deletePreset(id) }
+            case .select: if let i = focusedPresetSlot { applySlot(i) }
+            case .contextMenu:
+                if let i = focusedPresetSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
             case .back: exitPresetRail()
             case .settings: openSettings()
             default: break
@@ -791,8 +855,9 @@ final class AppState {
         case .detail, .contextMenu:
             presentOverlay(.cheatSheet)
         case .move(.right):
-            // Right off the end of the app shelf enters the preset rail.
-            if !focus.handle(.move(.right)) && !presets.isEmpty { enterPresetRail() }
+            // Right off the end of the app shelf enters the preset rail (always
+            // available — the six slots are always shown).
+            if !focus.handle(.move(.right)) { enterPresetRail() }
         case .back:
             break // home is the root — nowhere to go back to
         default:
@@ -801,29 +866,33 @@ final class AppState {
     }
 
     private func routeSettings(_ event: NavigationEvent) {
+        let onSlot = presetSlotIndex(focus.focusedItemID)
         switch event {
         case .back, .settings:
             closeSettings()
-        case .move(.left), .move(.right):
-            if let rowID = focus.focusedItemID,
-               let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }) {
-                adjust(row: row, forward: event == .move(.right))
-            }
         case .prevSection:
             switchSettingsTab(forward: false)
         case .nextSection:
             switchSettingsTab(forward: true)
+        case .move(.left), .move(.right):
+            if onSlot != nil {
+                _ = focus.handle(event)  // shelf: move between the six slots
+            } else if let rowID = focus.focusedItemID,
+                      let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }) {
+                adjust(row: row, forward: event == .move(.right))
+            }
         case .select:
-            // Action rows respond to select; value rows adjust with left/right.
-            if focus.focusedItemID == SettingsRow.checkUpdates.focusID {
+            if let i = onSlot {
+                requestSaveToSlot(i)           // save current settings into the slot
+            } else if focus.focusedItemID == SettingsRow.checkUpdates.focusID {
                 checkForUpdates()
             } else if focus.focusedItemID == SettingsRow.resolution.focusID {
-                openCustomResolution()  // type an arbitrary WxH
-            } else if focus.focusedItemID == SettingsRow.savePreset.focusID {
-                saveCurrentAsPreset()
+                openCustomResolution()         // type an arbitrary WxH
             }
+        case .contextMenu:
+            if let i = onSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
         default:
-            _ = focus.handle(event)
+            _ = focus.handle(event)            // up/down cross into / out of the slots
         }
     }
 
@@ -842,7 +911,7 @@ final class AppState {
         inputMode = .pointer
         settingsTab = tab
         rebuildFocus()
-        focus.focusFirst()
+        focusFirstSettingRow()
     }
 
     private func routeOverlay(_ event: NavigationEvent, overlay: Overlay) {
@@ -962,6 +1031,41 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
+        case .confirmOverridePreset(let i):
+            switch event {
+            case .select:
+                if focus.focusedItemID == "override:yes" {
+                    dismissOverlay()
+                    performSaveToSlot(i)
+                } else { dismissOverlay() }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .presetSlotMenu(let i):
+            switch event {
+            case .select:
+                switch focus.focusedItemID {
+                case "slotmenu:rename": openRename(i)   // replaces this overlay
+                case "slotmenu:clear": dismissOverlay(); clearSlot(i)
+                default: dismissOverlay()
+                }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
+        case .renamePreset(let i):
+            switch event {
+            case .select:
+                if focus.focusedItemID == "rename:set" { applyRename(i) }
+                else { dismissOverlay() }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
         }
     }
 
@@ -975,7 +1079,14 @@ final class AppState {
     func openSettings() {
         screen = .settings
         rebuildFocus()
-        focus.focusFirst()
+        focusFirstSettingRow()
+    }
+
+    /// Default settings focus is the first row of the active tab (not the preset
+    /// slots above it — those are reached by pressing up).
+    private func focusFirstSettingRow() {
+        if let first = settingsTab.rows.first?.focusID { focus.focus(itemID: first) }
+        else { focus.focusFirst() }
     }
 
     func closeSettings() {
@@ -1023,14 +1134,13 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss
         case absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay
-        case savePreset
         case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
 
         /// Action/readonly rows don't adjust with left/right and render without
         /// value chevrons (they respond to select instead).
-        var isAction: Bool { self == .checkUpdates || self == .savePreset }
+        var isAction: Bool { self == .checkUpdates }
         var isReadonly: Bool { self == .appVersion }
 
         var title: String {
@@ -1057,7 +1167,6 @@ final class AppState {
             case .quitAppAfter: "Quit Game on Disconnect"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
-            case .savePreset: "Save Current as Preset"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             }
@@ -1066,11 +1175,11 @@ final class AppState {
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, input, advanced, presets, about
+        case video, audio, input, advanced, about
         var title: String {
             switch self {
             case .video: "Video"; case .audio: "Audio"; case .input: "Input"
-            case .advanced: "Advanced"; case .presets: "Presets"; case .about: "About"
+            case .advanced: "Advanced"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
@@ -1078,7 +1187,6 @@ final class AppState {
             case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
             case .input: [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
-            case .presets: [.savePreset]
             case .about: [.appVersion, .checkUpdates]
             case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay]
             }
@@ -1175,7 +1283,6 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
-        case .savePreset: presets.isEmpty ? "None yet" : "\(presets.count) saved"
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         }
@@ -1236,7 +1343,7 @@ final class AppState {
         case .quitAppAfter: settings.quitAppAfter.toggle()
         case .keepAwake: settings.keepAwake.toggle()
         case .performanceOverlay: settings.performanceOverlay.toggle()
-        case .appVersion, .checkUpdates, .savePreset: break  // not value rows
+        case .appVersion, .checkUpdates: break  // not value rows
         }
     }
 

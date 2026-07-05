@@ -30,6 +30,12 @@ struct OverlayHost: View {
                 RelocateCard()
             case .customResolution:
                 CustomResolutionCard()
+            case .confirmOverridePreset(let slot):
+                ConfirmOverridePresetCard(slot: slot)
+            case .presetSlotMenu(let slot):
+                PresetSlotMenuCard(slot: slot)
+            case .renamePreset(let slot):
+                RenamePresetCard(slot: slot)
             }
         }
     }
@@ -242,6 +248,109 @@ struct OverlayButton: View {
         // Click activates THIS button (focus it first), not whatever the
         // controller last focused.
         .onTapGesture { state.pointerSelect(id) }
+    }
+}
+
+// MARK: - Presets
+
+/// "Slot N is taken — replace it with the current settings?"
+private struct ConfirmOverridePresetCard: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
+                Text("Override Preset \(slot + 1)?")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("\u{201C}\(state.presets[slot]?.name ?? "Preset \(slot + 1)")\u{201D} will be replaced with the current settings.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "override:yes", title: "Override", symbol: "square.and.arrow.down.fill")
+                OverlayButton(id: "override:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+/// Rename / clear a filled slot (the controller path; the mouse gets a native
+/// right-click menu on the chip).
+private struct PresetSlotMenuCard: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Text("Preset \(slot + 1)")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(state.presets[slot]?.name ?? "")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "slotmenu:rename", title: "Rename", symbol: "pencil")
+                OverlayButton(id: "slotmenu:clear", title: "Clear", symbol: "trash", destructive: true)
+                OverlayButton(id: "slotmenu:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48).frame(width: 420)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+/// Type a new name for a preset slot.
+private struct RenamePresetCard: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
+                Text("Rename Preset \(slot + 1)")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            let text = Binding(get: { state.renameText }, set: { state.renameText = $0 })
+            TextField("Preset \(slot + 1)", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.center)
+                .focused($fieldFocused)
+                .onSubmit { state.applyRename(slot) }
+                .padding(.horizontal, 18).padding(.vertical, 14).frame(width: 300)
+                .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13)
+                        .strokeBorder(.white.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
+                }
+                .onTapGesture { fieldFocused = true }
+            VStack(spacing: 12) {
+                OverlayButton(id: "rename:set", title: "Save Name", symbol: "checkmark")
+                OverlayButton(id: "rename:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .onChange(of: fieldFocused) { _, focused in
+            state.controller.keyboardCaptureEnabled = !focused
+        }
+        .onAppear { fieldFocused = true }
+        .onDisappear { state.controller.keyboardCaptureEnabled = true }
     }
 }
 
