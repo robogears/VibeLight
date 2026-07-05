@@ -1,55 +1,49 @@
-# iPad streaming + goal status (resume checkpoint)
+# iOS streaming — status
 
-_Last updated by the streaming debug session. All code below is committed and
-builds green (macOS + iOS-sim, 89 tests). Remaining work is on-device
-verification only — which needs the iPad in hand + the host awake._
+**✅ SHIPPED & DEVICE-VERIFIED (2026-07-06):** in-process streaming on iPad works
+end-to-end — video (native 2752×2064@120 over a Tailscale DERP relay), game
+audio (Opus → RemoteIO), and controller input (full pad forwarding + the
+Start+Select+LB+RB quit chord). Perf HUD via Settings ▸ Advanced ▸ Performance
+Stats. User settings pass through uncapped; a too-hot profile over a relay
+shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 
-## The four goal items
+## Architecture (as landed)
 
-| # | Item | Code state | Verified on device? |
-|---|------|-----------|---------------------|
-| 1 | Streaming video on iPad | Full pipeline built (connect → H.264 decode → screen) | ❌ — connects, but last test = black screen (see below) |
-| 2 | MoonDeckBuddy pairing | Fixed: reads `{"state":"Paired"}` string (v7+v8); tested in unit tests | ❌ |
-| 3 | Bottom-left touch buttons | Coded: touch-mode label buttons in the hint bar | ❌ |
-| 4 | Portrait lock | Coded: `UIApplicationDelegateAdaptor` forces landscape | ❌ |
+- `VibeLight/Streaming/MoonlightSession.mm` — ObjC++ bridge around
+  moonlight-common-c: `LiStartConnection` on a serial lifecycle queue (the
+  library is single-connection; overlap = double-free), H.264 Annex-B→AVCC
+  decode into `AVSampleBufferDisplayLayer`, Opus multistream → RemoteIO
+  AudioUnit through a lock-free SPSC ring, controller snapshots via
+  `LiSendMultiControllerEvent`.
+- `VibeLight/App/iOS/InProcessStreamEngine.swift` — @MainActor engine behind
+  the shared `StreamEngine` seam: /launch → session lifecycle → phase
+  transitions, controller passthrough install/remove, perf-stats task,
+  AVAudioSession playback category.
+- `VibeLight/Input/ControllerManager.swift` — `streamForwarder` flips all pads
+  between launcher navigation and raw stream passthrough.
 
-## Streaming — where it actually stands
+## Hard-won invariants (do not regress)
 
-Connection **establishes** every time (all RTSP stages complete). On-device logs
-pinned down THREE real causes of the black screen — now fixed:
+1. **PICDATA buffer-list entries are RTP fragments, not NALUs.** Reassemble the
+   full Annex-B stream, then convert by scanning for real start codes. Treating
+   entries as NALUs corrupts every multi-packet frame → silent black screen.
+2. **DrSubmit/ClLogMessage run on pool-less C threads** — every ObjC allocation
+   there must sit inside `@autoreleasepool` or it leaks to jetsam (~minutes at
+   high res).
+3. **LiStartConnection/LiStopConnection must never overlap** — serialize through
+   `LifecycleQueue`; the engine stops the old session before launching anew.
+4. **`disconnect()` must transition phase itself** — after releasing
+   session/proxy the termination callback can't reach us; without a local
+   transition the UI freezes on `.streaming` over a dead stream.
+5. **encryptionFlags = ENCFLG_NONE** with this host; requesting AV encryption
+   broke audio decrypt + control (mbedcrypto CBC path is the suspect — revisit
+   if a host *requires* encryption).
+6. Audio callbacks are allocation-free C with a lock-free ring; drop when full.
 
-1. **4K120 @ 150 Mbps over a Tailscale relay** (`connect: … 3840x2160@120 150000kbps`).
-   Impossible through DERP — IDR frames shatter into ~103 FEC shards, only ~26
-   arrive → `lack of a successful video frame`. **Fix:** `relayCapped()` in
-   `InProcessStreamEngine` caps non-LAN streams to ≤1080p / ≤60fps / ≤25 Mbps,
-   applied to BOTH `/launch` mode and the stream config.
-2. **`malloc: pointer being freed was not allocated` crash** — the connection
-   relaunched repeatedly and moonlight-common-c is single-connection, so
-   overlapping `LiStartConnection`/`LiStopConnection` double-freed (and scrambled
-   the per-session AES keys → the 100% `Failed to decrypt audio packet`). **Fix:**
-   all lifecycle calls serialized through one `LifecycleQueue` in
-   `MoonlightSession.mm`; the engine fully stops the prior session before launching.
-3. `encryptionFlags = ENCFLG_ALL` (matches moonlight-ios/qt) from the prior pass.
+## Remaining roadmap (in rough priority)
 
-Host's real appVersion (from the connect log) = `7.1.431` — so encrypted control
-is correct; no appVersion change needed.
-
-## To resume — do this on the iPad (host awake)
-
-1. Rebuild (accept Xcode's "reload project" prompt), tap an app.
-2. Paste back:
-   - the `[VibeLight] connect: appVersion=… enc=… …` line (reveals the host's real
-     appVersion — control-stream encryption hinges on it), and
-   - whether `Failed to decrypt audio packet` and `Waiting for IDR frame` cleared.
-
-That single output decides the next lever:
-- **Audio still fails to decrypt** → key/version issue; check the logged appVersion
-  vs the hardcoded `"7.1.431.0"` fallback in `InProcessStreamEngine.launch`.
-- **Audio fixed but video still starves** (`26 < 103`) → it's bandwidth over the
-  **Tailscale relay**; lower the bitrate (Settings ▸ Video) so IDR frames fit.
-
-## Key files
-- `VibeLight/Streaming/MoonlightSession.mm` — LiStartConnection + H.264 decoder
-- `VibeLight/App/iOS/InProcessStreamEngine.swift` — launch/keys/engine (appVersion here)
-- `VibeLight/App/iOS/StreamView.swift`, `UI/RootView.swift` — the on-screen layer
-- Next: Phase 4 = audio (Opus→AVAudioEngine) + input (GCController→LiSendControllerEvent)
+- Touch-as-mouse/trackpad input (`LiSendTouchEvent` / relative mouse)
+- HEVC/HDR (`supportedVideoFormats |= H265/H265_MAIN10`, HEVC path exists in
+  `rebuildFormatDescription`, untested)
+- iOS quit-on-app-exit (scenePhase → /cancel, mirror macOS "Quit Game on App Exit")
+- Frame pacing / A-V sync polish; stats HUD could add host fps + loss %
