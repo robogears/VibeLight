@@ -93,6 +93,50 @@ enum SessionEvent: Sendable {
     case hostBecameUnreachable
 }
 
+// MARK: - Stream engine seam
+
+/// The platform-agnostic surface of the stream lifecycle machine, extracted so
+/// macOS (Process-spawned moonlight-qt helper, `StreamSessionManager`) and iOS
+/// (a disabled stub in Phase 1; an in-process engine later) present one
+/// interface to `AppState`. `AppState` stores the concrete type per platform,
+/// so observation stays exact; this protocol keeps the two implementations in
+/// lockstep. See docs/plans/ios-support-plan.md §3.2.
+@MainActor
+protocol StreamEngine: AnyObject {
+    var phase: SessionPhase { get }
+    var remoteQuitRequested: Bool { get }
+    var onPhaseChange: ((SessionPhase) -> Void)? { get set }
+    var onStreamDidStart: ((_ helperPID: pid_t?) -> Void)? { get set }
+    var onStreamDidEnd: ((_ cleanly: Bool) -> Void)? { get set }
+    func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async
+    func disconnect()
+    func quitCompletely(host: StreamHost) async
+    func acknowledgeEnd()
+}
+
+// MARK: - Platform chrome seam
+
+/// The OS/window-chrome surface `AppState` needs, abstracted so it never touches
+/// AppKit/UIKit directly. macOS wraps `WindowCoordinator` (window activation,
+/// hidden Dock, cursor, sleep). iOS flips `isIdleTimerDisabled` and otherwise
+/// no-ops — an iOS app is one full-screen scene with no window/activation dance.
+/// `pid_t` resolves via Foundation on both platforms. See §3.4.
+@MainActor
+protocol PlatformChrome: AnyObject {
+    /// Keep the display awake during a session (`true`) or release the assertion.
+    func preventSleep(_ on: Bool)
+    /// Hide the pointer for console/directed input. iOS: no-op (touch).
+    func hidePointer()
+    /// The stream is coming up. macOS: activate the helper PID. iOS: nil PID.
+    func beginStreamPresentation(helperPID: pid_t?)
+    /// The stream ended: reclaim the screen (macOS) / pop the stream layer (iOS).
+    func endStreamPresentation()
+    /// Reclaim the screen only if a presentation is actually outstanding.
+    func endStreamPresentationIfActive()
+    /// Quit the app. macOS: `NSApplication.shared.terminate`. iOS: no-op (HIG).
+    func quitApp()
+}
+
 // MARK: - Controller / navigation
 
 enum MoveDirection: Sendable, Equatable {

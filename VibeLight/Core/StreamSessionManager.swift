@@ -14,7 +14,7 @@ import Observation
 /// window) is deliberately NOT handled here — the integrator wires it through
 /// `onStreamDidStart` / `onStreamDidEnd` so this class stays AppKit-free.
 @MainActor @Observable
-final class StreamSessionManager {
+final class StreamSessionManager: StreamEngine {
 
     // MARK: - Public surface
 

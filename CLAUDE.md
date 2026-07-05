@@ -87,8 +87,12 @@ Notarization needs a paid Developer ID (not configured); GPL fork = never MAS.
 
 ## User's setup (test environment)
 
-- Hosts: "UAE Server" (Tailscale 100.126.190.18, paired, 5 apps, WoL MAC
-  stored) and "william_server" (192.168.50.212, saved but NOT paired).
+Concrete host addresses, hostnames, and WoL MACs live in `CLAUDE.local.md`
+(gitignored — never commit real network details to this public repo). General
+notes that are safe to share:
+
+- Two saved hosts: one paired over a Tailscale tailnet (WoL MAC stored), one
+  saved on the LAN but not yet paired.
 - Moonlight 6.1.0 at `/Applications/Moonlight.app`. Settings: 1080p@144,
-  87.5 Mbps, HDR on.
+  ~87.5 Mbps, HDR on.
 - Hosts are often asleep — handle offline gracefully, offer wake-on-LAN.

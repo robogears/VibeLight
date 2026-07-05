@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import CoreHaptics
 import GameController
 import Observation
@@ -98,8 +102,10 @@ final class ControllerManager {
     @ObservationIgnored private var backHoldTask: Task<Void, Never>?
 
     @ObservationIgnored private var hapticEngine: CHHapticEngine?
+    #if os(macOS)
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var mouseMonitor: Any?
+    #endif
     @ObservationIgnored private var observerTokens: [NSObjectProtocol] = []
 
     // MARK: - Lifecycle
@@ -110,8 +116,10 @@ final class ControllerManager {
     /// from a nonisolated deinit under strict concurrency).
     init() {
         installNotificationObservers()
+        #if os(macOS)
         installKeyboardMonitor()
         installMouseMonitor()
+        #endif
         refreshControllers()
     }
 
@@ -129,6 +137,7 @@ final class ControllerManager {
             NotificationCenter.default.removeObserver(token)
         }
         observerTokens.removeAll()
+        #if os(macOS)
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
@@ -137,6 +146,7 @@ final class ControllerManager {
             NSEvent.removeMonitor(mouseMonitor)
             self.mouseMonitor = nil
         }
+        #endif
         resetTransientInputState()
         hapticEngine?.stop(completionHandler: nil)
         hapticEngine = nil
@@ -164,13 +174,25 @@ final class ControllerManager {
             self?.rebuildHapticsEngine()
         }
         // CRITICAL: releases are dropped while we are backgrounded (the
-        // stream owns the foreground), so any held/repeat state from before
+        // stream/OS owns the foreground), so any held/repeat state from before
         // the handoff is stale. Without this reset, a d-pad held across the
         // transition auto-repeats forever — the runaway-repeat bug.
-        observe(NSApplication.didBecomeActiveNotification) { [weak self] in
-            self?.resetTransientInputState()
-            self?.refreshControllers()
+        #if os(macOS)
+        let didBecomeActive = NSApplication.didBecomeActiveNotification
+        #else
+        let didBecomeActive = UIApplication.didBecomeActiveNotification
+        #endif
+        observe(didBecomeActive) { [weak self] in
+            self?.handleAppBecameActive()
         }
+    }
+
+    /// Runaway-repeat guard: clears stale held/repeat state and re-scans pads.
+    /// Fired on `didBecomeActive` (both platforms) and, on iOS, also reachable
+    /// from the SwiftUI scene-phase hook.
+    func handleAppBecameActive() {
+        resetTransientInputState()
+        refreshControllers()
     }
 
     private func observe(_ name: Notification.Name, _ handler: @escaping @MainActor () -> Void) {
@@ -363,6 +385,11 @@ final class ControllerManager {
             backIsDown = true
             backLongPressFired = false
             backHoldTask?.cancel()
+            // iOS can't self-quit (HIG), so the quit-app chord is meaningless —
+            // never arm the ring there; B stays a plain Back button.
+            #if os(iOS)
+            return
+            #else
             // Only arm the chord where quitting the app is meaningful (home,
             // no overlay). Elsewhere B is a plain Back button.
             guard quitAppChordEnabled?() ?? false else { return }
@@ -374,6 +401,7 @@ final class ControllerManager {
                     markFired: { self.backLongPressFired = true }
                 )
             }
+            #endif
         } else {
             let wasDown = backIsDown
             let firedLongPress = backLongPressFired
@@ -447,8 +475,9 @@ final class ControllerManager {
         hapticEngine = haptics.createEngine(withLocality: .default)
     }
 
-    // MARK: - Keyboard
+    // MARK: - Keyboard (macOS)
 
+    #if os(macOS)
     /// Pointer activity flips the UI into mouse mode. Observe-only local
     /// monitor — every event passes through untouched. (mouseMoved events
     /// require the key window to opt in via acceptsMouseMovedEvents.)
@@ -530,6 +559,7 @@ final class ControllerManager {
         emit(navEvent)
         return nil
     }
+    #endif
 
     // MARK: - DirectionLatch
 

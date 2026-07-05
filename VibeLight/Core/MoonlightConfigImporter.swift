@@ -24,8 +24,15 @@ struct MoonlightConfigImporter {
         }
     }
 
+    #if os(macOS)
     var plistURL: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Preferences/com.moonlight-stream.Moonlight.plist")
+    #else
+    // iOS is sandboxed and has no desktop-Moonlight plist to import. Point at a
+    // path that never exists so importAll() cleanly reports "not found" and the
+    // app falls through to its own generated identity + user-added hosts.
+    var plistURL: URL = URL(fileURLWithPath: "/dev/null/com.moonlight-stream.Moonlight.plist")
+    #endif
 
     func importAll() throws -> ImportResult {
         guard FileManager.default.fileExists(atPath: plistURL.path) else {

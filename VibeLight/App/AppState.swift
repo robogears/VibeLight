@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import Observation
 
 /// Which screen the big-picture UI is showing.
@@ -32,11 +36,17 @@ final class AppState {
     @ObservationIgnored let artwork: ArtworkStore
     @ObservationIgnored let identityProvider: ClientIdentityProvider
     @ObservationIgnored let clientUniqueID: String
+    #if os(macOS)
     let session: StreamSessionManager
+    #else
+    let session: DisabledStreamEngine
+    #endif
     let focus = FocusEngine()
     let controller = ControllerManager()
     let updateService = UpdateService()
-    @ObservationIgnored weak var windowCoordinator: WindowCoordinator?
+    /// OS/window chrome, injected after construction (macOS: the app delegate's
+    /// `WindowCoordinator`; iOS: `iOSPlatformChrome` from the SwiftUI scene).
+    @ObservationIgnored weak var chrome: (any PlatformChrome)?
 
     // MARK: Library state
 
@@ -138,7 +148,11 @@ final class AppState {
         let client = HostAPIClient(identityProvider: identityProvider)
         api = client
         artwork = ArtworkStore(api: client)
+        #if os(macOS)
         session = StreamSessionManager(api: client)
+        #else
+        session = DisabledStreamEngine()
+        #endif
 
         // Our settings: previously persisted > imported Moonlight defaults > fallback.
         var loaded: StreamSettings
@@ -252,7 +266,7 @@ final class AppState {
             if mode == .directed {
                 // Console mode: cursor vanishes until the mouse moves again
                 // (the OS auto-reveals it on movement — no unhide bookkeeping).
-                NSCursor.setHiddenUntilMouseMoves(true)
+                chrome?.hidePointer()
             }
             if inputMode != mode { inputMode = mode }
         }
@@ -271,19 +285,19 @@ final class AppState {
         session.onPhaseChange = { [weak self] phase in
             guard let self else { return }
             if case .failed(let message) = phase {
-                windowCoordinator?.endStreamHandoffIfActive()
+                chrome?.endStreamPresentationIfActive()
                 presentOverlay(.error(message))
             }
         }
         session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
-            windowCoordinator?.beginStreamHandoff(helperPID: helperPID)
+            chrome?.beginStreamPresentation(helperPID: helperPID)
             overlay = nil
             rebuildFocus()
         }
         session.onStreamDidEnd = { [weak self] _ in
             guard let self else { return }
-            windowCoordinator?.endStreamHandoff()
+            chrome?.endStreamPresentation()
             if case .ending(let app) = session.phase {
                 if session.remoteQuitRequested {
                     // The user explicitly quit the game — no "still running"
@@ -723,8 +737,10 @@ final class AppState {
         // Hold B/Circle on the home screen → quit VibeLight itself. Gated to
         // home-with-no-overlay so it can never fire mid-stream or from a menu.
         if event == .quitApp {
+            // macOS: quit VibeLight. iOS: no-op — apps can't self-terminate (HIG);
+            // the chrome's quitApp() is a no-op there.
             if screen == .home, overlay == nil {
-                NSApplication.shared.terminate(nil)
+                chrome?.quitApp()
             }
             return
         }
@@ -1073,9 +1089,15 @@ final class AppState {
 
     /// The client display's native pixel resolution (backing-scaled).
     var nativeResolution: (w: Int, h: Int)? {
+        #if os(macOS)
         guard let screen = NSScreen.main else { return nil }
         let scale = screen.backingScaleFactor
         return (Int((screen.frame.width * scale).rounded()), Int((screen.frame.height * scale).rounded()))
+        #else
+        let screen = UIScreen.main
+        let scale = screen.nativeScale
+        return (Int((screen.bounds.width * scale).rounded()), Int((screen.bounds.height * scale).rounded()))
+        #endif
     }
 
     /// The resolution values the ◀ ▶ cycle steps through: the built-in presets,

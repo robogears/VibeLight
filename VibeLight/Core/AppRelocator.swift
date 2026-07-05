@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 
@@ -98,3 +99,14 @@ enum AppRelocator {
         try process.run()
     }
 }
+#else
+import Foundation
+
+/// iOS: there is no "/Applications" concept and apps can't relocate or re-sign
+/// themselves. Stubbed so the shared `AppState` startup checks compile and
+/// simply never offer relocation on iOS.
+enum AppRelocator {
+    static func shouldOfferRelocation() -> Bool { false }
+    @MainActor static func moveToApplications() -> Bool { false }
+}
+#endif

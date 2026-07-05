@@ -15,7 +15,7 @@ final class BigPictureWindow: NSWindow {
 /// Owns the big-picture window lifecycle and the immersive chrome
 /// (hidden menu bar/dock, sleep prevention, stream handoff).
 @MainActor
-final class WindowCoordinator: NSObject, NSWindowDelegate {
+final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     private(set) var window: BigPictureWindow?
     private var sleepActivity: NSObjectProtocol?
     private var buttonRevealMonitor: Any?
@@ -159,6 +159,29 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         guard isHandoffActive else { return }
         endStreamHandoff()
     }
+
+    // MARK: - PlatformChrome
+
+    /// Toggle the display-sleep assertion. `preventDisplaySleep()` is idempotent
+    /// (its `guard sleepActivity == nil` no-ops a double-arm).
+    func preventSleep(_ on: Bool) {
+        if on {
+            preventDisplaySleep()
+        } else if let activity = sleepActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            sleepActivity = nil
+        }
+    }
+
+    /// Console/directed mode: cursor vanishes until the mouse moves again.
+    func hidePointer() {
+        NSCursor.setHiddenUntilMouseMoves(true)
+    }
+
+    func beginStreamPresentation(helperPID: pid_t?) { beginStreamHandoff(helperPID: helperPID) }
+    func endStreamPresentation() { endStreamHandoff() }
+    func endStreamPresentationIfActive() { endStreamHandoffIfActive() }
+    func quitApp() { NSApplication.shared.terminate(nil) }
 
     // MARK: - Sleep
 

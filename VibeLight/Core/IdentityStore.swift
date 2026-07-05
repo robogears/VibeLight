@@ -12,6 +12,18 @@ import Foundation
 enum IdentityStore {
 
     static func resolve(moonlightIdentity: ClientIdentity?) -> ClientIdentity {
+        #if os(iOS)
+        // iOS never has a desktop-Moonlight plist to import, and /usr/bin/openssl
+        // + Process are forbidden. The keychain is the source of truth: a fresh
+        // user always self-generates (SecKeyCreateRandomKey + swift-certificates),
+        // and the identity lives in the keychain across launches. See iOSIdentity.
+        let id = uniqueID()
+        if let pems = IOSKeychainIdentity.loadPEMs() ?? IOSKeychainIdentity.generatePEMs() {
+            usingGeneratedIdentity = true
+            return ClientIdentity(certificatePEM: pems.cert, privateKeyPEM: pems.key, uniqueID: id)
+        }
+        return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
+        #else
         if let moonlightIdentity, !moonlightIdentity.certificatePEM.isEmpty,
            !moonlightIdentity.privateKeyPEM.isEmpty {
             return moonlightIdentity
@@ -19,6 +31,7 @@ enum IdentityStore {
         if let existing = loadOwn() { return existing }
         return generateAndPersist() ?? ClientIdentity(
             certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: uniqueID())
+        #endif
     }
 
     /// True when VibeLight is running on its own generated identity (i.e. no
@@ -45,6 +58,7 @@ enum IdentityStore {
         return id
     }
 
+    #if os(macOS)
     private static func loadOwn() -> ClientIdentity? {
         let fm = FileManager.default
         guard let cert = try? Data(contentsOf: certURL), !cert.isEmpty,
@@ -83,4 +97,5 @@ enum IdentityStore {
         usingGeneratedIdentity = true
         return ClientIdentity(certificatePEM: cert, privateKeyPEM: key, uniqueID: uniqueID())
     }
+    #endif
 }

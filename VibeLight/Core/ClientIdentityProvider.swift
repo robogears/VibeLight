@@ -36,12 +36,22 @@ final class ClientIdentityProvider: @unchecked Sendable {
             .appendingPathComponent("VibeLight", isDirectory: true)
     }
 
-    /// The mTLS identity, building + caching the P12 on first use.
+    /// The mTLS identity, building + caching it on first use.
     func secIdentity() throws -> SecIdentity {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
 
+        #if os(iOS)
+        // iOS: the identity was born in the keychain (SecKeyCreateRandomKey +
+        // swift-certificates cert, see iOSIdentity). Query it back — no openssl,
+        // no P12, no on-disk key material.
+        guard let identity = IOSKeychainIdentity.assembleIdentity() else {
+            throw IdentityError.importFailed(errSecItemNotFound)
+        }
+        cached = identity
+        return identity
+        #else
         let p12URL = try ensureP12()
         let p12Data = try Data(contentsOf: p12URL)
 
@@ -60,6 +70,7 @@ final class ClientIdentityProvider: @unchecked Sendable {
         let secIdentity = identityRef as! SecIdentity
         cached = secIdentity
         return secIdentity
+        #endif
     }
 
     /// The client's private key, for signing during pairing.
@@ -73,7 +84,8 @@ final class ClientIdentityProvider: @unchecked Sendable {
     /// The client certificate PEM (for the pairing handshake wire format).
     var certificatePEM: Data { identity.certificatePEM }
 
-    // MARK: - P12 cache
+    #if os(macOS)
+    // MARK: - P12 cache (macOS)
 
     /// Passphrase derived from the key material itself — stable across launches,
     /// unique per pairing, never stored separately. The P12 sits beside a
@@ -135,4 +147,5 @@ final class ClientIdentityProvider: @unchecked Sendable {
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: p12URL.path)
         return p12URL
     }
+    #endif
 }

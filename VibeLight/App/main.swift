@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
 
         let state = AppState()
-        state.windowCoordinator = windowCoordinator
+        state.chrome = windowCoordinator
         self.state = state
 
         windowCoordinator.showBigPicture(

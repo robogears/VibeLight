@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Observation
@@ -451,3 +452,39 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         continuation = nil
     }
 }
+#else
+import Foundation
+import Observation
+
+/// iOS stub: a bundle can't self-install on iOS (no writable app bundle, no
+/// `open`, no `codesign`). Updates ship out-of-band (sideload / AltStore). The
+/// public surface matches macOS so the shared `AppState`/`UpdateCard` compile
+/// unchanged; every action is inert and `phase` stays `.upToDate`.
+@MainActor
+@Observable
+final class UpdateService {
+    struct Release: Equatable, Sendable {
+        var version: String
+        var notes: String
+    }
+
+    enum Phase: Equatable {
+        case idle, checking, upToDate, available
+        case downloading(Double), installing, readyToInstall
+        case failed(String)
+    }
+
+    private(set) var phase: Phase = .upToDate
+    private(set) var available: Release?
+    let canSelfInstall = false
+
+    var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    }
+
+    func check(silent: Bool) async { phase = .upToDate }
+    func downloadAndInstall() async {}
+    func installStagedUpdate() {}
+    func openReleasePage() {}
+}
+#endif

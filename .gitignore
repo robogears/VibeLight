@@ -9,6 +9,7 @@ build/
 # XcodeGen generates the project — project.yml is the source of truth
 VibeLight.xcodeproj/
 VibeLight/Info.plist
+VibeLight/iOS-Info.plist
 
 # SPM
 .build/
@@ -20,3 +21,4 @@ VibeLight/Info.plist
 # Secrets / local
 *.pem
 *.key
+CLAUDE.local.md

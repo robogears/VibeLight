@@ -14,6 +14,19 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
   home rail to pick the active one.
 - ✅ **(6) Stream-entry flash** — mitigated (Dock no longer un-hidden during the
   handoff, on both the launcher and helper sides); needs live confirmation.
+- ✅ **(2) iPadOS + iPhone support — Phase 1 (launcher, no streaming yet).**
+  The whole shared shell now builds and runs on iOS 17+ / iPadOS: host browsing,
+  in-app GameStream pairing, app list, box art, settings, and full controller +
+  focus-engine navigation. Verified: builds for the iOS 27 simulator, launches,
+  and renders the big-picture UI (empty-state "Add Computer" shown). Streaming
+  itself is behind a `StreamEngine` seam and **disabled on iOS** (`launch()`
+  shows "not supported on iOS yet") — real streaming needs the in-process
+  moonlight-common-c engine (Phases 2–5, see `docs/plans/ios-support-plan.md`).
+  The macOS build is byte-for-byte behaviorally unchanged (openssl identity path
+  kept; iOS uses SecKeyCreateRandomKey + swift-certificates + a keychain-assembled
+  SecIdentity). GPLv3 = the iOS app can't ship on the App Store; sideload/AltStore.
+  **Caveat:** on-device pairing against a live host is unverified here (no device;
+  the crypto pattern is probe-proven on macOS + compiles for iOS).
 
 ## Planned
 

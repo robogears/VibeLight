@@ -3,17 +3,29 @@ options:
   bundleIdPrefix: com.vibelight
   deploymentTarget:
     macOS: "15.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "15.0"
+packages:
+  # Native RSA keygen + self-signed X.509 cert generation (replaces the
+  # /usr/bin/openssl Process shell-out that iOS forbids). Wired into the iOS
+  # target ONLY — macOS keeps its proven openssl→P12→SecPKCS12Import path
+  # unchanged, so the shared identity code is #if os(iOS) for the X509 parts.
+  swift-certificates:
+    url: https://github.com/apple/swift-certificates.git
+    exactVersion: 1.19.3
 targets:
+
+  # ── macOS app: the existing big-picture shell (behaviorally unchanged) ──────
   VibeLight:
     type: application
     platform: macOS
     sources:
       - path: VibeLight
+        excludes:
+          - "App/iOS/**"      # iOS SwiftUI shell + iOS-only seam conformers
     info:
       path: VibeLight/Info.plist
       properties:
@@ -44,6 +56,67 @@ targets:
         INFOPLIST_KEY_NSSupportsAutomaticTermination: NO
         INFOPLIST_KEY_NSSupportsSuddenTermination: NO
         SWIFT_STRICT_CONCURRENCY: complete
+
+  # ── iOS / iPadOS app: shared Core/Input/UI + a minimal SwiftUI shell ────────
+  VibeLight-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: VibeLight
+        # macOS-only files with no iOS counterpart. AppRelocator/UpdateService
+        # stay (they carry #if os(macOS) impl + an iOS stub in the same file);
+        # iOSIdentity.swift stays (it is #if os(iOS)); the macOS Info.plist is
+        # excluded so it isn't copied as a stray resource.
+        excludes:
+          - "App/main.swift"
+          - "App/BigPictureWindow.swift"
+          - "Core/StreamSessionManager.swift"
+          - "Info.plist"
+    info:
+      path: VibeLight/iOS-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Same self-signed-host pinning story as macOS. Without arbitrary-loads +
+        # local-networking the mTLS handshake to the host dies (-1200) before our
+        # pinning delegate runs.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: VibeLight connects to your gaming PC on your local network to list games, fetch box art, and stream them.
+        GCSupportsControllerUserInteraction: true
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    dependencies:
+      - package: swift-certificates
+        product: X509
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.ios
+        PRODUCT_NAME: VibeLight
+        MARKETING_VERSION: 0.1.6
+        CURRENT_PROJECT_VERSION: 1
+        # No dev team configured — build for the Simulator, ad-hoc / unsigned.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_STRICT_CONCURRENCY: complete
+
+  # ── Unit tests: macOS only (unchanged) ─────────────────────────────────────
   VibeLightTests:
     type: bundle.unit-test
     platform: macOS
@@ -60,6 +133,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         SWIFT_STRICT_CONCURRENCY: complete
+
 schemes:
   VibeLight:
     build:
@@ -72,3 +146,9 @@ schemes:
       config: Debug
       targets:
         - VibeLightTests
+  VibeLight-iOS:
+    build:
+      targets:
+        VibeLight-iOS: all
+    run:
+      config: Debug
