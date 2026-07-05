@@ -1,10 +1,31 @@
 import SwiftUI
 
-/// Top-level scene composition: ambient background, current screen, overlays.
+/// Top-level scene composition: ambient background, current screen, overlays —
+/// laid out in a resolution-adaptive virtual canvas so the big-picture UI keeps
+/// the same physical proportions at any display size (see `uiScale`).
 struct RootView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
+        GeometryReader { geo in
+            let scale = Self.uiScale(for: geo.size)
+            content
+                // Lay the whole UI out in a virtual canvas (real size ÷ scale),
+                // then scale it to fill the screen from the top-leading corner
+                // (GeometryReader anchors its child there). On a normal Mac scale
+                // is exactly 1.0 → identity, zero change. On a 4K/5K display it
+                // upscales so elements aren't tiny; on iPhone/iPad it fits the
+                // full design to the screen. topLeading anchor keeps the scaled
+                // canvas exactly overlaying the screen (a .center anchor pushes
+                // an oversized virtual frame off-screen).
+                .frame(width: geo.size.width / scale, height: geo.size.height / scale,
+                       alignment: .topLeading)
+                .scaleEffect(scale, anchor: .topLeading)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var content: some View {
         ZStack {
             AmbientBackground()
 
@@ -30,7 +51,21 @@ struct RootView: View {
         .animation(Theme.focusSpring, value: state.screen)
         .animation(.easeOut(duration: 0.18), value: state.overlay)
         .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
-        .ignoresSafeArea()
+    }
+
+    /// The scale that maps the design canvas onto the real screen.
+    /// - macOS: 1.0 for any window ≤ 2000 pt wide (i.e. every normal Mac — zero
+    ///   change), scaling UP only on large 4K/5K displays where fixed-size
+    ///   elements would otherwise look tiny.
+    /// - iOS/iPadOS: scales the ~1920-pt-wide design to fit, so iPad shows the
+    ///   full big-picture layout and iPhone a proportionally-shrunk version.
+    static func uiScale(for size: CGSize) -> CGFloat {
+        guard size.width > 0 else { return 1 }
+        #if os(macOS)
+        return min(max(size.width / 2000, 1.0), 2.5)
+        #else
+        return min(max(size.width / 1920, 0.45), 1.3)
+        #endif
     }
 }
 

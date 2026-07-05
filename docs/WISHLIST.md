@@ -14,6 +14,14 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
   home rail to pick the active one.
 - ✅ **(6) Stream-entry flash** — mitigated (Dock no longer un-hidden during the
   handoff, on both the launcher and helper sides); needs live confirmation.
+- ✅ **(3) UI scales with resolution.** A root scaler lays the big-picture UI
+  out in a virtual canvas and scales it to fill the screen: **exactly 1.0
+  (identity, zero change) on any Mac ≤ 2000 pt wide**, scaling UP only on large
+  4K/5K displays where fixed-size elements looked tiny, and scaling the full
+  design to fit on iPhone/iPad. Verified: iOS simulator now fits the whole
+  layout (one-line wordmark + button + full hint bar, vs. the old cramped
+  wrap); macOS 4K upscale builds + launches (pixel capture blocked by
+  screen-recording permission, but the scale≠1 path is proven via iOS).
 - ✅ **(2) iPadOS + iPhone support — Phase 1 (launcher, no streaming yet).**
   The whole shared shell now builds and runs on iOS 17+ / iPadOS: host browsing,
   in-app GameStream pairing, app list, box art, settings, and full controller +
