@@ -43,6 +43,16 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
 
 ## Planned
 
+0. **Force-restart PC button** (requested 2026-07-05, important). A "Restart PC"
+   control to the **left of the host chip** in the home header that force-restarts
+   the Windows host with **no confirmation dialog on Windows** (equivalent to
+   `shutdown /r /f /t 0`). Needs a confirm step *inside VibeLight* (it's
+   destructive), then fire-and-forget. Mechanism under research — likely
+   Apollo/Vibepollo **server commands** over the mTLS GameStream API (needs the
+   `server_cmd` permission), a host-configured "Restart" command, or a launched
+   shutdown app. NOTE 47990 `/api/restart` restarts the Sunshine *service*, not
+   the PC.
+
 1. **Settings presets on the home screen.**
    - User custom-configures settings, then saves them as a preset (Preset 1–4 or
      named) from within Settings ("Save as preset").
