@@ -73,8 +73,10 @@ struct RootView: View {
         // …otherwise 1.0 in the normal range, scaling up only on huge displays.
         return min(max(size.width / 2000, 1.0), 2.5)
         #else
+        // iOS/iPadOS: fit the ~1920×1080 design to the (landscape) screen, then
+        // zoom 1.25× so the big-picture UI reads larger on iPhone/iPad.
         let fit = min(size.width / 1920, size.height / 1080)
-        return min(max(fit, 0.3), 1.3)
+        return min(max(fit * 1.25, 0.3), 1.6)
         #endif
     }
 }

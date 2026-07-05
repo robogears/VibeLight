@@ -249,9 +249,22 @@ private struct PairingPanel: View {
     private var errorText: String {
         switch pairing.status {
         case .wrongPIN: "That PIN didn't match. Double-check and try again."
-        case .unreachable: "Couldn't reach the computer. Make sure it's on and reachable."
+        case .unreachable:
+            "Couldn't reach the computer. Make sure it's on and reachable."
+            + (isTailscaleAddress
+               ? "\n\nThis is a Tailscale address — make sure Tailscale is installed and connected on THIS device too."
+               : "")
         case .failed(let m): m
         default: ""
         }
+    }
+
+    /// True when the host address is in the Tailscale CGNAT range (100.64.0.0/10)
+    /// — a common "unreachable" cause is Tailscale not running on this device.
+    private var isTailscaleAddress: Bool {
+        guard let host = URL(string: pairing.webUIURL)?.host else { return false }
+        let parts = host.split(separator: ".")
+        guard parts.count == 4, parts[0] == "100", let second = Int(parts[1]) else { return false }
+        return (64...127).contains(second)
     }
 }
