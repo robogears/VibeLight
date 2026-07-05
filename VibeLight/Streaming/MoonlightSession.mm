@@ -232,28 +232,66 @@ static int startCodeLen(const uint8_t *p, int len) {
         return DR_NEED_IDR;   // ask the host to resend keyframe data
     }
 
-    // Walk the buffer chain: parameter sets rebuild the format description;
-    // picture NALUs get their Annex-B start code swapped for a 4-byte AVCC length.
-    NSMutableData *avcc = [NSMutableData dataWithCapacity:du->fullLength];
+    // Walk the buffer chain. Parameter-set entries are whole NALUs and rebuild
+    // the format description. PICDATA entries are RTP FRAGMENTS, not NALUs — a
+    // frame's picture data spans many entries where only NALU starts carry an
+    // Annex-B start code. So: reassemble the full Annex-B picture stream first,
+    // THEN convert to AVCC by scanning for real start codes. (Treating each
+    // fragment as a NALU injects bogus length headers mid-NALU — every frame
+    // over ~1KB decodes to garbage and VideoToolbox drops it silently: the
+    // on-device "frames enqueue fine but the screen stays black" bug.)
+    NSMutableData *annexB = [NSMutableData dataWithCapacity:du->fullLength];
     BOOL paramSetsChanged = NO;
     for (PLENTRY e = du->bufferList; e != NULL; e = e->next) {
         const uint8_t *d = (const uint8_t *)e->data;
-        int sc = startCodeLen(d, e->length);
-        const uint8_t *nalu = d + sc;
-        int naluLen = e->length - sc;
-        if (naluLen <= 0) continue;
         switch (e->bufferType) {
-            case BUFFER_TYPE_SPS: _sps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
-            case BUFFER_TYPE_PPS: _pps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
-            case BUFFER_TYPE_VPS: _vps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
-            default: {   // BUFFER_TYPE_PICDATA (and IDR slice NALUs)
-                uint32_t be = CFSwapInt32HostToBig((uint32_t)naluLen);
-                [avcc appendBytes:&be length:4];
-                [avcc appendBytes:nalu length:naluLen];
+            case BUFFER_TYPE_SPS:
+            case BUFFER_TYPE_PPS:
+            case BUFFER_TYPE_VPS: {
+                int sc = startCodeLen(d, e->length);
+                int naluLen = e->length - sc;
+                if (naluLen <= 0) break;
+                NSData *ps = [NSData dataWithBytes:d + sc length:naluLen];
+                if (e->bufferType == BUFFER_TYPE_SPS) _sps = ps;
+                else if (e->bufferType == BUFFER_TYPE_PPS) _pps = ps;
+                else _vps = ps;
+                paramSetsChanged = YES;
+                break;
             }
+            default:   // BUFFER_TYPE_PICDATA fragment — append raw
+                [annexB appendBytes:d length:e->length];
         }
     }
     if (paramSetsChanged) [self rebuildFormatDescription];
+
+    // Annex-B → AVCC: replace each start code with a 4-byte big-endian length of
+    // the NALU that follows (start codes only occur at NALU boundaries in the
+    // reassembled elementary stream).
+    NSMutableData *avcc = [NSMutableData dataWithCapacity:annexB.length + 8];
+    {
+        const uint8_t *p = (const uint8_t *)annexB.bytes;
+        NSUInteger len = annexB.length;
+        NSUInteger i = 0;
+        while (i < len) {
+            int sc = startCodeLen(p + i, (int)(len - i));
+            if (sc == 0) { i++; continue; }   // resync (shouldn't happen on clean frames)
+            NSUInteger naluStart = i + sc;
+            // Find the next start code (or end of stream).
+            NSUInteger j = naluStart;
+            while (j + 3 <= len) {
+                if (p[j] == 0 && p[j+1] == 0 && (p[j+2] == 1 || (j + 4 <= len && p[j+2] == 0 && p[j+3] == 1))) break;
+                j++;
+            }
+            if (j + 3 > len) j = len;
+            NSUInteger naluLen = j - naluStart;
+            if (naluLen > 0) {
+                uint32_t be = CFSwapInt32HostToBig((uint32_t)naluLen);
+                [avcc appendBytes:&be length:4];
+                [avcc appendBytes:p + naluStart length:naluLen];
+            }
+            i = j;
+        }
+    }
     if (!_formatDesc || avcc.length == 0) return DR_OK;
 
     CMBlockBufferRef bb = NULL;
@@ -278,6 +316,8 @@ static int startCodeLen(const uint8_t *p, int len) {
     if (_framesEnqueued++ == 0) {
         CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(_formatDesc);
         NSLog(@"[VibeLight] first video frame enqueued (%dx%d) — decode path OK", dim.width, dim.height);
+    } else if (_framesEnqueued % 300 == 0) {   // ~every 10s at 30fps
+        NSLog(@"[VibeLight] %d frames enqueued, layer status=%ld", _framesEnqueued, (long)_displayLayer.status);
     }
     return DR_OK;
 }
