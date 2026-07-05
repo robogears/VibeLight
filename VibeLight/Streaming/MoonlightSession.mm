@@ -214,10 +214,13 @@ static void ClStageFailed(int stage, int errorCode) { [sActive notifyFailStage:(
 static void ClConnectionStarted(void) { [sActive notifyStage:MoonlightStageConnected]; }
 static void ClConnectionTerminated(int errorCode) { [sActive notifyTerminated:errorCode]; }
 static void ClLogMessage(const char *format, ...) {
-    va_list ap; va_start(ap, format);
-    NSString *msg = [[NSString alloc] initWithFormat:@(format) arguments:ap];
-    va_end(ap);
-    NSLog(@"[moonlight] %@", msg);
+    // Also called from pool-less moonlight threads; @(format) is autoreleased.
+    @autoreleasepool {
+        va_list ap; va_start(ap, format);
+        NSString *msg = [[NSString alloc] initWithFormat:@(format) arguments:ap];
+        va_end(ap);
+        NSLog(@"[moonlight] %@", msg);
+    }
 }
 
 // MARK: - Video sink → VideoToolbox / AVSampleBufferDisplayLayer
@@ -255,6 +258,13 @@ static int startCodeLen(const uint8_t *p, int len) {
         }
         [_displayLayer flush];
         return DR_NEED_IDR;   // ask the host to resend keyframe data
+    }
+    if (!_displayLayer.isReadyForMoreMediaData) {
+        // Back-pressure: the decoder can't keep up with this profile. Dropping a
+        // reference frame corrupts the chain anyway, so clear the backlog and
+        // resync on a keyframe instead of queueing unboundedly toward jetsam.
+        [_displayLayer flush];
+        return DR_NEED_IDR;
     }
 
     // Walk the buffer chain. Parameter-set entries are whole NALUs and rebuild
@@ -360,7 +370,13 @@ static void DrCleanup(void) {
     if (s && s->_formatDesc) { CFRelease(s->_formatDesc); s->_formatDesc = NULL; }
 }
 static int  DrSubmit(PDECODE_UNIT decodeUnit) {
-    MoonlightSession *s = sActive; return s ? [s submit:decodeUnit] : DR_OK;
+    // Runs on moonlight's raw video pthread — NO autorelease pool exists there.
+    // submit: creates autoreleased NSData/NSMutableData per frame; without a
+    // pool drain they accumulate forever (≈20+ MB/s at 4K120) until jetsam
+    // kills the app. Observed on-device as a mid-stream crash.
+    @autoreleasepool {
+        MoonlightSession *s = sActive; return s ? [s submit:decodeUnit] : DR_OK;
+    }
 }
 
 // MARK: - No-op audio sink (Phase 4 decodes Opus → CoreAudio)
