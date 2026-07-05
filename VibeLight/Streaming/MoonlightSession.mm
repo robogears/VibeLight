@@ -12,6 +12,15 @@ static __weak MoonlightSession *sActive = nil;
     STREAM_CONFIGURATION _streamConfig;
     // Backing storage the C structs point into — must outlive LiStartConnection.
     NSString *_address, *_appVersion, *_gfeVersion, *_rtspUrl;
+    // Video decode state.
+    AVSampleBufferDisplayLayer *_displayLayer;
+    CMVideoFormatDescriptionRef _formatDesc;
+    NSData *_sps, *_pps, *_vps;
+    int _videoFormat;
+}
+
+- (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
+    _displayLayer = layer;
 }
 
 + (NSString *)launchUrlQueryParameters {
@@ -134,13 +143,96 @@ static void ClLogMessage(const char *format, ...) {
     NSLog(@"[moonlight] %@", msg);
 }
 
-// MARK: - No-op video sink (Phase 3b feeds VideoToolbox)
+// MARK: - Video sink → VideoToolbox / AVSampleBufferDisplayLayer
 
-static int  DrSetup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) { return 0; }
+// Length of the Annex-B start code at the front of a NALU (00 00 01 or 00 00 00 01).
+static int startCodeLen(const uint8_t *p, int len) {
+    if (len >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 1) return 4;
+    if (len >= 3 && p[0] == 0 && p[1] == 0 && p[2] == 1) return 3;
+    return 0;
+}
+
+- (void)rebuildFormatDescription {
+    if (_formatDesc) { CFRelease(_formatDesc); _formatDesc = NULL; }
+    if (!_sps.length || !_pps.length) return;
+    const uint8_t *ps[3]; size_t sz[3]; size_t count = 0;
+    // H.264: {SPS, PPS}. HEVC: {VPS, SPS, PPS}.
+    BOOL hevc = (_videoFormat & VIDEO_FORMAT_MASK_H265) != 0;
+    if (hevc && _vps.length) { ps[count] = (const uint8_t *)_vps.bytes; sz[count] = _vps.length; count++; }
+    ps[count] = (const uint8_t *)_sps.bytes; sz[count] = _sps.length; count++;
+    ps[count] = (const uint8_t *)_pps.bytes; sz[count] = _pps.length; count++;
+    if (hevc) {
+        CMVideoFormatDescriptionCreateFromHEVCParameterSets(kCFAllocatorDefault, count, ps, sz, 4, NULL, &_formatDesc);
+    } else {
+        CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault, count, ps, sz, 4, &_formatDesc);
+    }
+}
+
+- (int)submit:(PDECODE_UNIT)du {
+    if (!_displayLayer) return DR_OK;
+    if (_displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
+        [_displayLayer flush];
+        return DR_NEED_IDR;   // ask the host to resend keyframe data
+    }
+
+    // Walk the buffer chain: parameter sets rebuild the format description;
+    // picture NALUs get their Annex-B start code swapped for a 4-byte AVCC length.
+    NSMutableData *avcc = [NSMutableData dataWithCapacity:du->fullLength];
+    BOOL paramSetsChanged = NO;
+    for (PLENTRY e = du->bufferList; e != NULL; e = e->next) {
+        const uint8_t *d = (const uint8_t *)e->data;
+        int sc = startCodeLen(d, e->length);
+        const uint8_t *nalu = d + sc;
+        int naluLen = e->length - sc;
+        if (naluLen <= 0) continue;
+        switch (e->bufferType) {
+            case BUFFER_TYPE_SPS: _sps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
+            case BUFFER_TYPE_PPS: _pps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
+            case BUFFER_TYPE_VPS: _vps = [NSData dataWithBytes:nalu length:naluLen]; paramSetsChanged = YES; break;
+            default: {   // BUFFER_TYPE_PICDATA (and IDR slice NALUs)
+                uint32_t be = CFSwapInt32HostToBig((uint32_t)naluLen);
+                [avcc appendBytes:&be length:4];
+                [avcc appendBytes:nalu length:naluLen];
+            }
+        }
+    }
+    if (paramSetsChanged) [self rebuildFormatDescription];
+    if (!_formatDesc || avcc.length == 0) return DR_OK;
+
+    CMBlockBufferRef bb = NULL;
+    if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, avcc.length, kCFAllocatorDefault,
+                                           NULL, 0, avcc.length, 0, &bb) != noErr) return DR_OK;
+    CMBlockBufferReplaceDataBytes(avcc.bytes, bb, 0, avcc.length);
+
+    CMSampleBufferRef sb = NULL;
+    size_t sampleSize = avcc.length;
+    OSStatus st = CMSampleBufferCreateReady(kCFAllocatorDefault, bb, _formatDesc, 1, 0, NULL, 1, &sampleSize, &sb);
+    CFRelease(bb);
+    if (st != noErr || !sb) return DR_OK;
+
+    // Render as soon as possible — we don't buffer for A/V sync in this pass.
+    CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sb, true);
+    if (attachments && CFArrayGetCount(attachments)) {
+        CFMutableDictionaryRef d = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(attachments, 0);
+        CFDictionarySetValue(d, kCMSampleAttachmentKey_DisplayImmediately, kCFBooleanTrue);
+    }
+    [_displayLayer enqueueSampleBuffer:sb];
+    CFRelease(sb);
+    return DR_OK;
+}
+
+static int  DrSetup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
+    MoonlightSession *s = sActive; if (s) s->_videoFormat = videoFormat; return 0;
+}
 static void DrStart(void) {}
 static void DrStop(void) {}
-static void DrCleanup(void) {}
-static int  DrSubmit(PDECODE_UNIT decodeUnit) { return DR_OK; }
+static void DrCleanup(void) {
+    MoonlightSession *s = sActive;
+    if (s && s->_formatDesc) { CFRelease(s->_formatDesc); s->_formatDesc = NULL; }
+}
+static int  DrSubmit(PDECODE_UNIT decodeUnit) {
+    MoonlightSession *s = sActive; return s ? [s submit:decodeUnit] : DR_OK;
+}
 
 // MARK: - No-op audio sink (Phase 4 decodes Opus → CoreAudio)
 

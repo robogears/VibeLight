@@ -23,6 +23,16 @@ struct RootView: View {
                 .scaleEffect(scale, anchor: .topLeading)
         }
         .ignoresSafeArea()
+        #if os(iOS)
+        // Live stream covers the whole screen (unscaled) while it's up.
+        .overlay {
+            if case .streaming = state.session.phase {
+                StreamView(layer: state.session.displayLayer)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
+        }
+        #endif
     }
 
     private var content: some View {

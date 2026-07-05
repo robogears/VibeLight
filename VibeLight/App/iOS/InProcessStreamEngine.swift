@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import Observation
+import AVFoundation
 
 /// iOS streaming engine (Phases 3+). Drives an in-process moonlight-common-c
 /// connection via `MoonlightSession`, replacing the Phase-1 `DisabledStreamEngine`
@@ -31,8 +32,13 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored private var proxy: SessionDelegateProxy?
     @ObservationIgnored private var connectedOnce = false
 
+    /// The layer decoded video renders into. `StreamView` displays it while
+    /// `phase == .streaming`.
+    @ObservationIgnored let displayLayer = AVSampleBufferDisplayLayer()
+
     init(api: HostAPIClient) {
         self.api = api
+        displayLayer.videoGravity = .resizeAspect
     }
 
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {
@@ -70,6 +76,8 @@ final class InProcessStreamEngine: StreamEngine {
                 enableHevc: false, enableHdr: false,   // H.264 for the first connect
                 aesKey: key, aesIv: iv)
             session.delegate = proxy
+            displayLayer.flush()
+            session.attach(displayLayer)
             self.session = session
             self.launchingApp = app
             session.start()

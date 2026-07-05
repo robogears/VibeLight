@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <AVFoundation/AVFoundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -57,6 +58,10 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
                     enableHdr:(BOOL)enableHdr
                          aesKey:(NSData *)aesKey
                           aesIv:(NSData *)aesIv;
+
+/// The layer decoded video is enqueued onto. Attach before `start` so the very
+/// first (IDR) frame has somewhere to go.
+- (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer;
 
 /// Starts the connection on a background thread. Stage callbacks arrive on the
 /// main queue. Non-blocking.
