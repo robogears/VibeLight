@@ -198,6 +198,10 @@ targets:
       base:
         GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "USE_MBEDTLS", "HAS_SOCKLEN_T"]
         GCC_C_LANGUAGE_STANDARD: gnu11
+        # Third-party C we don't maintain — the enet/common-c warnings (enum
+        # bitwise ops, size_t narrowing) are upstream noise in every Moonlight
+        # build. Keep OUR targets' warnings loud; silence this one.
+        WARNING_CFLAGS: ["-w"]
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/ThirdParty/moonlight-common-c/src"
           - "$(SRCROOT)/ThirdParty/moonlight-common-c/enet/include"
