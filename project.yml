@@ -159,7 +159,12 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: VibeLightiOS.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1,2"   # 1 = iPhone, 2 = iPad
+        # iPhone + iPad ONLY: drop the "Designed for iPad" run-on-Mac and
+        # run-on-Vision-Pro destinations (both default to YES).
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
         SWIFT_STRICT_CONCURRENCY: complete
 
   # ── Unit tests: macOS only (unchanged) ─────────────────────────────────────
