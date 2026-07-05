@@ -41,13 +41,22 @@ final class HostPairing: @unchecked Sendable {
         let aesKey = GameStreamCrypto.sha256(salt + Data(pin.utf8)).prefix(16)
 
         do {
-            // Phase 1 — getservercert. Blocks until the user enters the PIN on
-            // the host, so it gets a long timeout.
+            // Clear any zombie session first: Sunshine keeps a half-open pairing
+            // session per uniqueid across aborted attempts (its emplace never
+            // replaces), which makes the NEXT attempt die at stage 1. We're not
+            // paired yet (pairing is only offered for unpaired hosts), so this
+            // is pure cleanup.
+            await unpair(address)
+
+            // Phase 1 — getservercert. The host parks this request until the
+            // user types the PIN into its web UI, so give them a real window
+            // (moonlight-qt waits indefinitely; a short timeout both fails a
+            // slow-but-correct PIN AND leaves a poisoned session behind).
             let resp1 = try await get(
                 address: address,
                 query: "devicename=roth&updateState=1&phrase=getservercert&salt=\(salt.lowercaseHex)&clientcert=\(clientCertPEM.lowercaseHex)",
-                timeout: 100)
-            guard paired(resp1) else { return .failed("The host rejected pairing (stage 1).") }
+                timeout: 600)
+            guard paired(resp1) else { return stageError(resp1, "The host rejected pairing (stage 1).") }
             guard let serverCertPEM = xmlHex(resp1, "plaincert"), !serverCertPEM.isEmpty else {
                 await unpair(address)
                 return .alreadyInProgress
@@ -61,7 +70,7 @@ final class HostPairing: @unchecked Sendable {
             let resp2 = try await get(
                 address: address,
                 query: "devicename=roth&updateState=1&clientchallenge=\(encryptedChallenge.lowercaseHex)")
-            guard paired(resp2) else { await unpair(address); return .failed("Pairing failed (stage 2).") }
+            guard paired(resp2) else { await unpair(address); return stageError(resp2, "Pairing failed (stage 2).") }
             guard let encResponse = xmlHex(resp2, "challengeresponse"),
                   let challengeResponseData = GameStreamCrypto.aesEcbDecrypt(encResponse, key: aesKey),
                   challengeResponseData.count >= hashLength + 16 else {
@@ -86,7 +95,7 @@ final class HostPairing: @unchecked Sendable {
             let resp3 = try await get(
                 address: address,
                 query: "devicename=roth&updateState=1&serverchallengeresp=\(encHash.lowercaseHex)")
-            guard paired(resp3) else { await unpair(address); return .failed("Pairing failed (stage 3).") }
+            guard paired(resp3) else { await unpair(address); return stageError(resp3, "Pairing failed (stage 3).") }
             guard let pairingSecret = xmlHex(resp3, "pairingsecret"), pairingSecret.count > 16 else {
                 await unpair(address); return .failed("Invalid pairing secret (stage 3).")
             }
@@ -118,16 +127,19 @@ final class HostPairing: @unchecked Sendable {
             let resp4 = try await get(
                 address: address,
                 query: "devicename=roth&updateState=1&clientpairingsecret=\(clientPairingSecret.lowercaseHex)")
-            guard paired(resp4) else { await unpair(address); return .failed("Pairing failed (stage 4).") }
+            guard paired(resp4) else { await unpair(address); return stageError(resp4, "Pairing failed (stage 4).") }
 
             // Phase 5 — pairchallenge over mTLS, pinning the server cert we learned.
             let resp5 = try await getMTLS(address: address, serverCertPEM: serverCertPEM,
                                           query: "devicename=roth&updateState=1&phrase=pairchallenge")
-            guard paired(resp5) else { await unpair(address); return .failed("Pairing failed (stage 5).") }
+            guard paired(resp5) else { await unpair(address); return stageError(resp5, "Pairing failed (stage 5).") }
 
             return .paired(serverCertPEM: serverCertPEM)
         } catch is CancellationError {
             return .failed("Pairing was cancelled.")
+        } catch let error as URLError where error.code == .timedOut {
+            await unpair(address)  // don't leave a zombie session poisoning the retry
+            return .failed("Timed out waiting for the PIN. Enter it on the host, then try again.")
         } catch {
             return .unreachable
         }
@@ -135,9 +147,9 @@ final class HostPairing: @unchecked Sendable {
 
     // MARK: - Requests
 
-    private func get(address: String, query: String, timeout: TimeInterval = 10) async throws -> String {
+    private func get(address: String, path: String = "/pair", query: String, timeout: TimeInterval = 10) async throws -> String {
         var comps = URLComponents()
-        comps.scheme = "http"; comps.host = address; comps.port = 47989; comps.path = "/pair"
+        comps.scheme = "http"; comps.host = address; comps.port = 47989; comps.path = path
         comps.percentEncodedQuery = query + "&uniqueid=\(uniqueID)&uuid=\(UUID().uuidString)"
         var req = URLRequest(url: comps.url!)
         req.setValue("close", forHTTPHeaderField: "Connection")
@@ -163,11 +175,42 @@ final class HostPairing: @unchecked Sendable {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    /// Removes our pairing session (and any stale half-open one) on the host.
+    /// The real endpoint is GET /unpair — `phrase=unpair` on /pair is NOT a
+    /// thing on Sunshine-family hosts (it 404s, making cleanup a silent no-op
+    /// and poisoning every retry with a stale session).
     private func unpair(_ address: String) async {
-        _ = try? await get(address: address, query: "phrase=unpair")
+        _ = try? await get(address: address, path: "/unpair", query: "devicename=roth&updateState=1")
     }
 
     // MARK: - XML helpers
+
+    /// Hosts report failures as attributes on the root element over an HTTP 200
+    /// (`<root status_code="400" status_message="…">`). Surface them so a stage
+    /// failure says what the HOST thinks went wrong, not just which stage died.
+    private func stageError(_ xml: String, _ fallback: String) -> Result {
+        .failed(Self.stageMessage(xml: xml, fallback: fallback))
+    }
+
+    /// Builds a human message from a host failure response, folding in the
+    /// host's own `status_code` / `status_message` when present.
+    static func stageMessage(xml: String, fallback: String) -> String {
+        let code = attributeValue(xml, "status_code")
+        let message = attributeValue(xml, "status_message")
+        switch (code, message) {
+        case (let c?, let m?) where c != "200": return "\(fallback) Host says: \(m) (\(c))."
+        case (_, let m?):                       return "\(fallback) Host says: \(m)."
+        case (let c?, _) where c != "200":      return "\(fallback) Host status \(c)."
+        default:                                return fallback
+        }
+    }
+
+    static func attributeValue(_ xml: String, _ name: String) -> String? {
+        guard let r = xml.range(of: "\(name)=\""),
+              let end = xml.range(of: "\"", range: r.upperBound..<xml.endIndex) else { return nil }
+        let value = String(xml[r.upperBound..<end.lowerBound])
+        return value.isEmpty ? nil : value
+    }
 
     private func xmlValue(_ xml: String, _ tag: String) -> String? {
         guard let start = xml.range(of: "<\(tag)>"),

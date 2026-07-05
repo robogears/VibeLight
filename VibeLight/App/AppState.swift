@@ -584,11 +584,17 @@ final class AppState {
         pairing = PairingState(hostID: host.id, hostName: host.name, pin: pin,
                                status: .waiting, webUIURL: "https://\(ip):47990")
         rebuildFocus()
+        // Phase 1 blocks until the user types the PIN on the PC's web UI — which
+        // means leaving this screen. On iOS, an auto-lock would suspend the app
+        // and drop the pending socket, so keep the display awake until pairing
+        // resolves (no-op on macOS).
+        setPairingKeepAwake(true)
         pairingTask = Task { [weak self] in
             guard let self else { return }
             let manager = HostPairing(identityProvider: identityProvider, uniqueID: clientUniqueID)
             let result = await manager.pair(address: ip, pin: pin)
-            guard !Task.isCancelled, pairing?.hostID == host.id else { return }
+            guard !Task.isCancelled, pairing?.hostID == host.id else { setPairingKeepAwake(false); return }
+            setPairingKeepAwake(false)
             switch result {
             case .paired(let certPEM):
                 savePairedHost(ip: ip, serverCertPEM: certPEM)
@@ -607,8 +613,18 @@ final class AppState {
         pairingTask?.cancel()
         pairingTask = nil
         pairing = nil
+        setPairingKeepAwake(false)
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
+    }
+
+    /// Hold the display awake for the duration of pairing so an iOS auto-lock
+    /// can't suspend the app while phase 1 waits for the PIN. iOS only — macOS
+    /// already keeps the big-picture display awake.
+    private func setPairingKeepAwake(_ on: Bool) {
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = on
+        #endif
     }
 
     // MARK: - MoonDeckBuddy (force-restart the host PC)
@@ -1339,6 +1355,7 @@ final class AppState {
 
     private func dismissOverlay() {
         pairingTask?.cancel(); pairingTask = nil; pairing = nil
+        setPairingKeepAwake(false)
         moonDeckPairingTask?.cancel(); moonDeckPairingTask = nil; moonDeckPairing = nil
         overlay = nil
         rebuildFocus()

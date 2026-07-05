@@ -112,6 +112,7 @@ enum GameStreamCrypto {
     static func pemToDER(_ pem: Data) -> Data? {
         guard let text = String(data: pem, encoding: .utf8) else { return nil }
         let body = text
+            .replacingOccurrences(of: "\r", with: "")   // tolerate CRLF PEMs
             .split(separator: "\n")
             .filter { !$0.hasPrefix("-----") }
             .joined()
