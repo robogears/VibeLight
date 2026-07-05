@@ -105,6 +105,19 @@ final class MoonDeckBuddyClientTests: XCTestCase {
         XCTAssertEqual(state, .paired)
     }
 
+    func testPairStateParsesStringEnum() async throws {
+        // The REAL wire format (buddy v7 AND v8): {"state":"Paired"} — a string
+        // name, not the int the first cut assumed. This was the live pairing bug.
+        let cases: [(String, MoonDeckBuddyClient.PairState)] =
+            [("Paired", .paired), ("Pairing", .pairing), ("NotPaired", .notPaired)]
+        for (name, expected) in cases {
+            let client = MoonDeckBuddyClient(configuration: MockURLProtocol.config())
+            MockURLProtocol.handler = { _ in (200, Data("{\"state\": \"\(name)\"}".utf8)) }
+            let state = try await client.pairState(host: "h", port: 1, clientID: "abc")
+            XCTAssertEqual(state, expected, "state=\(name)")
+        }
+    }
+
     func testApiVersionBelowMinimumThrows() async {
         let client = MoonDeckBuddyClient(configuration: MockURLProtocol.config())
         MockURLProtocol.handler = { _ in (200, Data(#"{"version": 6}"#.utf8)) }  // below min (7)

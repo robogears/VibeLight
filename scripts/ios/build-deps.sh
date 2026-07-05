@@ -21,6 +21,23 @@ OPUS_TAG=v1.5.2
 
 command -v cmake >/dev/null || { echo "cmake missing: brew install cmake"; exit 1; }
 
+# ── Vendor the moonlight-common-c source the MoonlightCore target compiles ──
+# Copied from the fork (kept out of git; this re-syncs it). Skips the 7 MB of
+# unused SIMDe headers under nanors/deps/simde — nanors/obl doesn't include them.
+FORK="$HOME/Documents/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c"
+CORE="$ROOT/ThirdParty/moonlight-common-c"
+if [[ -d "$FORK/src" ]]; then
+  echo "── vendoring moonlight-common-c source ──"
+  mkdir -p "$CORE/nanors/deps/obl"
+  rsync -a --delete "$FORK/src/"  "$CORE/src/"
+  rsync -a --delete "$FORK/enet/" "$CORE/enet/"
+  cp "$FORK/nanors/rs.c" "$FORK/nanors/rs.h" "$CORE/nanors/"
+  cp "$FORK/nanors/deps/obl/"*.h "$CORE/nanors/deps/obl/"
+  cp "$FORK/LICENSE" "$CORE/" 2>/dev/null || true
+else
+  echo "⚠️  fork not at $FORK — MoonlightCore source not vendored (edit \$FORK)"
+fi
+
 # build_lib <name> <giturl> <tag> <cmake-extra-args...> -- <lib-relpath> <headers-src> <cmake-target>
 build_lib() {
   local name="$1" url="$2" tag="$3"; shift 3
