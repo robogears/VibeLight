@@ -22,7 +22,12 @@ import os
 /// control channel and the clientId credential only controls that one host.
 /// (Pinning the shared `moondeck_cert.pem` is a possible future hardening.)
 final class MoonDeckBuddyClient: Sendable {
-    static let expectedAPIVersion = 8
+    /// The API version VibeLight was written against. We accept this OR newer,
+    /// down to `minSupportedAPIVersion` — the pairing/restart endpoints have been
+    /// stable across these, so a version bump shouldn't gate users out (a real
+    /// install reported v7).
+    static let targetAPIVersion = 8
+    static let minSupportedAPIVersion = 7
     static let defaultPort = 59999
 
     /// Pairing state as reported by `GET /pairingState`.
@@ -30,7 +35,7 @@ final class MoonDeckBuddyClient: Sendable {
 
     enum MDError: Error, LocalizedError, Equatable {
         case offline                     // couldn't reach MoonDeckBuddy at all
-        case apiVersionMismatch(Int)     // buddy speaks a different protocol version
+        case apiVersionTooOld(Int)       // buddy older than we support
         case unauthorized                // 401 — this client isn't paired
         case http(Int)                   // other non-2xx
         case badResponse                 // unparseable / unexpected JSON
@@ -40,8 +45,8 @@ final class MoonDeckBuddyClient: Sendable {
             switch self {
             case .offline:
                 return "Couldn't reach MoonDeckBuddy. Make sure it's installed and running on the PC, and the PC is awake."
-            case .apiVersionMismatch(let v):
-                return "MoonDeckBuddy speaks API v\(v) but VibeLight expects v\(MoonDeckBuddyClient.expectedAPIVersion). Update one of them."
+            case .apiVersionTooOld(let v):
+                return "MoonDeckBuddy is too old (API v\(v)); VibeLight needs v\(MoonDeckBuddyClient.minSupportedAPIVersion) or newer. Update MoonDeckBuddy on the PC."
             case .unauthorized:
                 return "VibeLight isn't paired with MoonDeckBuddy on this PC yet."
             case .http(let code):
@@ -102,8 +107,8 @@ final class MoonDeckBuddyClient: Sendable {
     /// `.apiVersionMismatch` if the buddy speaks a different version.
     func checkReachable(host: String, port: Int) async throws {
         let version = try await apiVersion(host: host, port: port)
-        guard version == Self.expectedAPIVersion else {
-            throw MDError.apiVersionMismatch(version)
+        guard version >= Self.minSupportedAPIVersion else {
+            throw MDError.apiVersionTooOld(version)
         }
     }
 

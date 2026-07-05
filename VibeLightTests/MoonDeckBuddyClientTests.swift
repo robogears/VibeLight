@@ -105,15 +105,23 @@ final class MoonDeckBuddyClientTests: XCTestCase {
         XCTAssertEqual(state, .paired)
     }
 
-    func testApiVersionMismatchThrows() async {
+    func testApiVersionBelowMinimumThrows() async {
         let client = MoonDeckBuddyClient(configuration: MockURLProtocol.config())
-        MockURLProtocol.handler = { _ in (200, Data(#"{"version": 7}"#.utf8)) }
+        MockURLProtocol.handler = { _ in (200, Data(#"{"version": 6}"#.utf8)) }  // below min (7)
         do {
             try await client.checkReachable(host: "h", port: 1)
-            XCTFail("expected version mismatch")
+            XCTFail("expected too-old error")
         } catch let e as MoonDeckBuddyClient.MDError {
-            XCTAssertEqual(e, .apiVersionMismatch(7))
+            XCTAssertEqual(e, .apiVersionTooOld(6))
         } catch { XCTFail("wrong error: \(error)") }
+    }
+
+    func testApiVersion7And8AreAccepted() async throws {
+        for v in [7, 8, 9] {   // min-supported, target, and a future bump
+            let client = MoonDeckBuddyClient(configuration: MockURLProtocol.config())
+            MockURLProtocol.handler = { _ in (200, Data("{\"version\": \(v)}".utf8)) }
+            try await client.checkReachable(host: "h", port: 1)  // must not throw
+        }
     }
 }
 
