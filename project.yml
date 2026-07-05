@@ -119,12 +119,14 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        # Same self-signed-host pinning story as macOS. Without arbitrary-loads +
-        # local-networking the mTLS handshake to the host dies (-1200) before our
-        # pinning delegate runs.
+        # Same self-signed-host story as macOS: fully disable ATS so our own
+        # cert-pinning delegate governs trust and the plain-HTTP pairing step
+        # (:47989) is allowed. CRITICAL: do NOT add NSAllowsLocalNetworking here —
+        # Apple IGNORES NSAllowsArbitraryLoads whenever NSAllowsLocalNetworking is
+        # also present (iOS 10+), which re-enables ATS and kills the self-signed
+        # TLS (-9802/-1200) and the HTTP pair request (-1022). Verified on device.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-          NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: VibeLight connects to your gaming PC on your local network to list games, fetch box art, and stream them.
         GCSupportsControllerUserInteraction: true
         UILaunchScreen: {}
