@@ -53,6 +53,18 @@ struct HintBarView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
+        // iOS/iPadOS is touch-first: show the controller/keyboard bind hints ONLY
+        // when a controller is actually connected AND driving (`.directed`). A
+        // touch-only iPad never shows them (even at launch); touching a device
+        // that has a controller flips to `.pointer` and hides them too.
+        #if os(iOS)
+        if !state.controller.connectedControllers.isEmpty && state.inputMode != .pointer { bar }
+        #else
+        bar
+        #endif
+    }
+
+    private var bar: some View {
         HStack(spacing: 26) {
             ForEach(hints, id: \.0) { _, event, label in
                 HintChip(event: event, label: label)

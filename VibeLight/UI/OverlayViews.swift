@@ -8,12 +8,25 @@ struct OverlayHost: View {
 
     var body: some View {
         ZStack {
-            // Dim + blur the world behind the modal.
+            // Dim + blur the world behind the modal. Tapping the dimmed area
+            // closes the overlay (routes Back) so a touch user isn't soft-locked
+            // in a popup with no controller/keyboard to back out with. Overlays
+            // that lock input (e.g. the launching HUD) ignore Back, so they stay.
             Rectangle()
                 .fill(.black.opacity(0.55))
                 .background(.ultraThinMaterial)
+                .contentShape(Rectangle())
+                .onTapGesture { state.route(.back) }
 
-            switch overlay {
+            // The card absorbs its own taps so tapping inside never dismisses.
+            card
+                .contentShape(Rectangle())
+                .onTapGesture { }
+        }
+    }
+
+    @ViewBuilder private var card: some View {
+        switch overlay {
             case .sessionHUD:
                 SessionHUD()
             case .sessionEnded(let app):
@@ -41,7 +54,6 @@ struct OverlayHost: View {
             case .confirmRestartPC(let hostID):
                 ConfirmRestartCard(hostID: hostID)
             }
-        }
     }
 }
 
