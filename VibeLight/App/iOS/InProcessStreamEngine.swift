@@ -2,6 +2,7 @@
 import Foundation
 import Observation
 import AVFoundation
+import GameController
 
 /// iOS streaming engine (Phases 3+). Drives an in-process moonlight-common-c
 /// connection via `MoonlightSession`, replacing the Phase-1 `DisabledStreamEngine`
@@ -35,6 +36,11 @@ final class InProcessStreamEngine: StreamEngine {
     /// The layer decoded video renders into. `StreamView` displays it while
     /// `phase == .streaming`.
     @ObservationIgnored let displayLayer = AVSampleBufferDisplayLayer()
+
+    /// The app's controller manager (set by AppState). While streaming, the
+    /// engine flips it into stream-passthrough so pads drive the remote game
+    /// instead of launcher navigation.
+    @ObservationIgnored weak var controllerSource: ControllerManager?
 
     init(api: HostAPIClient) {
         self.api = api
@@ -106,9 +112,54 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     func disconnect() {
+        setStreamInput(active: false)
         session?.stop()
         session = nil
         proxy = nil
+    }
+
+    // MARK: - Controller → stream forwarding
+
+    /// Installs (or removes) the stream-passthrough on the controller manager.
+    /// While active, every pad state change becomes a LiSendMultiControllerEvent
+    /// snapshot and the launcher UI hears nothing (no focus moves, no haptics).
+    private func setStreamInput(active: Bool) {
+        guard let cm = controllerSource else { return }
+        if active {
+            cm.streamForwarder = { [weak self] pad in self?.forward(pad) }
+        } else if cm.streamForwarder != nil {
+            cm.streamForwarder = nil
+        }
+    }
+
+    private func forward(_ pad: GCExtendedGamepad) {
+        guard let session else { return }
+        var flags: Int32 = 0
+        if pad.buttonA.isPressed { flags |= 0x1000 }                      // A
+        if pad.buttonB.isPressed { flags |= 0x2000 }                      // B
+        if pad.buttonX.isPressed { flags |= 0x4000 }                      // X
+        if pad.buttonY.isPressed { flags |= 0x8000 }                      // Y
+        if pad.dpad.up.isPressed { flags |= 0x0001 }
+        if pad.dpad.down.isPressed { flags |= 0x0002 }
+        if pad.dpad.left.isPressed { flags |= 0x0004 }
+        if pad.dpad.right.isPressed { flags |= 0x0008 }
+        if pad.leftShoulder.isPressed { flags |= 0x0100 }                 // LB
+        if pad.rightShoulder.isPressed { flags |= 0x0200 }                // RB
+        if pad.buttonMenu.isPressed { flags |= 0x0010 }                   // START
+        if pad.buttonOptions?.isPressed == true { flags |= 0x0020 }       // BACK
+        if pad.buttonHome?.isPressed == true { flags |= 0x0400 }          // GUIDE
+        if pad.leftThumbstickButton?.isPressed == true { flags |= 0x0040 }
+        if pad.rightThumbstickButton?.isPressed == true { flags |= 0x0080 }
+
+        func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
+        session.sendControllerButtonFlags(
+            flags,
+            leftTrigger: UInt8(min(max(pad.leftTrigger.value, 0), 1) * 255),
+            rightTrigger: UInt8(min(max(pad.rightTrigger.value, 0), 1) * 255),
+            leftStickX: axis(pad.leftThumbstick.xAxis.value),
+            leftStickY: axis(pad.leftThumbstick.yAxis.value),
+            rightStickX: axis(pad.rightThumbstick.xAxis.value),
+            rightStickY: axis(pad.rightThumbstick.yAxis.value))
     }
 
     // MARK: - Relay-safe capping
@@ -154,6 +205,7 @@ final class InProcessStreamEngine: StreamEngine {
 
     func quitCompletely(host: StreamHost) async {
         remoteQuitRequested = true
+        setStreamInput(active: false)
         session?.stop()
         session = nil
         do {
@@ -182,15 +234,18 @@ final class InProcessStreamEngine: StreamEngine {
         if !connectedOnce, stage == .connected || stage.rawValue >= MoonlightStage.videoStart.rawValue {
             connectedOnce = true
             phase = .streaming(app)
+            setStreamInput(active: true)
             onStreamDidStart?(nil)
         }
     }
 
     fileprivate func handleFail(stage: MoonlightStage, error: Int) {
+        setStreamInput(active: false)
         phase = .failed("Stream failed at stage \(stage.rawValue) (error \(error)). Make sure the host is awake and not busy.")
     }
 
     fileprivate func handleTerminated(error: Int) {
+        setStreamInput(active: false)
         let cleanly = (error == 0) || remoteQuitRequested
         if let app = launchingApp { phase = .ending(app) } else { phase = .idle }
         onStreamDidEnd?(cleanly)

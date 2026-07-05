@@ -169,6 +169,20 @@ static dispatch_queue_t LifecycleQueue(void) {
     });
 }
 
+- (void)sendControllerButtonFlags:(int)buttonFlags
+                      leftTrigger:(uint8_t)leftTrigger
+                     rightTrigger:(uint8_t)rightTrigger
+                       leftStickX:(int16_t)leftStickX
+                       leftStickY:(int16_t)leftStickY
+                      rightStickX:(int16_t)rightStickX
+                      rightStickY:(int16_t)rightStickY {
+    if (sActive != self) return;
+    // Player 1, single-pad mask. Returns an error before the input stream is
+    // up — safe to ignore; the next snapshot after connect goes through.
+    LiSendMultiControllerEvent(0, 0x1, buttonFlags, leftTrigger, rightTrigger,
+                               leftStickX, leftStickY, rightStickX, rightStickY);
+}
+
 // MARK: - Delegate marshalling (called from C callbacks below, on the main queue)
 
 - (void)notifyStage:(MoonlightStage)stage {

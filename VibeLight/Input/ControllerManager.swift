@@ -65,6 +65,18 @@ final class ControllerManager {
     /// UI on mouse use.
     @ObservationIgnored var onInputActivity: ((InputMode) -> Void)?
 
+    /// Stream passthrough. While non-nil, launcher navigation is fully unwired
+    /// (no focus moves, no haptics, no chords) and every state change on any
+    /// pad is forwarded raw to this closure — the stream owns the controller.
+    /// Setting or clearing it rewires all pads and resets transient state so
+    /// nothing spuriously fires at the hand-off in either direction.
+    @ObservationIgnored var streamForwarder: (@MainActor (GCExtendedGamepad) -> Void)? {
+        didSet {
+            resetTransientInputState()
+            for controller in connectedControllers { wire(controller) }
+        }
+    }
+
     // MARK: - Tuning (values from docs/research/swiftui-bigpicture.md)
 
     private enum Tuning {
@@ -230,6 +242,28 @@ final class ControllerManager {
     private func wire(_ controller: GCController) {
         controller.handlerQueue = .main
         guard let pad = controller.extendedGamepad else { return }
+
+        if streamForwarder != nil {
+            // Stream passthrough: drop every launcher binding and forward the
+            // whole profile on any element change (fires for sticks, triggers,
+            // and buttons the launcher never listens to).
+            pad.dpad.valueChangedHandler = nil
+            pad.leftThumbstick.valueChangedHandler = nil
+            pad.buttonA.pressedChangedHandler = nil
+            pad.buttonX.pressedChangedHandler = nil
+            pad.buttonY.pressedChangedHandler = nil
+            pad.leftShoulder.pressedChangedHandler = nil
+            pad.rightShoulder.pressedChangedHandler = nil
+            pad.buttonB.pressedChangedHandler = nil
+            pad.buttonMenu.pressedChangedHandler = nil
+            pad.valueChangedHandler = { [weak self] pad, _ in
+                MainActor.assumeIsolated {
+                    self?.streamForwarder?(pad)
+                }
+            }
+            return
+        }
+        pad.valueChangedHandler = nil
 
         // D-pad and left thumbstick are one logical directional source;
         // whichever produced input last wins (see directionalInputChanged).

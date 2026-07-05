@@ -408,6 +408,11 @@ final class AppState {
             guard new != nil else { return }
             self?.controller.focusTick()
         }
+        #if os(iOS)
+        // While streaming, the in-process engine flips the controller manager
+        // into stream-passthrough (pads drive the game, not the launcher).
+        session.controllerSource = controller
+        #endif
         // Failures arrive asynchronously (startup watchdog, child termination
         // handler) long after launch() returned — this observer is the ONLY
         // reliable way to catch them. Without it a failed launch strands the

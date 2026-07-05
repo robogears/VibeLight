@@ -71,6 +71,17 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// (that's "disconnect but keep playing"; full quit goes through /cancel).
 - (void)stop;
 
+/// Forwards a complete player-1 gamepad snapshot to the host
+/// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
+/// Triggers: 0…255. No-op when this session isn't the active connection.
+- (void)sendControllerButtonFlags:(int)buttonFlags
+                      leftTrigger:(uint8_t)leftTrigger
+                     rightTrigger:(uint8_t)rightTrigger
+                       leftStickX:(int16_t)leftStickX
+                       leftStickY:(int16_t)leftStickY
+                      rightStickX:(int16_t)rightStickX
+                      rightStickY:(int16_t)rightStickY;
+
 @end
 
 NS_ASSUME_NONNULL_END
