@@ -22,8 +22,8 @@ OPUS_TAG=v1.5.2
 command -v cmake >/dev/null || { echo "cmake missing: brew install cmake"; exit 1; }
 
 # ── Vendor the moonlight-common-c source the MoonlightCore target compiles ──
-# Copied from the fork (kept out of git; this re-syncs it). Skips the 7 MB of
-# unused SIMDe headers under nanors/deps/simde — nanors/obl doesn't include them.
+# Copied from the fork (kept out of git; this re-syncs it). SIMDe IS required:
+# nanors' obl/oblas_lite.c includes simde/x86/ssse3.h (portable SIMD shims).
 FORK="$HOME/Documents/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c"
 CORE="$ROOT/ThirdParty/moonlight-common-c"
 if [[ -d "$FORK/src" ]]; then
@@ -32,7 +32,8 @@ if [[ -d "$FORK/src" ]]; then
   rsync -a --delete "$FORK/src/"  "$CORE/src/"
   rsync -a --delete "$FORK/enet/" "$CORE/enet/"
   cp "$FORK/nanors/rs.c" "$FORK/nanors/rs.h" "$CORE/nanors/"
-  cp "$FORK/nanors/deps/obl/"*.h "$CORE/nanors/deps/obl/"
+  cp "$FORK/nanors/deps/obl/"*.h "$FORK/nanors/deps/obl/"*.c "$CORE/nanors/deps/obl/"
+  rsync -a --delete "$FORK/nanors/deps/simde/" "$CORE/nanors/deps/simde/"
   cp "$FORK/LICENSE" "$CORE/" 2>/dev/null || true
 else
   echo "⚠️  fork not at $FORK — MoonlightCore source not vendored (edit \$FORK)"
@@ -52,10 +53,13 @@ build_lib() {
   local slices=()
   for sdk in iphoneos iphonesimulator; do
     local bdir="$WORK/$name-$sdk"
-    echo "── building $name for $sdk ──"
+    # Device is arm64-only; the simulator slice must be universal (an Intel Mac
+    # builds/runs the sim as x86_64, Apple Silicon as arm64).
+    local archs="arm64"; [[ "$sdk" == "iphonesimulator" ]] && archs="arm64;x86_64"
+    echo "── building $name for $sdk ($archs) ──"
     cmake -S "$src" -B "$bdir" -G "Unix Makefiles" \
       -DCMAKE_SYSTEM_NAME=iOS \
-      -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DCMAKE_OSX_ARCHITECTURES="$archs" \
       -DCMAKE_OSX_SYSROOT="$sdk" \
       -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN" \
       -DCMAKE_BUILD_TYPE=Release \
