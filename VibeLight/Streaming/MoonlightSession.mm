@@ -1,6 +1,9 @@
 #import "MoonlightSession.h"
+#import <AudioToolbox/AudioToolbox.h>
 #import <Limelight.h>
+#import <opus_multistream.h>
 #import <string.h>
+#include <atomic>
 
 // moonlight-common-c is a single-connection C library whose callbacks are global
 // function pointers, so we keep one active session and forward to it. (Same model
@@ -148,6 +151,9 @@ static dispatch_queue_t LifecycleQueue(void) {
         ar.stop = ArStop;
         ar.cleanup = ArCleanup;
         ar.decodeAndPlaySample = ArDecode;
+        // Decode on the receive thread (skips the player-thread hop); ArDecode
+        // is allocation-free C, so it's safe and lower-latency.
+        ar.capabilities = CAPABILITY_DIRECT_SUBMIT;
 
         self->_didStart = YES;
         LiStartConnection(&self->_serverInfo, &self->_streamConfig, &cl, &dr, &ar,
@@ -379,12 +385,123 @@ static int  DrSubmit(PDECODE_UNIT decodeUnit) {
     }
 }
 
-// MARK: - No-op audio sink (Phase 4 decodes Opus → CoreAudio)
+// MARK: - Audio sink: Opus multistream → RemoteIO AudioUnit
+//
+// All C/C++ — these callbacks run on moonlight's pool-less audio thread and
+// CoreAudio's realtime render thread, so no ObjC allocation anywhere. PCM flows
+// through a single-producer/single-consumer lock-free byte ring: ArDecode
+// (producer) writes decoded frames; the render callback (consumer) drains or
+// zero-fills on underrun.
 
-static int  ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION opusConfig, void *context, int arFlags) { return 0; }
-static void ArStart(void) {}
-static void ArStop(void) {}
-static void ArCleanup(void) {}
-static void ArDecode(char *sampleData, int sampleLength) {}
+static OpusMSDecoder *sOpusDecoder;
+static OPUS_MULTISTREAM_CONFIGURATION sOpusCfg;
+static AudioComponentInstance sAudioUnit;
+
+static const size_t kAudioRingCapacity = 256 * 1024;   // ~0.7 s of 48 kHz stereo
+static uint8_t sAudioRing[kAudioRingCapacity];
+static std::atomic<uint64_t> sRingHead{0};   // producer-owned
+static std::atomic<uint64_t> sRingTail{0};   // consumer-owned
+
+static OSStatus ArRender(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags,
+                         const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber,
+                         UInt32 inNumberFrames, AudioBufferList *ioData) {
+    uint8_t *out = (uint8_t *)ioData->mBuffers[0].mData;
+    const size_t want = ioData->mBuffers[0].mDataByteSize;
+    const uint64_t head = sRingHead.load(std::memory_order_acquire);
+    const uint64_t tail = sRingTail.load(std::memory_order_relaxed);
+    size_t take = (size_t)MIN((uint64_t)want, head - tail);
+    const size_t start = (size_t)(tail % kAudioRingCapacity);
+    const size_t first = MIN(take, kAudioRingCapacity - start);
+    memcpy(out, &sAudioRing[start], first);
+    memcpy(out + first, &sAudioRing[0], take - first);
+    if (take < want) memset(out + take, 0, want - take);   // underrun → silence
+    sRingTail.store(tail + take, std::memory_order_release);
+    return noErr;
+}
+
+static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION opusConfig, void *context, int arFlags) {
+    sOpusCfg = *opusConfig;
+    int err = 0;
+    sOpusDecoder = opus_multistream_decoder_create(opusConfig->sampleRate, opusConfig->channelCount,
+                                                   opusConfig->streams, opusConfig->coupledStreams,
+                                                   opusConfig->mapping, &err);
+    if (sOpusDecoder == NULL || err != OPUS_OK) {
+        NSLog(@"[VibeLight] opus decoder create failed: %d", err);
+        return -1;
+    }
+
+    AudioComponentDescription desc = {};
+    desc.componentType = kAudioUnitType_Output;
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+    AudioComponent comp = AudioComponentFindNext(NULL, &desc);
+    if (comp == NULL || AudioComponentInstanceNew(comp, &sAudioUnit) != noErr) {
+        NSLog(@"[VibeLight] RemoteIO create failed");
+        return -1;
+    }
+
+    AudioStreamBasicDescription fmt = {};
+    fmt.mSampleRate = opusConfig->sampleRate;
+    fmt.mFormatID = kAudioFormatLinearPCM;
+    fmt.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    fmt.mChannelsPerFrame = (UInt32)opusConfig->channelCount;
+    fmt.mBitsPerChannel = 16;
+    fmt.mBytesPerFrame = fmt.mChannelsPerFrame * 2;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerPacket = fmt.mBytesPerFrame;
+    AudioUnitSetProperty(sAudioUnit, kAudioUnitProperty_StreamFormat,
+                         kAudioUnitScope_Input, 0, &fmt, sizeof(fmt));
+
+    AURenderCallbackStruct cb = {};
+    cb.inputProc = ArRender;
+    AudioUnitSetProperty(sAudioUnit, kAudioUnitProperty_SetRenderCallback,
+                         kAudioUnitScope_Input, 0, &cb, sizeof(cb));
+
+    if (AudioUnitInitialize(sAudioUnit) != noErr) {
+        NSLog(@"[VibeLight] RemoteIO init failed");
+        return -1;
+    }
+    sRingHead.store(0); sRingTail.store(0);
+    NSLog(@"[VibeLight] audio: %d Hz, %d ch, %d samples/frame",
+          opusConfig->sampleRate, opusConfig->channelCount, opusConfig->samplesPerFrame);
+    return 0;
+}
+
+static void ArStart(void) { if (sAudioUnit) AudioOutputUnitStart(sAudioUnit); }
+static void ArStop(void)  { if (sAudioUnit) AudioOutputUnitStop(sAudioUnit); }
+
+static void ArCleanup(void) {
+    if (sAudioUnit) {
+        AudioOutputUnitStop(sAudioUnit);
+        AudioUnitUninitialize(sAudioUnit);
+        AudioComponentInstanceDispose(sAudioUnit);
+        sAudioUnit = NULL;
+    }
+    if (sOpusDecoder) {
+        opus_multistream_decoder_destroy(sOpusDecoder);
+        sOpusDecoder = NULL;
+    }
+}
+
+static void ArDecode(char *sampleData, int sampleLength) {
+    if (sOpusDecoder == NULL) return;
+    // Worst case: 8 channels × up to 3× nominal frame; NULL data = packet loss →
+    // Opus PLC synthesizes concealment for one frame.
+    int16_t pcm[1440 * AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
+    int frames = opus_multistream_decode(sOpusDecoder,
+                                         (const unsigned char *)sampleData, sampleLength,
+                                         pcm, sOpusCfg.samplesPerFrame, 0);
+    if (frames <= 0) return;
+    const size_t bytes = (size_t)frames * sOpusCfg.channelCount * sizeof(int16_t);
+    const uint64_t head = sRingHead.load(std::memory_order_relaxed);
+    const uint64_t tail = sRingTail.load(std::memory_order_acquire);
+    if (kAudioRingCapacity - (size_t)(head - tail) < bytes) return;   // full → drop (stale audio is worse)
+    const uint8_t *src = (const uint8_t *)pcm;
+    const size_t start = (size_t)(head % kAudioRingCapacity);
+    const size_t first = MIN(bytes, kAudioRingCapacity - start);
+    memcpy(&sAudioRing[start], src, first);
+    memcpy(&sAudioRing[0], src + first, bytes - first);
+    sRingHead.store(head + bytes, std::memory_order_release);
+}
 
 @end

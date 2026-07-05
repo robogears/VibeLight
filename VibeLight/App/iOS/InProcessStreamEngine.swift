@@ -61,6 +61,10 @@ final class InProcessStreamEngine: StreamEngine {
         remoteQuitRequested = false
         showPerfOverlay = settings.performanceOverlay
         phase = .launching(app)
+        // Game audio must play regardless of the silent switch, and keep going
+        // if Control Center pauses other audio.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
         do {
             // Fresh serverinfo for the working address + host generation/codecs.
             let (info, address) = try await api.serverInfo(for: host)

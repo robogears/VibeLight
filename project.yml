@@ -175,6 +175,9 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: VibeLight/Streaming/VibeLight-Bridging.h
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/ThirdParty/moonlight-common-c/src"
+          # Opus decode for the in-process audio renderer (device + sim headers
+          # are identical; either slice's Headers dir works for compilation).
+          - "$(SRCROOT)/ThirdParty/ios/opus.xcframework/ios-arm64/Headers"
         TARGETED_DEVICE_FAMILY: "1,2"   # 1 = iPhone, 2 = iPad
         # iPhone + iPad ONLY: drop the "Designed for iPad" run-on-Mac and
         # run-on-Vision-Pro destinations (both default to YES).
