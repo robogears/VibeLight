@@ -41,7 +41,7 @@ enum IOSKeychainIdentity {
     static func generatePEMs() -> (cert: Data, key: Data)? {
         deleteAll()  // never leave a half-formed identity behind
         guard let key = createPermanentKey(),
-              let (der, pemString) = buildSelfSignedCert(for: key),
+              let der = buildSelfSignedCertDER(for: key),
               let cert = SecCertificateCreateWithData(nil, der as CFData),
               addCertificate(cert),
               assembleIdentity() != nil          // prove it actually assembles
@@ -49,7 +49,9 @@ enum IOSKeychainIdentity {
             deleteAll()
             return nil
         }
-        return (Data(pemString.utf8), Data())
+        // Serialize the PEM the SAME way loadPEMs does (from the cert DER), so
+        // the identity's cert PEM is byte-stable across generate → relaunch.
+        return (Data(pem(fromCertDER: der).utf8), Data())
     }
 
     /// The mTLS `SecIdentity`, assembled from the keychain key + cert.
@@ -121,8 +123,8 @@ enum IOSKeychainIdentity {
 
     // MARK: - Cert construction (swift-certificates)
 
-    /// Returns (DER, PEM) for a 20-year self-signed cert over `key`'s public key.
-    private static func buildSelfSignedCert(for key: SecKey) -> (der: Data, pem: String)? {
+    /// Returns the DER of a 20-year self-signed cert over `key`'s public key.
+    private static func buildSelfSignedCertDER(for key: SecKey) -> Data? {
         do {
             let privateKey = try Certificate.PrivateKey(key)
             let name = try DistinguishedName { CommonName("NVIDIA GameStream Client") }
@@ -145,8 +147,7 @@ enum IOSKeychainIdentity {
                 },
                 issuerPrivateKey: privateKey
             )
-            let pemDoc = try cert.serializeAsPEM()
-            return (Data(pemDoc.derBytes), pemDoc.pemString)
+            return Data(try cert.serializeAsPEM().derBytes)
         } catch {
             return nil
         }

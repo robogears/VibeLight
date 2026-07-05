@@ -33,8 +33,13 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
   The macOS build is byte-for-byte behaviorally unchanged (openssl identity path
   kept; iOS uses SecKeyCreateRandomKey + swift-certificates + a keychain-assembled
   SecIdentity). GPLv3 = the iOS app can't ship on the App Store; sideload/AltStore.
-  **Caveat:** on-device pairing against a live host is unverified here (no device;
-  the crypto pattern is probe-proven on macOS + compiles for iOS).
+  **iOS identity crypto is now runtime-verified in the simulator** (an
+  `IOSIdentityTests` XCTest proves key generation → SecIdentity assembly → RSA
+  signing → cert CN → PEM stability). This surfaced that iOS pairing REQUIRES a
+  `keychain-access-groups` entitlement (added) + code-signing — without it the
+  born-in-keychain identity silently fails. On device, real provisioning supplies
+  the team-prefixed group. Still unverified: the live network handshake against an
+  awake host (no device + hosts asleep) — same caveat the macOS pairing carries.
 
 ## Planned
 

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required for the born-in-keychain client identity (SecKeyCreateRandomKey
+	     with kSecAttrIsPermanent) to write to the data-protection keychain. On a
+	     real device the team-prefixed default access group is granted by the
+	     provisioning profile; this explicit group lets an ad-hoc-signed simulator
+	     build assemble the identity too. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>com.vibelight.ios</string>
+	</array>
+</dict>
+</plist>
