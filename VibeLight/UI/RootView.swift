@@ -29,6 +29,18 @@ struct RootView: View {
             if case .streaming = state.session.phase {
                 StreamView(layer: state.session.displayLayer)
                     .ignoresSafeArea()
+                    .overlay(alignment: .topTrailing) {
+                        // Until input lands (Phase 4), a tappable way back out so
+                        // the stream screen isn't a trap.
+                        Button { state.session.disconnect() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.45), in: Circle())
+                        }
+                        .padding(24)
+                    }
                     .transition(.opacity)
             }
         }
