@@ -20,6 +20,11 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     private var sleepActivity: NSObjectProtocol?
     private var buttonRevealMonitor: Any?
     private var buttonsRevealed = false
+    /// True while the window does NOT fill its screen (the user resized it into a
+    /// window). Drives the chrome: filling → immersive (menu bar/dock hidden,
+    /// traffic lights hover-revealed); windowed → normal (menu bar/dock reachable,
+    /// traffic lights always visible). VibeLight starts filling, so this is false.
+    private var isWindowed = false
 
     /// True between beginStreamHandoff and endStreamHandoff. Failure paths
     /// use this to restore the chrome exactly when a handoff is outstanding —
@@ -75,20 +80,64 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
         }
     }
 
-    /// Reveal the traffic lights when the cursor is in the top-left corner.
+    /// Reveal the traffic lights when the cursor is in the top-left corner —
+    /// except in windowed mode, where they stay visible so the window is
+    /// obviously grabbable / closable.
     private func updateButtonReveal() {
         guard let window, window.isKeyWindow else { return }
-        let p = window.mouseLocationOutsideOfEventStream  // window coords, bottom-left origin
-        let inCorner = p.y >= window.frame.height - 56 && p.y <= window.frame.height
-            && p.x >= 0 && p.x < 220
-        guard inCorner != buttonsRevealed else { return }
-        buttonsRevealed = inCorner
+        let shouldReveal: Bool
+        if isWindowed {
+            shouldReveal = true
+        } else {
+            let p = window.mouseLocationOutsideOfEventStream  // window coords, bottom-left origin
+            shouldReveal = p.y >= window.frame.height - 56 && p.y <= window.frame.height
+                && p.x >= 0 && p.x < 220
+        }
+        guard shouldReveal != buttonsRevealed else { return }
+        buttonsRevealed = shouldReveal
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.14
             for type in Self.buttonTypes {
-                window.standardWindowButton(type)?.animator().alphaValue = inCorner ? 1 : 0
+                window.standardWindowButton(type)?.animator().alphaValue = shouldReveal ? 1 : 0
             }
         }
+    }
+
+    // MARK: - Windowed ↔ immersive (resize-driven)
+
+    /// Whether the window currently fills its screen (within a few points).
+    private static func frameFillsScreen(_ window: NSWindow) -> Bool {
+        guard let screen = window.screen ?? NSScreen.main else { return false }
+        let f = window.frame, s = screen.frame
+        return abs(f.width - s.width) < 4 && abs(f.height - s.height) < 4
+            && abs(f.minX - s.minX) < 4 && abs(f.minY - s.minY) < 4
+    }
+
+    /// Re-evaluate chrome whenever the window frame changes: filling the screen
+    /// is immersive (menu bar/dock hidden); anything smaller is a normal window
+    /// (menu bar/dock reachable — the whole point of "make it windowed").
+    private func syncChromeToWindowState() {
+        guard let window else { return }
+        let filling = Self.frameFillsScreen(window)
+        isWindowed = !filling
+        if filling { enterImmersiveChrome() } else { exitImmersiveChrome() }
+        buttonsRevealed = false            // force updateButtonReveal to re-apply
+        updateButtonReveal()
+    }
+
+    func windowDidResize(_ notification: Notification) { syncChromeToWindowState() }
+    func windowDidMove(_ notification: Notification) { syncChromeToWindowState() }
+
+    /// Green "zoom" button toggles between filling the screen (immersive) and a
+    /// comfortable centered window — an easy way in and out of fullscreen.
+    func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame: NSRect) -> NSRect {
+        guard let screen = window.screen ?? NSScreen.main else { return defaultFrame }
+        if Self.frameFillsScreen(window) {
+            let vf = screen.visibleFrame
+            let w = vf.width * 0.72, h = vf.height * 0.82
+            return NSRect(x: vf.midX - w / 2, y: vf.midY - h / 2, width: w, height: h)
+        }
+        return screen.frame   // windowed → zoom back to immersive fill
     }
 
     private func setButtons(alpha: CGFloat) {
@@ -117,7 +166,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     }
 
     func windowDidDeminiaturize(_ notification: Notification) {
-        enterImmersiveChrome()
+        syncChromeToWindowState()   // immersive only if it's back to filling the screen
         NSApp.activate()
     }
 
@@ -160,7 +209,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
         isHandoffActive = false
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
-        enterImmersiveChrome()
+        syncChromeToWindowState()   // restore whichever mode the user was in
     }
 
     /// Restores the chrome only if a handoff is actually outstanding — safe to

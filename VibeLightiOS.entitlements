@@ -3,13 +3,16 @@
 <plist version="1.0">
 <dict>
 	<!-- Required for the born-in-keychain client identity (SecKeyCreateRandomKey
-	     with kSecAttrIsPermanent) to write to the data-protection keychain. On a
-	     real device the team-prefixed default access group is granted by the
-	     provisioning profile; this explicit group lets an ad-hoc-signed simulator
-	     build assemble the identity too. -->
+	     with kSecAttrIsPermanent) to write to the data-protection keychain.
+	     MUST be $(AppIdentifierPrefix)-prefixed: on device, automatic signing's
+	     provisioning profile only grants <TeamID>.* groups, so a bare group is
+	     rejected ("doesn't match the entitlements file's keychain-access-groups").
+	     Xcode substitutes the prefix at build time (→ <TeamID>.com.vibelight.ios);
+	     the Simulator doesn't enforce access groups, so it works there too. The
+	     app uses no explicit kSecAttrAccessGroup, so items land in this default. -->
 	<key>keychain-access-groups</key>
 	<array>
-		<string>com.vibelight.ios</string>
+		<string>$(AppIdentifierPrefix)com.vibelight.ios</string>
 	</array>
 </dict>
 </plist>

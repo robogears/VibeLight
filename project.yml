@@ -141,22 +141,22 @@ targets:
     dependencies:
       - package: swift-certificates
         product: X509
+    # Signing team comes from Signing.xcconfig → Local.xcconfig (gitignored), so
+    # a personal Team ID never lands in this public repo and — unlike setting it
+    # in Xcode's UI — it SURVIVES `xcodegen generate`. Absent Local.xcconfig,
+    # DEVELOPMENT_TEAM is unset and the Simulator still builds/signs locally
+    # (the keychain-access-groups entitlement still applies); only on-DEVICE
+    # builds need the team. See Local.xcconfig.example.
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.ios
         PRODUCT_NAME: VibeLight
         MARKETING_VERSION: 0.1.6
         CURRENT_PROJECT_VERSION: 1
-        # Automatic signing. The team comes from the VIBELIGHT_TEAM environment
-        # variable so a personal Team ID never lands in this public repo — set
-        # `export VIBELIGHT_TEAM=YOURTEAMID` (Apple → Membership, or Xcode →
-        # Settings → Accounts) then re-run `xcodegen generate`. Unset = empty,
-        # which still builds/runs for the SIMULATOR (Xcode signs it to run
-        # locally, so the keychain-access-groups entitlement still applies); only
-        # on-DEVICE builds need the team. On device, provisioning supplies the
-        # team-prefixed keychain group the born-in-keychain identity needs.
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: ${VIBELIGHT_TEAM}
         CODE_SIGN_ENTITLEMENTS: VibeLightiOS.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"

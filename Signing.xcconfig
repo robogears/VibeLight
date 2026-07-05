@@ -1,0 +1,11 @@
+// Signing.xcconfig — committed, safe to share (no secrets).
+//
+// On-device iOS builds need an Apple Developer Team ID. We keep the real value
+// OUT of this public repo: it lives in Local.xcconfig (gitignored). This file
+// optionally includes it — so if Local.xcconfig is absent (a fresh clone, CI,
+// or a Simulator-only build) nothing breaks; DEVELOPMENT_TEAM is simply unset
+// and Simulator builds still sign locally.
+//
+// To build on your own iPhone/iPad: copy Local.xcconfig.example to
+// Local.xcconfig and put your Team ID in it (see that file for where to find it).
+#include? "Local.xcconfig"

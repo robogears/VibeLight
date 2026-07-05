@@ -44,14 +44,31 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
 ## Planned
 
 0. **Force-restart PC button** (requested 2026-07-05, important). A "Restart PC"
-   control to the **left of the host chip** in the home header that force-restarts
-   the Windows host with **no confirmation dialog on Windows** (equivalent to
-   `shutdown /r /f /t 0`). Needs a confirm step *inside VibeLight* (it's
-   destructive), then fire-and-forget. Mechanism under research — likely
-   Apollo/Vibepollo **server commands** over the mTLS GameStream API (needs the
-   `server_cmd` permission), a host-configured "Restart" command, or a launched
-   shutdown app. NOTE 47990 `/api/restart` restarts the Sunshine *service*, not
-   the PC.
+   control to the **left of the host chip** in the home header that restarts the
+   Windows host with **no Windows-side confirmation dialog**. Needs a confirm step
+   *inside VibeLight* (it's destructive), then fire-and-forget.
+
+   **Chosen mechanism: MoonDeckBuddy** (github.com/FrogTheFrog/moondeck-buddy) —
+   the user already restarts their PC from the Steam Deck via it, so it's a
+   proven, dialog-free path. The user installs MoonDeckBuddy separately; VibeLight
+   just talks to its REST API:
+   - Transport: **HTTPS only**, default port **59999** (user-configurable), self-
+     signed cert baked into the app (`moondeck_cert.pem`, shared across installs)
+     → URLSession must pin/trust that cert with hostname-check off.
+   - Restart: `POST https://HOST:59999/restartHost` body `{"delay": 5}` (1–30 s),
+     header `Authorization: basic <base64(clientId)>` → `{"result": true}`.
+   - Auth = a client-chosen UUID `clientId` in the paired-clients set. One-time
+     **PIN pairing**: `POST /pair {"id", "hashed_id": base64(clientId+pin)}`, user
+     types the PIN into the MoonDeckBuddy pop-up on the PC; poll
+     `GET /pairingState/<clientId>`. Mirrors our existing add-by-PIN model.
+   - Liveness: `GET /apiVersion` (unauth, must == 8). Sibling power endpoints:
+     `/shutdownHost`, `/suspendHost`, `/abortHostStateChange`.
+   - Store `clientId` in the Keychain (the Basic header IS the whole credential).
+
+   Rejected alternatives (see git history): Apollo/Vibepollo **server commands**
+   run over the RTSP control stream (mid-stream only) + need the Artemis common-c
+   fork; a launched shutdown "app" fires a stream that dies instantly; 47990
+   `/api/restart` restarts the Sunshine *service*, not the PC.
 
 1. **Settings presets on the home screen.**
    - User custom-configures settings, then saves them as a preset (Preset 1–4 or

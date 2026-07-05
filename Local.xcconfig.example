@@ -1,0 +1,13 @@
+// Local.xcconfig.example — copy this to `Local.xcconfig` (which is gitignored)
+// and set your Apple Developer Team ID to build the iOS app on a real device.
+//
+// Where to find your Team ID:
+//   • Xcode ▸ Settings ▸ Accounts ▸ (your Apple ID) ▸ select the team — the
+//     10-character ID is shown in the pane, or
+//   • developer.apple.com ▸ Account ▸ Membership details ▸ Team ID.
+// A free personal Apple ID has a "Personal Team" with its own Team ID — that
+// works for on-device development builds (7-day provisioning).
+//
+// After creating Local.xcconfig, run `xcodegen generate` and build in Xcode.
+
+DEVELOPMENT_TEAM = XXXXXXXXXX

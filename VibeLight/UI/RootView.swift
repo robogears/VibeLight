@@ -53,18 +53,28 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
     }
 
-    /// The scale that maps the design canvas onto the real screen.
-    /// - macOS: 1.0 for any window ≤ 2000 pt wide (i.e. every normal Mac — zero
-    ///   change), scaling UP only on large 4K/5K displays where fixed-size
-    ///   elements would otherwise look tiny.
-    /// - iOS/iPadOS: scales the ~1920-pt-wide design to fit, so iPad shows the
-    ///   full big-picture layout and iPhone a proportionally-shrunk version.
+    /// The scale that maps the design canvas onto the real window. The UI is
+    /// authored on a landscape design canvas; we fit that canvas to the real
+    /// window across BOTH dimensions so it never overflows — the previous
+    /// width-only, floor-1.0 rule left a small/windowed Mac at full design size,
+    /// so the title, logo and preset rail overflowed and collided.
+    /// - macOS: 1.0 through the normal Mac range (design flexes comfortably at
+    ///   ≥ 1440×860 pt); SHRINK to fit a smaller window; scale UP on 4K/5K so
+    ///   fixed-size elements aren't tiny.
+    /// - iOS/iPadOS: fit the ~1920×1080 design to the (landscape) screen.
+    static let macDesignMin = CGSize(width: 1440, height: 860)
+
     static func uiScale(for size: CGSize) -> CGFloat {
-        guard size.width > 0 else { return 1 }
+        guard size.width > 0, size.height > 0 else { return 1 }
         #if os(macOS)
+        // Shrink to fit when the window is smaller than the design canvas…
+        let fit = min(size.width / macDesignMin.width, size.height / macDesignMin.height)
+        if fit < 1 { return max(fit, 0.3) }
+        // …otherwise 1.0 in the normal range, scaling up only on huge displays.
         return min(max(size.width / 2000, 1.0), 2.5)
         #else
-        return min(max(size.width / 1920, 0.45), 1.3)
+        let fit = min(size.width / 1920, size.height / 1080)
+        return min(max(fit, 0.3), 1.3)
         #endif
     }
 }

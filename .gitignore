@@ -11,6 +11,10 @@ VibeLight.xcodeproj/
 VibeLight/Info.plist
 VibeLight/iOS-Info.plist
 
+# Personal Apple Developer Team ID for on-device iOS builds (never commit).
+# Signing.xcconfig (committed) optionally-includes this; see Local.xcconfig.example.
+Local.xcconfig
+
 # SPM
 .build/
 .swiftpm/

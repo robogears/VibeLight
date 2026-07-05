@@ -60,9 +60,31 @@ final class AppState {
         didSet {
             guard selectedHostID != oldValue else { return }
             UserDefaults.standard.set(selectedHostID, forKey: Self.selectedHostKey)
+            // Also stash the host's stable address. A host's `id` changes
+            // representation across launches (added:<ip> ↔ real uuid, Moonlight
+            // import present vs absent, pre- vs post-pair), so an exact-id match
+            // alone silently loses the selection and falls back to the first
+            // host. The address survives all of those, so restore can recover.
+            UserDefaults.standard.set(selectedHost?.candidateAddresses.first?.host,
+                                      forKey: Self.selectedHostAddrKey)
         }
     }
     private static let selectedHostKey = "vibelight.lastSelectedHost"
+    private static let selectedHostAddrKey = "vibelight.lastSelectedHostAddr"
+
+    /// Which host to reopen on launch: the saved id if it still exists, else the
+    /// host at the saved (stable) address — this is what makes the "remember my
+    /// last PC" preference survive a host's id changing representation between
+    /// launches — else the first host.
+    nonisolated static func resolveSelectedHostID(in hosts: [StreamHost],
+                                                  savedID: String?, savedAddr: String?) -> String? {
+        if let savedID, let match = hosts.first(where: { $0.id == savedID }) { return match.id }
+        if let savedAddr, !savedAddr.isEmpty,
+           let match = hosts.first(where: { $0.candidateAddresses.contains { $0.host == savedAddr } }) {
+            return match.id
+        }
+        return hosts.first?.id
+    }
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
     private(set) var hostError: String?
@@ -190,9 +212,11 @@ final class AppState {
         importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
         addedHosts = Self.loadAddedHosts()
         rebuildHosts()
-        // Reopen on the last-used PC if it's still around; else the first host.
+        // Reopen on the last-used PC if it's still around (by id, or by its
+        // stable address if the id's representation changed); else the first host.
         let savedHostID = UserDefaults.standard.string(forKey: Self.selectedHostKey)
-        selectedHostID = hosts.contains(where: { $0.id == savedHostID }) ? savedHostID : hosts.first?.id
+        let savedHostAddr = UserDefaults.standard.string(forKey: Self.selectedHostAddrKey)
+        selectedHostID = Self.resolveSelectedHostID(in: hosts, savedID: savedHostID, savedAddr: savedHostAddr)
         apps = displayApps(from: selectedHost?.apps ?? [])
         if hosts.isEmpty {
             hostError = "No computers yet — open the computer menu (top-right) to add one by IP."

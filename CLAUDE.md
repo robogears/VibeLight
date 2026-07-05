@@ -15,8 +15,10 @@ xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Debug b
 Schemes: **VibeLight** (macOS release), **VibeLight-Dev** (coexisting macOS dev
 build — "VibeLight Dev", amber icon, `com.vibelight.app.dev`), **VibeLight-iOS**
 (iPhone/iPad — Phase 1: launcher + pairing, no streaming yet). iOS device builds
-need a team: `export VIBELIGHT_TEAM=YOURTEAMID` before `xcodegen generate` (kept
-out of the repo; the Simulator builds without it).
+need a team: copy `Local.xcconfig.example` → `Local.xcconfig` (gitignored) and set
+`DEVELOPMENT_TEAM = YOURTEAMID`. `Signing.xcconfig` (committed) optionally-includes
+it, so the Team ID stays out of the repo AND survives `xcodegen generate` (unlike
+setting it in Xcode's UI). The Simulator builds without it.
 
 Swift 6 strict concurrency is ON. macOS 15+ deployment target. No sandbox
 (we exec the stream helper and read Moonlight's plist).
