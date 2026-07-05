@@ -187,10 +187,11 @@ VibeLight is a **shell + engine split**, decided after deep research (see
 VibeLight (v1) talks **only to the GameStream API** the Sunshine/Apollo/Vibepollo
 host exposes:
 
-- **HTTPS on port 47984 with mTLS**, reusing the client certificate/key imported
-  from Moonlight's plist — **zero new credentials, zero re-pairing.** The host's
-  self-signed cert is byte-exact pinned (stronger than CA trust for this
-  protocol; ATS is disabled so the pinning delegate can run).
+- **HTTPS on port 47984 with mTLS**, using either VibeLight's own generated
+  client identity (paired in-app) or the certificate/key imported from Moonlight's
+  plist (zero re-pairing for existing Moonlight users). The host's self-signed
+  cert is byte-exact pinned (stronger than CA trust for this protocol; ATS is
+  disabled so the pinning delegate can run).
 - **Remote state truth = `/serverinfo` polling** (`state` + `currentgame`). The
   child process is only a liveness signal — its exit codes lie (error paths show
   a dialog then exit 0), so watchdogs reconcile against host truth.
