@@ -30,3 +30,5 @@ CLAUDE.local.md
 # iOS streaming deps (rebuild with scripts/ios/build-deps.sh)
 ThirdParty/ios/
 ThirdParty/moonlight-common-c/
+VibeLight/Info [0-9]*.plist
+VibeLight/iOS-Info [0-9]*.plist
