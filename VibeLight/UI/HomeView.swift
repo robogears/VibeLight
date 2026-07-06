@@ -37,6 +37,9 @@ struct HomeView: View {
                         if app.isHDRSupported && state.settings.hdr {
                             Badge(text: "HDR")
                         }
+                        // Same friendly label as the Settings row ("1080p", "4K",
+                        // or raw W×H for customs).
+                        Badge(text: state.value(for: .resolution))
                         Badge(text: "\(state.settings.fps) FPS")
                         if let info = state.serverInfo, info.runningAppID == app.id {
                             Badge(text: "RUNNING", tint: .green)
