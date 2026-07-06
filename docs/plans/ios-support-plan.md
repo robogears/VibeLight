@@ -3,8 +3,9 @@
 **Goal:** make VibeLight run and **stream** on iPhone and iPad, sharing as much
 of the existing macOS SwiftUI codebase as possible.
 
-**Status:** research + design. This document feeds implementation, not a human.
-Cite the file/API by name; do not restate it.
+**Status:** IMPLEMENTED through Phase 4 — shipped in v0.1.8 (video, audio,
+controller, touch). This document is the historical plan; the CURRENT
+architecture + load-bearing invariants live in `docs/STREAMING-STATUS.md`.
 
 ---
 

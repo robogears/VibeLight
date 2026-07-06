@@ -11,8 +11,8 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
   quits with a live session, it `/cancel`s the game on the host so nothing is
   left streaming/running (covers close + logout/shutdown via `terminateLater`).
 - ✅ **In-app pairing / add computer by IP.** Own-identity generation + the full
-  GameStream pairing handshake (PIN → host web UI). Crypto unit-tested; the live
-  end-to-end handshake still needs a test against an awake host.
+  GameStream pairing handshake (PIN → host web UI). Crypto unit-tested and the live
+  end-to-end handshake verified against a real host (2026-07-05).
 - ✅ **(4) Escapable fullscreen** for VibeLight's own UI — traffic lights reveal
   on hover at the top-left.
 - ✅ **(5) Custom + native resolution** — native auto-detected in the cycle;

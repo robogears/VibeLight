@@ -1,13 +1,15 @@
 # VibeLight
 
-**A Steam Big Picture-style, controller-first launcher for Moonlight game streaming on macOS.**
+**A Steam Big Picture-style, controller-first launcher for Moonlight game streaming — on macOS, iPad, and iPhone.**
 
-VibeLight is a native SwiftUI app that turns your Mac into a couch-friendly
-streaming console: a gorgeous fullscreen library you drive entirely with a game
-controller, with box art, hero titles, ambient glow, and one buttery spring
-animation everywhere. Under the hood it drives a bundled, **chromeless fork of
-moonlight-qt** — the same proven streaming engine you already trust — so you get
-Moonlight's picture quality with none of its desktop-app rough edges.
+VibeLight is a native SwiftUI app that turns your Mac — or your iPad or iPhone —
+into a couch-friendly streaming console: a gorgeous fullscreen library you drive
+entirely with a game controller (or your fingers), with box art, hero titles,
+ambient glow, and one buttery spring animation everywhere. On the Mac it drives
+a bundled, **chromeless fork of moonlight-qt** — the same proven streaming
+engine you already trust; on iOS it streams **in-process** via
+moonlight-common-c, so you get Moonlight's picture quality with none of its
+desktop-app rough edges on every screen you own.
 
 ## Why
 
@@ -60,6 +62,16 @@ VibeLight is the shell Moonlight never had.
     resume / quit-completely menu, no keyboard required.
   - Every hold chord fills a **progress ring** so you can see it working, and a
     quick tap always falls through to the plain action (Back, Settings).
+- **Stream on iPad & iPhone.** The iOS app (iOS 17+, landscape, sideloaded —
+  see [Install](#install)) streams with a **built-in engine**: H.264 video up
+  to your display's native resolution at 120 fps, game audio, full controller
+  passthrough, and **touch-the-stream control** (taps click, drags move the
+  cursor, native multi-touch passthrough on supported hosts — toggle in
+  Settings ▸ Input). Hold **Select + R1** for 4 seconds (progress ring) or tap
+  the on-screen ✕ to leave a stream; a Moonlight-parity **performance HUD**
+  (Settings ▸ Advanced) shows fps, bitrate, latency, and drops. The screen
+  stays awake while you play, and quitting the app can cleanly stop the game
+  on the PC.
 - **Controller / mouse input-mode switching.** The cursor vanishes on
   controller or keyboard input and returns the instant you move the mouse.
   On-screen hints adapt to Xbox / PlayStation / Nintendo / generic glyphs
@@ -88,7 +100,8 @@ VibeLight is the shell Moonlight never had.
 
 ## Requirements
 
-- **Apple Silicon Mac** (arm64) running **macOS 15 (Sequoia) or later**.
+- **Apple Silicon Mac** (arm64) running **macOS 15 (Sequoia) or later**, or an
+  **iPad / iPhone on iOS 17+** (built from source or sideloaded — see Install).
 - A **Sunshine-family host** on your gaming PC: **Sunshine**, **Apollo**, or
   **Vibepollo**. VibeLight talks the GameStream API these expose.
 - **[Moonlight](https://moonlight-stream.org) is optional.** VibeLight can pair
@@ -113,6 +126,20 @@ will never be on the Mac App Store — see [Licensing](#licensing)).
    local network — click **Allow**.
 
 The artwork cache lives in `~/Library/Caches/com.vibelight.app/`.
+
+### iPad / iPhone
+
+There's no App Store listing and no `.ipa` download — GPLv3 and Apple's store
+terms don't mix (see [Licensing](#licensing)), so iOS installs are
+**build-it-yourself or sideload**:
+
+- **Xcode (free):** clone the repo, run `scripts/ios/build-deps.sh` once, open
+  the project, select the **VibeLight-iOS** scheme, and run it on your device
+  with your personal team (see *Building from source*).
+- **AltStore / sideloading** works with a locally built `.ipa`.
+
+The iOS app pairs on its own (identity generated in the Secure-Enclave-backed
+keychain) and shares your saved hosts UI with the Mac version.
 
 ### Updates
 
@@ -147,6 +174,7 @@ uses Xbox names).
 | **Quit the game completely** | **Hold Menu** (~1s, fills ring) | ⌘⇧Q |
 | **Quit VibeLight** (home screen) | **Hold B/○** (~1.5s, fills ring) | ⌘Q |
 | **Disconnect** (in-stream → resume/quit menu) | **Hold Start** (~2s) | — |
+| **Leave the stream** (iOS, game keeps running) | **Hold Select + R1** (4s, fills ring) | tap ✕ |
 
 Notes:
 
@@ -169,8 +197,12 @@ VibeLight is a **shell + engine split**, decided after deep research (see
 ### Shell + engine split
 
 - **VibeLight owns the entire out-of-stream experience** — the library, focus,
-  settings, artwork, host reconciliation, and the session lifecycle.
-- **`StreamHelper.app` owns the pixels.** It's a chromeless, headless fork of
+  settings, artwork, host reconciliation, and the session lifecycle. The pixels
+  belong to a per-platform engine behind one seam (`Core/Contracts.swift`):
+  the helper subprocess on macOS, an in-process moonlight-common-c engine on
+  iOS (`VibeLight/Streaming/` — architecture + invariants in
+  `docs/STREAMING-STATUS.md`).
+- **On macOS, `StreamHelper.app` owns the pixels.** It's a chromeless, headless fork of
   moonlight-qt embedded at `VibeLight.app/Contents/Helpers/StreamHelper.app`,
   launched as a child process. VibeLight drives it over a machine-readable
   **`@VL` stdout protocol** (`@VL STARTED`, `@VL FAILED reason="…"`, etc.) instead
@@ -243,6 +275,19 @@ xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Debug b
 ./scripts/install-app.sh
 ```
 
+### The iOS app
+
+```bash
+./scripts/ios/build-deps.sh    # once: vendors moonlight-common-c + builds the
+                               # mbedcrypto/opus xcframeworks into ThirdParty/
+xcodegen generate
+# open VibeLight.xcodeproj, select the VibeLight-iOS scheme, run on your device
+```
+
+Device builds need a signing team: copy `Local.xcconfig.example` →
+`Local.xcconfig` (gitignored) and set your `DEVELOPMENT_TEAM`. The Simulator
+builds without one.
+
 ### The streaming helper (the fork)
 
 The chromeless engine lives in a **separate GPLv3 repository**:
@@ -309,15 +354,18 @@ VibeLight stands on the shoulders of:
 ## Status / roadmap
 
 VibeLight is an **early but working** project (v0.1.x) — it streams end-to-end
-today, with the full big-picture UI, controller navigation, in-app pairing (and
-zero-setup Moonlight import), the embedded chromeless engine, and the in-app
-updater all functional.
+today on **both platforms**: the full big-picture UI, controller navigation,
+in-app pairing (and zero-setup Moonlight import), the embedded chromeless
+engine on macOS, the in-process engine on iOS (video + audio + controller +
+touch, shipped in v0.1.8), and the in-app updater all functional.
 
 Deferred / not yet shipped:
 
 - **Notarization** — needs a paid Apple Developer ID (hence the first-launch
   "Open Anyway"). Code-signing is already ad-hoc and structured for a clean
   Developer-ID + notarization drop-in later.
+- **iOS HEVC/HDR and controller rumble** — the iOS stream is H.264 SDR today;
+  see `docs/STREAMING-STATUS.md` for the streaming roadmap.
 - **The Vibepollo REST tier** (port 47990, Basic/Bearer auth) — a v2 optional
   layer on top of the current GameStream-only client.
 - **SteamGridDB artwork** — a v2, optional, user-supplied-key feature (a key is
