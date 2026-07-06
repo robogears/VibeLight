@@ -45,5 +45,10 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 - Touch-as-mouse/trackpad input (`LiSendTouchEvent` / relative mouse)
 - HEVC/HDR (`supportedVideoFormats |= H265/H265_MAIN10`, HEVC path exists in
   `rebuildFormatDescription`, untested)
-- iOS quit-on-app-exit (scenePhase → /cancel, mirror macOS "Quit Game on App Exit")
+- Rumble (ConnListenerRumble → GCController.haptics)
 - Frame pacing / A-V sync polish; stats HUD could add host fps + loss %
+
+Done since: keep-awake during stream (`refreshKeepAwake` — Auto-Lock killed an
+8-minute session; gamepad input never resets the idle timer) and iOS
+"Quit Game on App Exit" (scenePhase .background → teardown + /cancel in a UIKit
+background task; also prevents host-side stale-session poisoning on relaunch).
