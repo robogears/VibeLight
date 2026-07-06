@@ -248,7 +248,7 @@ private struct PresetRail: View {
                 PresetSlotChip(slot: slot)
             }
         }
-        .frame(width: 210)
+        .frame(width: 252)   // fits the full "1440p · 120 fps · 100 Mbps" summary
     }
 }
 
