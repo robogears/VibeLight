@@ -53,7 +53,11 @@ final class InProcessStreamEngine: StreamEngine {
         ) { note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
-            try? AVAudioSession.sharedInstance().setActive(true)
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                NSLog("[VibeLight] audio session reactivation after interruption failed: \(error.localizedDescription)")
+            }
             MoonlightSession.resumeAudio()
         }
     }
@@ -74,9 +78,14 @@ final class InProcessStreamEngine: StreamEngine {
         touchControlsEnabled = settings.touchControls
         phase = .launching(app)
         // Game audio must play regardless of the silent switch, and keep going
-        // if Control Center pauses other audio.
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // if Control Center pauses other audio. Failures here are the root of
+        // "stream has no sound" reports — log them or they're undebuggable.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            NSLog("[VibeLight] audio session setup failed: \(error.localizedDescription)")
+        }
         do {
             // Fresh serverinfo for the working address + host generation/codecs.
             let (info, address) = try await api.serverInfo(for: host)
