@@ -38,7 +38,17 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 5. **encryptionFlags = ENCFLG_NONE** with this host; requesting AV encryption
    broke audio decrypt + control (mbedcrypto CBC path is the suspect — revisit
    if a host *requires* encryption).
-6. Audio callbacks are allocation-free C with a lock-free ring; drop when full.
+6. Audio callbacks are allocation-free C with a lock-free ring; drop NEW
+   packets when the backlog exceeds ~60 ms (a full-only drop policy ratchets
+   latency up after every jitter burst and never drains).
+7. **Return DR_NEED_IDR from every submit failure path** (Limelight.h contract).
+   DR_OK on an unprocessed IDR marks it consumed in the depacketizer and nothing
+   ever re-requests a keyframe — black/corrupt until manual disconnect.
+8. `stop()`'s teardown block must capture self STRONGLY (engine drops its ref
+   immediately after; weak capture skips LiStopConnection). Remote termination
+   also needs an explicit stop() — the callback alone leaves threads running.
+9. Host busy (`currentgame != 0`) → `/resume`, never `/launch` (Sunshine rejects
+   it). 22-finding parity audit vs moonlight-ios landed 2026-07-06 (91d3ca1).
 
 ## Remaining roadmap (in rough priority)
 
