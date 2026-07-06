@@ -2,16 +2,35 @@
 import SwiftUI
 import UIKit
 
-/// Locks the app to landscape. The Info.plist orientation keys +
-/// `UIRequiresFullScreen` are no longer honored on modern iOS/iPadOS (Apple
-/// deprecated them), so a real device still rotates to portrait — where the
-/// landscape big-picture layout collapses (title squished up top, the bottom
-/// command bar buried). `supportedInterfaceOrientationsFor` IS authoritative and
-/// forces landscape on both iPhone and iPad.
+/// Locks the app to landscape. On modern iOS/iPadOS (esp. the iOS 26 betas)
+/// neither the Info.plist orientation keys, `UIRequiresFullScreen`, NOR the
+/// `supportedInterfaceOrientationsFor` delegate mask reliably prevent a rotate
+/// to portrait — where the landscape big-picture layout collapses. So we ALSO
+/// actively re-assert landscape via `requestGeometryUpdate` whenever the device
+/// rotates: the delegate mask defines the ALLOWED set, and the geometry request
+/// snaps the interface back into it. Belt (mask) + suspenders (geometry).
 final class VibeLightAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         .landscape
+    }
+
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
+        ) { _ in Self.forceLandscape() }
+        return true
+    }
+
+    /// Re-assert landscape on the active window scene (no-op if already landscape).
+    static func forceLandscape() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 }
 
@@ -46,7 +65,10 @@ struct VibeLightApp: App {
                     // dropped while backgrounded, so reset transient input state
                     // on foreground — the iOS analogue of the macOS
                     // didBecomeActive reset in ControllerManager.
-                    if phase == .active { state.controller.handleAppBecameActive() }
+                    if phase == .active {
+                        state.controller.handleAppBecameActive()
+                        VibeLightAppDelegate.forceLandscape()   // re-lock after any rotation while away
+                    }
                     // "Quit Game on App Exit" (and general stream teardown):
                     // backgrounding suspends our sockets, so the stream dies
                     // regardless — end it deliberately, /cancel-ing the remote

@@ -203,47 +203,6 @@ final class InProcessStreamEngine: StreamEngine {
     /// Installs (or removes) the stream-passthrough on the controller manager.
     /// While active, every pad state change becomes a LiSendMultiControllerEvent
     /// snapshot and the launcher UI hears nothing (no focus moves, no haptics).
-    /// Live fill fraction (0…1) of the hold-Select+R1 leave-stream chord; nil
-    /// when no hold is in progress. RootView renders the ring from this.
-    private(set) var streamQuitProgress: Double?
-    @ObservationIgnored private var streamQuitTask: Task<Void, Never>?
-
-    /// Drives the 4-second leave-stream hold: forward() starts/cancels this on
-    /// chord edges; the ticker publishes ring progress (after a 250 ms grace so
-    /// taps never flash it) and fires the disconnect when the hold completes.
-    private func startStreamQuitHold() {
-        guard streamQuitTask == nil else { return }
-        let start = ContinuousClock.now
-        streamQuitTask = Task { @MainActor [weak self] in
-            let grace = 0.25, total = 4.0
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(50))
-                guard let self, !Task.isCancelled else { return }
-                let d = start.duration(to: .now)
-                let elapsed = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
-                if elapsed >= total {
-                    streamQuitTask = nil
-                    streamQuitProgress = nil
-                    // Release everything host-side so the game isn't left with
-                    // Select+R1 stuck down, then leave (game keeps running).
-                    session?.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
-                                                       leftStickX: 0, leftStickY: 0,
-                                                       rightStickX: 0, rightStickY: 0)
-                    disconnect()
-                    return
-                }
-                if elapsed >= grace {
-                    streamQuitProgress = min(max((elapsed - grace) / (total - grace), 0), 1)
-                }
-            }
-        }
-    }
-
-    private func cancelStreamQuitHold() {
-        streamQuitTask?.cancel()
-        streamQuitTask = nil
-        streamQuitProgress = nil
-    }
 
     /// The single pad driving player 1. Elected on first input after the
     /// forwarder installs (or after a disconnect); other pads are ignored —
@@ -285,7 +244,6 @@ final class InProcessStreamEngine: StreamEngine {
         } else if cm.streamForwarder != nil {
             cm.streamForwarder = nil
             cm.onPadDisconnected = nil
-            cancelStreamQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
         }
     }
@@ -329,15 +287,21 @@ final class InProcessStreamEngine: StreamEngine {
             flags |= 0x0010
         }
 
-        // Leave-stream chord: hold EXACTLY Select+R1 for 4 seconds (extra held
-        // buttons veto — a mid-game mash must never end the session). A
-        // progress ring appears on the stream after a short grace, mirroring
-        // the launcher's hold-to-quit feedback.
-        let quitChord: Int32 = 0x0020 | 0x0200
-        if flags == quitChord {
-            startStreamQuitHold()
-        } else {
-            cancelStreamQuitHold()
+        // Official Moonlight leave-stream combo — same as the desktop client:
+        // Start + Select/Share + L1 + R1 pressed together, fired instantly. All
+        // four at once is deliberate enough to never happen mid-game, so no hold
+        // or ring (matches Mac exactly). The game keeps running on the PC.
+        let quitCombo: Int32 = 0x0010 | 0x0020 | 0x0100 | 0x0200   // START|BACK|LB|RB
+        if flags == quitCombo {
+            // Release everything host-side so the game isn't left with the combo
+            // stuck down, then leave. Defer the teardown out of this pad-handler
+            // invocation — disconnect() rewires (and releases) the very handler
+            // executing right now.
+            session.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
+                                              leftStickX: 0, leftStickY: 0,
+                                              rightStickX: 0, rightStickY: 0)
+            Task { @MainActor [weak self] in self?.disconnect() }
+            return
         }
 
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
