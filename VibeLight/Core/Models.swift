@@ -220,7 +220,7 @@ struct StreamPreset: Codable, Equatable, Identifiable, Sendable {
         case (3840, 2160): res = "4K"
         default: res = "\(settings.height)p"
         }
-        return "\(res) · \(settings.fps) fps"
+        return "\(res) · \(settings.fps) fps · \(settings.bitrateKbps / 1000) Mbps"
     }
 }
 
