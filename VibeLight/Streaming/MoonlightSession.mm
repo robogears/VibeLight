@@ -143,6 +143,7 @@ static dispatch_queue_t LifecycleQueue(void) {
         // queue (the previous connection's stop) has fully completed, so no
         // stale callback can land on this session.
         sActive = self;
+        sNativeTouchUnsupported = NO;   // re-probe per connection (host may differ)
 
         CONNECTION_LISTENER_CALLBACKS cl = {0};
         cl.stageStarting = ClStageStarting;
@@ -203,6 +204,36 @@ static dispatch_queue_t LifecycleQueue(void) {
 - (BOOL)getEstimatedRtt:(uint32_t *)rttMs variance:(uint32_t *)varianceMs {
     if (sActive != self) return NO;
     return LiGetEstimatedRttInfo(rttMs, varianceMs) ? YES : NO;
+}
+
+// Latched when the host rejects LiSendTouchEvent (older Sunshine): route all
+// subsequent touches through the absolute-mouse fallback without re-asking.
+static BOOL sNativeTouchUnsupported = NO;
+
+- (void)sendTouch:(MoonlightTouchPhase)phase
+        pointerId:(uint32_t)pointerId
+      normalizedX:(float)x
+      normalizedY:(float)y {
+    if (sActive != self) return;
+    if (!sNativeTouchUnsupported) {
+        float pressure = (phase == MoonlightTouchPhaseDown || phase == MoonlightTouchPhaseMove) ? 1.0f : 0.0f;
+        int err = LiSendTouchEvent((uint8_t)phase, pointerId, x, y, pressure, 0.0f, 0.0f, LI_ROT_UNKNOWN);
+        if (err != LI_ERR_UNSUPPORTED) return;
+        sNativeTouchUnsupported = YES;
+        NSLog(@"[VibeLight] host lacks native touch — falling back to absolute mouse");
+    }
+    // Absolute-mouse fallback: single-pointer taps/drags become cursor moves +
+    // left clicks, normalized against the negotiated video size (mirrors
+    // moonlight-ios AbsoluteTouchHandler).
+    if (pointerId != 0) return;
+    short w = _videoWidth > 0 ? (short)_videoWidth : 1920;
+    short h = _videoHeight > 0 ? (short)_videoHeight : 1080;
+    LiSendMousePositionEvent((short)(x * (float)w), (short)(y * (float)h), w, h);
+    if (phase == MoonlightTouchPhaseDown) {
+        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+    } else if (phase == MoonlightTouchPhaseUp || phase == MoonlightTouchPhaseCancel) {
+        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+    }
 }
 
 - (void)sendControllerButtonFlags:(int)buttonFlags

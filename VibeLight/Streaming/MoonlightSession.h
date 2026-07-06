@@ -92,6 +92,23 @@ typedef struct {
 } VLStreamStats;
 - (void)getStats:(VLStreamStats *)outStats;
 
+/// Touch phases, mirroring moonlight-common-c's LI_TOUCH_EVENT_* values.
+typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
+    MoonlightTouchPhaseDown   = 0x01,
+    MoonlightTouchPhaseUp     = 0x02,
+    MoonlightTouchPhaseMove   = 0x03,
+    MoonlightTouchPhaseCancel = 0x04,
+};
+
+/// Forwards one touch to the host. Coordinates are normalized 0…1 within the
+/// VIDEO area. Uses native touch passthrough (LiSendTouchEvent) when the host
+/// supports it; otherwise falls back to absolute mouse position + left click
+/// (primary pointer only).
+- (void)sendTouch:(MoonlightTouchPhase)phase
+        pointerId:(uint32_t)pointerId
+      normalizedX:(float)x
+      normalizedY:(float)y;
+
 /// Forwards a complete player-1 gamepad snapshot to the host
 /// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
 /// Triggers: 0…255. No-op when this session isn't the active connection.

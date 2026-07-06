@@ -60,6 +60,7 @@ final class InProcessStreamEngine: StreamEngine {
         connectedOnce = false
         remoteQuitRequested = false
         showPerfOverlay = settings.performanceOverlay
+        touchControlsEnabled = settings.touchControls
         phase = .launching(app)
         // Game audio must play regardless of the silent switch, and keep going
         // if Control Center pauses other audio.
@@ -132,6 +133,29 @@ final class InProcessStreamEngine: StreamEngine {
         default:
             break
         }
+    }
+
+    // MARK: - Touch → stream forwarding
+
+    /// Whether direct-touch control is on for the current stream
+    /// (Settings ▸ Input ▸ Touch Control; captured at launch).
+    @ObservationIgnored private var touchControlsEnabled = true
+
+    /// Forwards a touch from the stream view. `location` is in view coordinates;
+    /// the engine maps it into the aspect-fit video rect (mirroring
+    /// `.resizeAspect` letterboxing) and normalizes to 0…1 for the host.
+    func sendTouch(_ phase: MoonlightTouchPhase, pointerId: UInt32,
+                   location: CGPoint, viewSize: CGSize) {
+        guard touchControlsEnabled, let session else { return }
+        let vw = CGFloat(max(session.videoWidth(), 1))
+        let vh = CGFloat(max(session.videoHeight(), 1))
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+        let scale = min(viewSize.width / vw, viewSize.height / vh)
+        let rw = vw * scale, rh = vh * scale
+        let ox = (viewSize.width - rw) / 2, oy = (viewSize.height - rh) / 2
+        let nx = Float(min(max((location.x - ox) / rw, 0), 1))
+        let ny = Float(min(max((location.y - oy) / rh, 0), 1))
+        session.sendTouch(phase, pointerId: pointerId, normalizedX: nx, normalizedY: ny)
     }
 
     // MARK: - Controller → stream forwarding

@@ -1481,7 +1481,7 @@ final class AppState {
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss
-        case absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
+        case touchControls, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case appVersion, checkUpdates
 
@@ -1504,6 +1504,7 @@ final class AppState {
             case .audio: "Audio"
             case .muteHostSpeakers: "Mute Host Speakers"
             case .muteOnFocusLoss: "Mute When Inactive"
+            case .touchControls: "Touch Control"
             case .absoluteMouse: "Remote Desktop Mouse"
             case .swapMouseButtons: "Swap Mouse Buttons"
             case .reverseScrolling: "Reverse Scrolling"
@@ -1536,7 +1537,12 @@ final class AppState {
             switch self {
             case .video: [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
-            case .input: [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+            case .input:
+                #if os(iOS)
+                [.touchControls, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+                #else
+                [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+                #endif
             case .about: [.appVersion, .checkUpdates]
             case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
             }
@@ -1621,6 +1627,7 @@ final class AppState {
         case .audio: settings.audio.label
         case .muteHostSpeakers: settings.muteHostSpeakers ? "On" : "Off"
         case .muteOnFocusLoss: settings.muteOnFocusLoss ? "On" : "Off"
+        case .touchControls: settings.touchControls ? "On" : "Off"
         case .absoluteMouse: settings.absoluteMouse ? "On" : "Off"
         case .swapMouseButtons: settings.swapMouseButtons ? "On" : "Off"
         case .reverseScrolling: settings.reverseScrolling ? "On" : "Off"
@@ -1683,6 +1690,7 @@ final class AppState {
         case .yuv444: settings.yuv444.toggle()
         case .muteHostSpeakers: settings.muteHostSpeakers.toggle()
         case .muteOnFocusLoss: settings.muteOnFocusLoss.toggle()
+        case .touchControls: settings.touchControls.toggle()
         case .absoluteMouse: settings.absoluteMouse.toggle()
         case .swapMouseButtons: settings.swapMouseButtons.toggle()
         case .reverseScrolling: settings.reverseScrolling.toggle()

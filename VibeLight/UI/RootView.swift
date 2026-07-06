@@ -27,7 +27,7 @@ struct RootView: View {
         // Live stream covers the whole screen (unscaled) while it's up.
         .overlay {
             if case .streaming = state.session.phase {
-                StreamView(layer: state.session.displayLayer)
+                StreamView(layer: state.session.displayLayer, engine: state.session)
                     .ignoresSafeArea()
                     .overlay(alignment: .topLeading) {
                         // Performance HUD (Settings ▸ Advanced ▸ Performance Stats).
@@ -41,6 +41,7 @@ struct RootView: View {
                                 .padding(.vertical, 8)
                                 .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
                                 .padding(24)
+                                .allowsHitTesting(false)   // touches pass through to the stream
                         }
                     }
                     .overlay(alignment: .topTrailing) {
