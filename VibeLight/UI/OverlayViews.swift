@@ -197,15 +197,27 @@ private struct CheatSheetCard: View {
                 row(.back, "Back / close")
                 row(.settings, "Open settings")
                 row(.nextSection, "Switch settings tab (L1/R1)")
+                row(.move(.up), "Up from the games: Restart PC / computer")
                 row(.quitChord, "Quit the remote game completely")
+                #if os(macOS)
                 row(.quitApp, "Quit VibeLight (hold on home)")
                 keyRow("⌘⇧ Q", "Quit the remote game completely (keyboard)")
+                #endif
 
+                #if os(iOS)
+                sheetSection("During a stream")
+                keyRow("Start+Select+L1+R1", "Leave the stream — game keeps running")
+                keyRow("Tap ✕", "Leave the stream (top-right)")
+                keyRow("PS / Xbox button", "Opens the game's own overlay (Steam, PS)")
+                keyRow("Touch", "Tap = click, drag = cursor (Settings ▸ Input)")
+                #else
                 sheetSection("During a stream (Moonlight)")
+                keyRow("Start+Select+L1+R1", "Leave the stream — game keeps running")
                 keyRow("⌃⌥⇧ Q", "Disconnect — game keeps running")
                 keyRow("⌃⌥⇧ E", "Quit the game completely")
                 keyRow("⌃⌥⇧ Z", "Release mouse/keyboard capture")
                 keyRow("⌃⌥⇧ S", "Performance overlay")
+                #endif
             }
 
             Text("Press any button to close")
