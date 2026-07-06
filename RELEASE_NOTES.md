@@ -1,30 +1,29 @@
-# VibeLight v0.1.8 — iPad & iPhone streaming
+# VibeLight v0.1.9 — iPad polish: PS button, rock-solid landscape, calmer sounds
 
-### 📱 Stream on your iPad or iPhone — the headline
-The iOS app now **actually streams**: full video (up to your display's native resolution at 120 fps), **game audio**, and **controller support**, powered by a built-in streaming engine — no other apps needed. Plus:
-- **Touch the stream to control the PC** — taps click, drags move the cursor, real multi-touch passthrough on supported hosts. Toggle in **Settings ▸ Input ▸ Touch Control** (on by default).
-- **Hold Select + R1 for 4 seconds** to leave the stream (a progress ring shows the hold), or tap the on-screen ✕. The game keeps running on the PC.
-- A **performance HUD** (Settings ▸ Advanced ▸ Performance Stats): live resolution, fps, bitrate, network latency, host encode time, and dropped frames.
-- The screen stays awake while streaming, and **Quit Game on App Exit** now works on iOS too.
-- GPL note: iOS installs are sideload-only (Xcode / AltStore) — not on the App Store.
+### 🎮 The PS / Xbox button works in-stream (iPad & iPhone)
+iOS reserves the PS/Home button (and Share/Options) for its own system gestures, so games never saw it. VibeLight now claims those buttons while streaming — **press the PS button in-game and Steam Big Picture / the PS overlay opens**, just like on Mac. The system gestures come back the moment you leave the stream.
 
-### 🔀 Switch streams without backing out
-Launching a game while another is already streaming now offers **"Switch to …"** — VibeLight closes the running app on the PC and starts the new one in one step. (Both platforms.)
+### 🔄 Leave the stream the official Moonlight way
+**Start + Select + L1 + R1** pressed together now exits the stream instantly on iPad — the exact combo the desktop Moonlight client (and the Mac app) uses. The game keeps running on your PC; the tap-✕ button still works too. (Replaces the previous hold-two-buttons gesture.)
 
-### 🔊 Menu sounds
-The launcher now sounds like a console: a soft tick as focus moves, a bright confirm on select, a gentle tone on back. On iPhone/iPad the silent switch mutes them.
+### 📐 Landscape lock that actually locks
+Newer iPadOS versions started ignoring the app's declared orientations, letting the UI rotate into a squished portrait layout. VibeLight now actively snaps itself back to landscape on every rotation — portrait is genuinely impossible.
 
-### 🎮 Controller & UI polish
-- Press **up** from the games shelf to reach the **Restart PC** button and the **computer chip** with your controller.
-- Settings values now have **tappable ◀ ▶ arrows** — easy to adjust by touch or mouse; redundant hint chips removed.
-- Rotating loading quips while a stream starts (*"Convincing your PC it's a console…"*).
-- Quit hint now reads **Hold to Quit Application** on Mac (removed on iOS, where apps don't self-quit).
+### 🔊 Calmer, smarter menu sounds
+- Scrolling the games shelf is now **silent** — sounds mark actions, not travel.
+- The **Restart PC** button has its own "power-cycle" cue; hovering it (or the computer chip) gives a soft tick.
+- **Settings are silent** except when you actually change a value.
 
-### 🐛 Fixes & stability
-- Fixed the app being killed by iOS when exiting with a slow host ("random crash" reports — the `0x8BADF00D` watchdog).
-- 22 streaming-engine fixes from a deep audit against the reference Moonlight client: black-screen recovery after network hiccups, audio staying in sync (no more creeping delay), audio recovering after phone calls/Siri, smoother rides through network jitter, controller hot-unplug no longer leaving buttons stuck in-game, double-click support on non-touch hosts, and more.
-- MoonDeckBuddy restart now works with older MoonDeckBuddy versions (and says clearly when an update is needed).
-- Audio setup problems are now logged instead of failing silently.
+### 📊 Full stream profile at a glance
+- The home hero now shows **resolution and bitrate** next to FPS (e.g. `HDR · 1440p · 120 FPS · 100 MBPS`).
+- Preset slots show their bitrate too (`1080p · 60 fps · 20 Mbps`), with a wider rail so it all fits.
+
+### 📖 Shortcuts sheet rewritten
+Per-platform now: iPad shows the four-button leave combo, tap-✕, the PS-button overlay tip, and touch controls; Mac keeps the Moonlight hotkeys. Both list the new d-pad-up shortcut to Restart PC / the computer switcher.
+
+### 🐛 Also
+- Audio-session setup failures are now logged (easier "no sound" debugging).
+- Docs overhauled: the README finally tells the world about iPad/iPhone streaming.
 
 ---
 *Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight will offer this update in-app.*
