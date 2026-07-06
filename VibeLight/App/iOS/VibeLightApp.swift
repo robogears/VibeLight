@@ -47,6 +47,11 @@ struct VibeLightApp: App {
                     // on foreground — the iOS analogue of the macOS
                     // didBecomeActive reset in ControllerManager.
                     if phase == .active { state.controller.handleAppBecameActive() }
+                    // "Quit Game on App Exit" (and general stream teardown):
+                    // backgrounding suspends our sockets, so the stream dies
+                    // regardless — end it deliberately, /cancel-ing the remote
+                    // game when the setting is on.
+                    if phase == .background { state.handleAppDidEnterBackground() }
                 }
         }
     }

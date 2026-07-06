@@ -419,6 +419,7 @@ final class AppState {
         // user on the input-locked session HUD forever.
         session.onPhaseChange = { [weak self] phase in
             guard let self else { return }
+            refreshKeepAwake()
             if case .failed(let message) = phase {
                 chrome?.endStreamPresentationIfActive()
                 presentOverlay(.error(message))
@@ -627,10 +628,49 @@ final class AppState {
     /// can't suspend the app while phase 1 waits for the PIN. iOS only — macOS
     /// already keeps the big-picture display awake.
     private func setPairingKeepAwake(_ on: Bool) {
+        pairingWantsKeepAwake = on
+        refreshKeepAwake()
+    }
+
+    @ObservationIgnored private var pairingWantsKeepAwake = false
+
+    /// iOS idle-timer ownership, in one place: the screen must not sleep while
+    /// pairing (PIN is on screen, hands are on the other computer) or during a
+    /// stream (controller input never resets the idle timer — the display
+    /// would sleep mid-game). Streaming keep-awake honors the user's
+    /// "Keep Display Awake" setting; pairing always holds it.
+    private func refreshKeepAwake() {
         #if os(iOS)
-        UIApplication.shared.isIdleTimerDisabled = on
+        let streamActive: Bool
+        switch session.phase {
+        case .streaming, .launching: streamActive = true
+        default: streamActive = false
+        }
+        UIApplication.shared.isIdleTimerDisabled =
+            pairingWantsKeepAwake || (settings.keepAwake && streamActive)
         #endif
     }
+
+    #if os(iOS)
+    /// iOS "Quit Game on App Exit": backgrounding suspends our sockets, so the
+    /// stream can't survive anyway — tear down locally, and when the setting is
+    /// on also /cancel the remote game. Runs inside a UIKit background task so
+    /// the HTTPS round-trip has time to land before suspension.
+    func handleAppDidEnterBackground() {
+        let live: Bool
+        switch session.phase {
+        case .streaming, .launching: live = true
+        default: live = false
+        }
+        guard live else { return }
+        let taskID = UIApplication.shared.beginBackgroundTask()
+        Task {
+            await stopStreamForAppExit()   // no-op when the setting is off
+            session.disconnect()           // always: never strand a dead .streaming UI
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
+    }
+    #endif
 
     // MARK: - MoonDeckBuddy (force-restart the host PC)
 
@@ -1652,7 +1692,7 @@ final class AppState {
         case .framePacing: settings.framePacing.toggle()
         case .gameOpt: settings.gameOptimizations.toggle()
         case .quitAppAfter: settings.quitAppAfter.toggle()
-        case .keepAwake: settings.keepAwake.toggle()
+        case .keepAwake: settings.keepAwake.toggle(); refreshKeepAwake()
         case .performanceOverlay: settings.performanceOverlay.toggle()
         case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
         case .appVersion, .checkUpdates: break  // not value rows
