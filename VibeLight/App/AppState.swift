@@ -408,9 +408,12 @@ final class AppState {
             return screen == .home && overlay == nil
         }
         focus.onFocusChange = { [weak self] _, new in
-            guard new != nil else { return }
-            self?.controller.focusTick()
-            self?.sfx.play(.move)
+            guard let self, let new else { return }
+            self.controller.focusTick()   // haptic on every move (unchanged)
+            // Sound only when LANDING on the home header (Restart PC / host chip).
+            // Scrolling the app shelf, the preset rail, and settings rows is
+            // silent — audio there is reserved for deliberate actions.
+            if new.hasPrefix("header:") { self.sfx.play(.move) }
         }
         #if os(iOS)
         // While streaming, the in-process engine flips the controller manager
@@ -1112,12 +1115,23 @@ final class AppState {
     }
 
     func route(_ event: NavigationEvent) {
-        // Menu SFX: confirm/back travel with the event; focus moves tick via
-        // onFocusChange (only when focus actually changes — no edge spam).
+        // Menu SFX — deliberate actions make sound, navigation mostly doesn't:
+        //  • Overlays (cards) keep normal select/back — they're deliberate.
+        //  • Settings screen is SILENT except an explicit value change (adjust()).
+        //  • Home: select confirms; the Restart PC button gets its own reboot cue
+        //    (the host chip / apps just confirm). Focus-move ticks are header-only
+        //    (onFocusChange).
         switch event {
-        case .select: sfx.play(.select)
-        case .back: sfx.play(.back)
-        default: break
+        case .select:
+            if overlay != nil {
+                sfx.play(.select)
+            } else if screen != .settings {
+                sfx.play(focus.focusedItemID == "header:restart" ? .restart : .select)
+            }
+        case .back:
+            if overlay != nil || screen != .settings { sfx.play(.back) }
+        default:
+            break
         }
         // Global chord: hold Menu → quit the remote game completely.
         if event == .quitChord {

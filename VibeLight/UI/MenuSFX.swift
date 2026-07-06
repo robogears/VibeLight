@@ -16,6 +16,7 @@ final class MenuSFX {
         case move       // focus tick — quiet, short
         case select     // confirm — bright two-tone up
         case back       // dismiss — soft tone down
+        case restart    // restart PC — a distinctive power-cycle motif
     }
 
     private let engine = AVAudioEngine()
@@ -38,6 +39,10 @@ final class MenuSFX {
         buffers[.select] = Self.blip(segments: [(880, 0.035), (1318.5, 0.035)], gain: 0.22, format: format)
         // back: soft step down (E5 → A4), 70 ms — a gentle "closing".
         buffers[.back] = Self.blip(segments: [(659.3, 0.035), (440, 0.035)], gain: 0.18, format: format)
+        // restart: "power down… power up" — two falling tones then a rising
+        // resolve (E5 → G#4 → G#5), ~200 ms. Unmistakably the reboot cue.
+        buffers[.restart] = Self.blip(
+            segments: [(659.3, 0.05), (415.3, 0.05), (830.6, 0.10)], gain: 0.20, format: format)
     }
 
     func play(_ effect: Effect) {
