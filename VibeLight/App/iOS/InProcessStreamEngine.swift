@@ -253,10 +253,26 @@ final class InProcessStreamEngine: StreamEngine {
     /// instantaneous down+up that games otherwise miss.
     @ObservationIgnored private var menuStickyUntil: ContinuousClock.Instant?
 
+    /// iOS reserves the PS/Home ("Guide"), Share, and Options buttons for its own
+    /// system gestures by default, so those presses never reach the app and the
+    /// host never sees them (the Steam/PS overlay won't open in-game). Disabling
+    /// the gesture on every pad element while streaming routes them to us; we
+    /// restore the default when the stream ends so the launcher/system behave
+    /// normally. (macOS has no equivalent reservation — hence "works on Mac".)
+    private func setSystemGestures(disabled: Bool) {
+        let state: GCControllerElement.SystemGestureState = disabled ? .disabled : .enabled
+        for controller in GCController.controllers() where controller.extendedGamepad != nil {
+            for element in controller.physicalInputProfile.allElements {
+                element.preferredSystemGestureState = state
+            }
+        }
+    }
+
     private func setStreamInput(active: Bool) {
         guard let cm = controllerSource else { return }
         if active {
             electedPad = nil
+            setSystemGestures(disabled: true)
             cm.streamForwarder = { [weak self] pad in self?.forward(pad) }
             cm.onPadDisconnected = { [weak self] in
                 // Release everything host-side — the vanished pad's last
@@ -270,6 +286,7 @@ final class InProcessStreamEngine: StreamEngine {
             cm.streamForwarder = nil
             cm.onPadDisconnected = nil
             cancelStreamQuitHold()
+            setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
         }
     }
 
