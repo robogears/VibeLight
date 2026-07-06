@@ -199,7 +199,11 @@ final class InProcessStreamEngine: StreamEngine {
             session.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
                                               leftStickX: 0, leftStickY: 0,
                                               rightStickX: 0, rightStickY: 0)
-            disconnect()
+            // Defer the teardown out of this pad-handler invocation: disconnect()
+            // clears streamForwarder, which rewires (and releases) the very
+            // handler currently executing — re-entrant mutation of GameController
+            // handler state from inside its own dispatch is a crash hazard.
+            Task { @MainActor [weak self] in self?.disconnect() }
             return
         }
 

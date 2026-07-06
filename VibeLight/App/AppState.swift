@@ -665,7 +665,9 @@ final class AppState {
         guard live else { return }
         let taskID = UIApplication.shared.beginBackgroundTask()
         Task {
-            await stopStreamForAppExit()   // no-op when the setting is off
+            // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
+            // terminate — the /cancel is best-effort, staying alive is not.
+            await stopStreamForAppExit(budget: .milliseconds(2500))
             session.disconnect()           // always: never strand a dead .streaming UI
             UIApplication.shared.endBackgroundTask(taskID)
         }
@@ -1468,10 +1470,14 @@ final class AppState {
     /// App Exit" on (default), fully stop the remote game (`/cancel`, invariant 3)
     /// so nothing is left streaming/running on the PC after the app closes.
     /// Bounded by a watchdog so a hung/unreachable host can't block termination.
-    func stopStreamForAppExit() async {
+    /// `budget` bounds the remote /cancel. macOS can afford 7 s; the iOS
+    /// background/termination path MUST finish well inside iOS's 5-second
+    /// termination watchdog (0x8BADF00D SIGKILL otherwise — seen on-device as
+    /// "random crashes" every time the app was exited while the host was slow).
+    func stopStreamForAppExit(budget: Duration = .seconds(7)) async {
         guard settings.stopStreamOnExit, let host = selectedHost, hasActiveRemoteSession else { return }
         let work = Task { await session.quitCompletely(host: host) }
-        let watchdog = Task { try? await Task.sleep(for: .seconds(7)); work.cancel() }
+        let watchdog = Task { try? await Task.sleep(for: budget); work.cancel() }
         await work.value
         watchdog.cancel()
     }
