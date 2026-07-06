@@ -35,9 +35,11 @@ struct RootView: View {
                             Text(stats)
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.9))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.black.opacity(0.45), in: Capsule())
+                                .multilineTextAlignment(.leading)
+                                .lineSpacing(2)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
                                 .padding(24)
                         }
                     }

@@ -204,22 +204,50 @@ final class InProcessStreamEngine: StreamEngine {
         perfStats = nil
         guard active, showPerfOverlay, let session else { return }
         statsTask = Task { [weak self, weak session] in
-            var lastFrames: Int32 = 0
+            var last = VLStreamStats()
             var lastTime = ContinuousClock.now
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, let session else { return }
-                let frames = session.framesEnqueuedCount()
+                var s = VLStreamStats()
+                session.getStats(&s)
                 let now = ContinuousClock.now
                 let dt = Double(lastTime.duration(to: now).components.seconds)
                     + Double(lastTime.duration(to: now).components.attoseconds) / 1e18
-                let fps = dt > 0 ? Double(frames - lastFrames) / dt : 0
-                lastFrames = frames; lastTime = now
+                defer { last = s; lastTime = now }
+                guard dt > 0 else { continue }
+
+                // Interval deltas → rates (Moonlight-style: stats over the last second).
+                let frames = Double(s.framesReceived - last.framesReceived)
+                let fps = frames / dt
+                let mbps = Double(s.videoBytes - last.videoBytes) * 8 / dt / 1_000_000
+                let dropped = s.networkDroppedFrames - last.networkDroppedFrames
+                let received = s.framesReceived - last.framesReceived
+                let dropPct = (dropped + received) > 0
+                    ? Double(dropped) * 100 / Double(dropped + received) : 0
+                // Host processing latency (interval average, 1/10 ms units).
+                let hlCount = s.hostLatencyCount - last.hostLatencyCount
+                let hlAvgMs = hlCount > 0
+                    ? Double(s.hostLatencySumTenthMs - last.hostLatencySumTenthMs) / Double(hlCount) / 10 : 0
+                // Frame assembly time (µs the average frame took to arrive in full).
+                let rxAvgMs = frames > 0
+                    ? Double(s.receiveDurationSumUs - last.receiveDurationSumUs) / frames / 1000 : 0
+
+                var lines: [String] = []
+                lines.append(String(format: "%d×%d  H.264  %.0f fps  %.1f Mbps",
+                                    session.videoWidth(), session.videoHeight(), fps, mbps))
                 var rtt: UInt32 = 0, variance: UInt32 = 0
-                let haveRtt = session.getEstimatedRtt(&rtt, variance: &variance)
-                var line = String(format: "%dx%d  %.0f fps", session.videoWidth(), session.videoHeight(), fps)
-                if haveRtt { line += String(format: "  RTT %d ms", rtt) }
-                self.perfStats = line
+                if session.getEstimatedRtt(&rtt, variance: &variance) {
+                    lines.append(String(format: "Network: RTT %d ms ±%d  assembly %.1f ms", rtt, variance, rxAvgMs))
+                } else {
+                    lines.append(String(format: "Network: assembly %.1f ms", rxAvgMs))
+                }
+                if hlAvgMs > 0 {
+                    lines.append(String(format: "Host encode: %.1f ms (max %.1f)",
+                                        hlAvgMs, Double(s.hostLatencyMaxTenthMs) / 10))
+                }
+                lines.append(String(format: "Dropped: %.1f%% (%d total)", dropPct, s.networkDroppedFrames))
+                self.perfStats = lines.joined(separator: "\n")
             }
         }
     }

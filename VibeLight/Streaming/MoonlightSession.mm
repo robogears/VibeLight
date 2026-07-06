@@ -8,7 +8,15 @@
 // moonlight-common-c is a single-connection C library whose callbacks are global
 // function pointers, so we keep one active session and forward to it. (Same model
 // as moonlight-ios Connection.m.)
+//
+// Two references, deliberately: sActive is the callback sink and is ONLY
+// assigned on the lifecycle queue right before LiStartConnection — after the
+// previous connection's teardown has fully drained on that same serial queue —
+// so a dying connection's late callbacks (stageFailed/terminated/frames) can
+// never misroute into the next session (phantom .ending on a fresh stream).
+// sPending marks the most recently start()ed session for supersession checks.
 static __weak MoonlightSession *sActive = nil;
+static __weak MoonlightSession *sPending = nil;
 
 // LiStartConnection / LiStopConnection must never overlap — the library holds one
 // connection's worth of global state, and a second LiStartConnection before the
@@ -46,6 +54,11 @@ static dispatch_queue_t LifecycleQueue(void) {
     int _framesEnqueued;
     BOOL _loggedLayerFail;
     int _videoWidth, _videoHeight;
+    // Stream statistics. Written only on the video decode thread; read at 1 Hz
+    // from the main thread (32/64-bit loads are single-copy atomic on arm64,
+    // and the HUD tolerates a torn read once in a blue moon anyway).
+    int _lastStatFrameNumber;
+    VLStreamStats _stats;
 }
 
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
@@ -115,7 +128,7 @@ static dispatch_queue_t LifecycleQueue(void) {
 }
 
 - (void)start {
-    sActive = self;
+    sPending = self;
     // Surfaces the host's REAL appVersion (drives control-stream encryption) +
     // the negotiated config, so a failed connect is diagnosable from the console.
     NSLog(@"[VibeLight] connect: appVersion=%s enc=0x%x %dx%d@%d %dkbps fmts=0x%x codecMode=%d",
@@ -125,7 +138,11 @@ static dispatch_queue_t LifecycleQueue(void) {
     dispatch_async(LifecycleQueue(), ^{
         // A newer session may have superseded us while queued — don't start a
         // connection nobody is listening to (and that would overlap the new one).
-        if (sActive != self) return;
+        if (sPending != self) return;
+        // Take the callback sink only now: everything earlier on this serial
+        // queue (the previous connection's stop) has fully completed, so no
+        // stale callback can land on this session.
+        sActive = self;
 
         CONNECTION_LISTENER_CALLBACKS cl = {0};
         cl.stageStarting = ClStageStarting;
@@ -162,6 +179,7 @@ static dispatch_queue_t LifecycleQueue(void) {
 }
 
 - (void)stop {
+    if (sPending == self) sPending = nil;
     if (sActive == self) sActive = nil;
     // Unblock any in-flight LiStartConnection so the serial queue drains and the
     // teardown below can run (and complete before the next session's start).
@@ -181,6 +199,7 @@ static dispatch_queue_t LifecycleQueue(void) {
 - (int32_t)framesEnqueuedCount { return _framesEnqueued; }
 - (int)videoWidth  { return _videoWidth; }
 - (int)videoHeight { return _videoHeight; }
+- (void)getStats:(VLStreamStats *)outStats { *outStats = _stats; }
 - (BOOL)getEstimatedRtt:(uint32_t *)rttMs variance:(uint32_t *)varianceMs {
     if (sActive != self) return NO;
     return LiGetEstimatedRttInfo(rttMs, varianceMs) ? YES : NO;
@@ -255,6 +274,24 @@ static int startCodeLen(const uint8_t *p, int len) {
 }
 
 - (int)submit:(PDECODE_UNIT)du {
+    // Stats accounting first — even frames we end up dropping were received.
+    _stats.framesReceived++;
+    if (_lastStatFrameNumber != 0 && du->frameNumber > _lastStatFrameNumber + 1) {
+        _stats.networkDroppedFrames += du->frameNumber - _lastStatFrameNumber - 1;
+    }
+    _lastStatFrameNumber = du->frameNumber;
+    _stats.videoBytes += (uint64_t)du->fullLength;
+    if (du->frameHostProcessingLatency != 0) {
+        _stats.hostLatencySumTenthMs += du->frameHostProcessingLatency;
+        _stats.hostLatencyCount++;
+        if (du->frameHostProcessingLatency > _stats.hostLatencyMaxTenthMs) {
+            _stats.hostLatencyMaxTenthMs = du->frameHostProcessingLatency;
+        }
+    }
+    if (du->enqueueTimeUs >= du->receiveTimeUs) {
+        _stats.receiveDurationSumUs += du->enqueueTimeUs - du->receiveTimeUs;
+    }
+
     if (!_displayLayer) return DR_OK;
     if (_displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
         if (!_loggedLayerFail) {
@@ -357,7 +394,7 @@ static int startCodeLen(const uint8_t *p, int len) {
     if (_framesEnqueued++ == 0) {
         CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(_formatDesc);
         NSLog(@"[VibeLight] first video frame enqueued (%dx%d) — decode path OK", dim.width, dim.height);
-    } else if (_framesEnqueued % 300 == 0) {   // ~every 10s at 30fps
+    } else if (_framesEnqueued % 7200 == 0) {   // ~every minute at 120fps
         NSLog(@"[VibeLight] %d frames enqueued, layer status=%ld", _framesEnqueued, (long)_displayLayer.status);
     }
     return DR_OK;

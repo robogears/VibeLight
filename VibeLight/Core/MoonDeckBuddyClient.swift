@@ -150,13 +150,31 @@ final class MoonDeckBuddyClient: Sendable {
 
     /// Restart the host PC (no on-PC confirmation dialog). `delaySeconds` is
     /// 1…30 per the buddy's validation.
+    ///
+    /// Current buddy builds route this as `POST /restartHost`; older builds
+    /// (the same vintage that reports string pairing states) used a different
+    /// route name, answering 404 here. Fall back through the legacy names —
+    /// a wrong guess is a harmless 404 — and if none exist, surface the
+    /// buddy's actual API version so the fix ("update MoonDeckBuddy") is
+    /// obvious rather than a bare HTTP 404.
     func restart(host: String, port: Int, clientID: String, delaySeconds: Int = 5) async throws {
-        let data = try await send("POST", host: host, port: port, path: "/restartHost",
-                                  body: ["delay": min(max(delaySeconds, 1), 30)],
-                                  authClientID: clientID)
-        // {"result": Bool} — false means the buddy declined.
-        if let obj = Self.json(data), let ok = obj["result"] as? Bool, !ok {
-            throw MDError.restartRejected
+        let delay = min(max(delaySeconds, 1), 30)
+        for (i, path) in ["/restartHost", "/restartPc", "/restartPC"].enumerated() {
+            do {
+                let data = try await send("POST", host: host, port: port, path: path,
+                                          body: ["delay": delay], authClientID: clientID)
+                // {"result": Bool} — false means the buddy declined.
+                if let obj = Self.json(data), let ok = obj["result"] as? Bool, !ok {
+                    throw MDError.restartRejected
+                }
+                return
+            } catch MDError.http(404) where i < 2 {
+                continue   // try the next candidate route
+            } catch MDError.http(404) {
+                let v = (try? await apiVersion(host: host, port: port)).map { "v\($0)" } ?? "unknown version"
+                throw MDError.badResponse(
+                    "no restart route — buddy API \(v). Update MoonDeckBuddy on the PC")
+            }
         }
     }
 

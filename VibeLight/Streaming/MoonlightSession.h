@@ -79,6 +79,19 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// Estimated control-stream round-trip time; NO when unavailable.
 - (BOOL)getEstimatedRtt:(uint32_t *)rttMs variance:(uint32_t *)varianceMs;
 
+/// Cumulative per-frame stream statistics (monotonic counters — the HUD
+/// computes rates from deltas between 1 Hz snapshots).
+typedef struct {
+    int32_t  framesReceived;            // decode units delivered to the decoder
+    int32_t  networkDroppedFrames;      // frame-number gaps (never delivered)
+    uint64_t videoBytes;                // sum of frame payload sizes
+    uint64_t hostLatencySumTenthMs;     // sum of per-frame host processing latency
+    int32_t  hostLatencyCount;          // frames that carried a latency value
+    uint32_t hostLatencyMaxTenthMs;     // worst single frame
+    uint64_t receiveDurationSumUs;      // Σ(enqueueTime − receiveTime): frame assembly time
+} VLStreamStats;
+- (void)getStats:(VLStreamStats *)outStats;
+
 /// Forwards a complete player-1 gamepad snapshot to the host
 /// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
 /// Triggers: 0…255. No-op when this session isn't the active connection.
