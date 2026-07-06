@@ -53,6 +53,8 @@ struct OverlayHost: View {
                 MoonDeckSetupCard(hostID: hostID)
             case .confirmRestartPC(let hostID):
                 ConfirmRestartCard(hostID: hostID)
+            case .confirmSwitchStream(let running, let target):
+                ConfirmSwitchStreamCard(runningName: running, target: target)
             }
     }
 }
@@ -61,6 +63,32 @@ struct OverlayHost: View {
 
 private struct SessionHUD: View {
     @Environment(AppState.self) private var state
+    @State private var quipIndex = Int.random(in: 0..<SessionHUD.quips.count)
+
+    /// Rotating flavor text under the launch label — relevant nonsense beats
+    /// a static "please wait".
+    static let quips = [
+        "Convincing your PC it's a console…",
+        "Herding pixels across the network…",
+        "Bribing the router for lower ping…",
+        "Warming up the virtual HDMI cable…",
+        "Asking the GPU nicely to share…",
+        "Teleporting your rig to the couch…",
+        "Negotiating frame rates with the encoder…",
+        "Stuffing frames into tiny packets…",
+        "Reticulating stream splines…",
+        "Waking pixels from their nap…",
+        "Counting frames before they hatch…",
+        "Telling your monitor it's not needed…",
+        "Rolling out the red carpet for keyframes…",
+        "Spinning up fans you can't hear from here…",
+        "Charging the controller's ego…",
+        "Sneaking past the loading screen's loading screen…",
+        "Pressing A to continue for you…",
+        "Untangling the invisible HDMI cables…",
+        "Feeding the hungry bitrate…",
+        "Politely evicting the screensaver…",
+    ]
 
     var body: some View {
         VStack(spacing: 22) {
@@ -70,12 +98,23 @@ private struct SessionHUD: View {
             Text(label)
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Handing off to the stream…")
+            Text(Self.quips[quipIndex])
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
+                .id(quipIndex)
+                .transition(.opacity)
         }
         .padding(60)
         .background(Theme.surface.opacity(0.9), in: RoundedRectangle(cornerRadius: 24))
+        .task {
+            // Fresh quip every few seconds while the HUD is up.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(4))
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    quipIndex = (quipIndex + Int.random(in: 1..<Self.quips.count)) % Self.quips.count
+                }
+            }
+        }
     }
 
     private var label: String {
@@ -371,6 +410,39 @@ private struct RenamePresetCard: View {
 }
 
 /// Confirm a force-restart of an already-paired host (destructive).
+/// Something else is already streaming on the host — offer to switch straight
+/// to the newly chosen app instead of making the user quit and relaunch.
+private struct ConfirmSwitchStreamCard: View {
+    @Environment(AppState.self) private var state
+    let runningName: String
+    let target: StreamApp
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
+                Text("\(runningName) is running")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                Text("Switching closes \(runningName) on the PC and starts \(target.name).")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "switchstream:yes", title: "Switch to \(target.name)",
+                              symbol: "arrow.triangle.2.circlepath")
+                OverlayButton(id: "switchstream:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
 private struct ConfirmRestartCard: View {
     @Environment(AppState.self) private var state
     let hostID: String

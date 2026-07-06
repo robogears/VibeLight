@@ -27,6 +27,7 @@ enum Overlay: Equatable {
     case renamePreset(Int)          // type a new preset name
     case moonDeckSetup(String)      // set up / pair MoonDeckBuddy for host id
     case confirmRestartPC(String)   // confirm force-restarting host id
+    case confirmSwitchStream(running: String, target: StreamApp)  // host busy — switch to target?
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -49,6 +50,8 @@ final class AppState {
     let focus = FocusEngine()
     let controller = ControllerManager()
     let updateService = UpdateService()
+    /// Console-style menu sounds (focus tick / confirm / back).
+    @ObservationIgnored let sfx = MenuSFX()
     /// OS/window chrome, injected after construction (macOS: the app delegate's
     /// `WindowCoordinator`; iOS: `iOSPlatformChrome` from the SwiftUI scene).
     @ObservationIgnored weak var chrome: (any PlatformChrome)?
@@ -407,6 +410,7 @@ final class AppState {
         focus.onFocusChange = { [weak self] _, new in
             guard new != nil else { return }
             self?.controller.focusTick()
+            self?.sfx.play(.move)
         }
         #if os(iOS)
         // While streaming, the in-process engine flips the controller manager
@@ -1037,6 +1041,9 @@ final class AppState {
             if moonDeckRestarting { return }   // locked while the request is in flight
             sections = [FocusSection(id: "restartpc", kind: .vList,
                                      itemIDs: ["restartpc:yes", "restartpc:cancel"])]
+        case .confirmSwitchStream:
+            sections = [FocusSection(id: "switchstream", kind: .vList,
+                                     itemIDs: ["switchstream:yes", "switchstream:cancel"])]
         case .sessionHUD, .cheatSheet:
             // Nothing focusable in these overlays — but keep the underlying
             // sections installed. routeOverlay() gates all input anyway, and
@@ -1046,10 +1053,15 @@ final class AppState {
         case nil:
             switch screen {
             case .home:
-                // NOTE: host switching UI is deliberately not a focus section
-                // yet — never emit focusable IDs that no view renders, or
-                // focus goes invisible. Multi-host switching lives in the
-                // header (mouse) until a proper host shelf exists.
+                // Header row above the shelf: restart PC + host chip, reachable
+                // with d-pad UP from the games. IDs only when the views render
+                // (host set) — never emit focusable IDs no view draws.
+                if selectedHost != nil {
+                    sections.append(FocusSection(
+                        id: "header", kind: .shelf,
+                        itemIDs: ["header:restart", "header:host"]
+                    ))
+                }
                 sections.append(FocusSection(
                     id: "apps", kind: .shelf,
                     itemIDs: apps.map { "app:\(appKey($0))" }
@@ -1100,6 +1112,13 @@ final class AppState {
     }
 
     func route(_ event: NavigationEvent) {
+        // Menu SFX: confirm/back travel with the event; focus moves tick via
+        // onFocusChange (only when focus actually changes — no edge spam).
+        switch event {
+        case .select: sfx.play(.select)
+        case .back: sfx.play(.back)
+        default: break
+        }
         // Global chord: hold Menu → quit the remote game completely.
         if event == .quitChord {
             quitRemoteGameCompletely()
@@ -1152,6 +1171,10 @@ final class AppState {
         case .select:
             if let id = focus.focusedItemID, id.hasPrefix("host:") {
                 selectHost(String(id.dropFirst(5)))
+            } else if focus.focusedItemID == "header:host" {
+                openHostMenu()
+            } else if focus.focusedItemID == "header:restart" {
+                requestRestartPC()
             } else if let app = focusedApp {
                 launch(app)
             }
@@ -1386,6 +1409,20 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
+        case .confirmSwitchStream(_, let target):
+            switch event {
+            case .select:
+                if focus.focusedItemID == "switchstream:yes" {
+                    dismissOverlay()
+                    forceLaunch(target)
+                } else {
+                    dismissOverlay()
+                }
+            case .back:
+                dismissOverlay()
+            default:
+                _ = focus.handle(event)
+            }
         case .confirmRestartPC(let hostID):
             if moonDeckRestarting { break }   // locked while in flight
             switch event {
@@ -1431,6 +1468,20 @@ final class AppState {
     // MARK: - Actions
 
     func launch(_ app: StreamApp) {
+        guard selectedHost != nil else { return }
+        // Host already streaming something ELSE → offer to switch instead of
+        // erroring out (the engines close the running app on the way in).
+        if let info = serverInfo, info.currentGameID != 0, info.currentGameID != app.id {
+            let runningName = apps.first { $0.id == info.currentGameID }?.name ?? "Another app"
+            presentOverlay(.confirmSwitchStream(running: runningName, target: app))
+            return
+        }
+        forceLaunch(app)
+    }
+
+    /// The unguarded launch path: used directly by the switch-stream confirm
+    /// (the user already chose to close what's running).
+    private func forceLaunch(_ app: StreamApp) {
         guard let host = selectedHost else { return }
         presentOverlay(.sessionHUD)
         Task {
@@ -1666,6 +1717,7 @@ final class AppState {
     }
 
     func adjust(row: SettingsRow, forward: Bool) {
+        sfx.play(.move)   // value change ticks like a focus move
         switch row {
         case .resolution:
             let options = resolutionOptions

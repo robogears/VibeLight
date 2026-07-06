@@ -112,6 +112,8 @@ private struct HostChip: View {
     let host: StreamHost
     @State private var hovering = false
 
+    private var isFocused: Bool { state.focus.focusedItemID == "header:host" }
+
     var body: some View {
         HStack(spacing: 10) {
             Circle()
@@ -140,11 +142,16 @@ private struct HostChip: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .background(.white.opacity(hovering ? 0.12 : 0.06), in: Capsule())
+        .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+        }
+        .scaleEffect(isFocused ? 1.03 : 1.0)
         .contentShape(Capsule())
         .onHover { hovering = $0 }
         .onTapGesture { state.openHostMenu() }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Theme.focusSpring, value: isFocused)
     }
 }
 
@@ -155,18 +162,25 @@ private struct RestartPCButton: View {
     @Environment(AppState.self) private var state
     @State private var hovering = false
 
+    private var isFocused: Bool { state.focus.focusedItemID == "header:restart" }
+
     var body: some View {
         Button { state.requestRestartPC() } label: {
             Image(systemName: "restart")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+                .foregroundStyle(hovering || isFocused ? Theme.textPrimary : Theme.textSecondary)
                 .frame(width: 38, height: 38)
-                .background(.white.opacity(hovering ? 0.12 : 0.06), in: Circle())
+                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
         }
         .buttonStyle(.plain)
+        .scaleEffect(isFocused ? 1.06 : 1.0)
         .onHover { hovering = $0 }
         .help("Restart PC")
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Theme.focusSpring, value: isFocused)
     }
 }
 

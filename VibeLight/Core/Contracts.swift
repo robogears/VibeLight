@@ -172,7 +172,7 @@ enum InputMode: Sendable, Equatable {
 
 /// Progress of a press-and-hold chord, for the on-screen "keep holding" ring.
 struct HoldProgress: Equatable, Sendable {
-    enum Kind: Sendable, Equatable { case quitApp, quitGame }
+    enum Kind: Sendable, Equatable { case quitApp, quitGame, disconnectStream }
     var kind: Kind
     var fraction: Double   // 0…1
 }

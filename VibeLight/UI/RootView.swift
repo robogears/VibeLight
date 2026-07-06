@@ -44,6 +44,14 @@ struct RootView: View {
                                 .allowsHitTesting(false)   // touches pass through to the stream
                         }
                     }
+                    .overlay {
+                        // Hold Select+R1 → leave-stream progress ring (same
+                        // feedback language as the launcher's hold chords).
+                        if let p = state.session.streamQuitProgress {
+                            HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
+                                .transition(.opacity)
+                        }
+                    }
                     .overlay(alignment: .topTrailing) {
                         // Until input lands (Phase 4), a tappable way back out so
                         // the stream screen isn't a trap.

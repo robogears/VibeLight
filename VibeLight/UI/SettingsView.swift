@@ -210,21 +210,38 @@ private struct SettingsRowView: View {
             Spacer()
 
             HStack(spacing: 16) {
-                // Adjustable rows get ◀ ▶; action/readonly rows don't.
+                // Adjustable rows get ◀ ▶ — always visible and DIRECTLY tappable
+                // (fingers adjust values without a controller); action/readonly
+                // rows don't.
                 let showChevrons = !(row.isAction || row.isReadonly)
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(showChevrons && isFocused ? .white.opacity(0.8) : .clear)
+                Button { state.adjust(row: row, forward: false) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!showChevrons)
                 Text(state.value(for: row))
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .foregroundStyle(isFocused ? .white : Theme.accent)
                     .monospacedDigit()
                     .frame(minWidth: 120, alignment: .center)
                     .contentTransition(.numericText())
-                Image(systemName: row.isAction ? "chevron.forward.circle.fill" : "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
-                                     : (showChevrons && isFocused ? .white.opacity(0.8) : .clear))
+                Button {
+                    if row.isAction { state.checkForUpdates() }
+                    else { state.adjust(row: row, forward: true) }
+                } label: {
+                    Image(systemName: row.isAction ? "chevron.forward.circle.fill" : "chevron.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
+                                         : (showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!showChevrons && !row.isAction)
             }
         }
         .contentShape(Rectangle())

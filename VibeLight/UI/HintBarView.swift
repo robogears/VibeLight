@@ -107,28 +107,32 @@ struct HintBarView: View {
                 rail.append(("leaveleft", .move(.left), "Back to Games"))
                 return rail
             }
-            return [
+            // No "Presets" hint: the rail is one nudge right and discoverable.
+            // No quit-app hint on iOS: apps don't self-quit there (HIG), and
+            // the chord is disabled in ControllerManager anyway.
+            var home: [(String, NavigationEvent, String?)] = [
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
                 ("quitgame", .quitChord, nil),
-                ("quitapp", .quitApp, nil),
-                ("presets", .move(.right), "Presets"),
             ]
+            #if os(macOS)
+            home.append(("quitapp", .quitApp, "Hold to Quit Application"))
+            #endif
+            return home
         case .settings:
-            // On a preset slot: save into it / manage it. On a row: adjust.
+            // On a preset slot: save into it / manage it. On a row the value
+            // arrows are directly tappable and tabs are tappable up top, so no
+            // "Adjust"/"Switch Tab" chips — they only restated the obvious.
             if let i = state.presetSlotIndex(state.focus.focusedItemID) {
                 var slot: [(String, NavigationEvent, String?)] = [
                     ("save", .select, "Save to Preset"),
                 ]
                 if state.presets[i] != nil { slot.append(("opts", .contextMenu, "Rename / Clear")) }
-                slot.append(("tab", .nextSection, "Switch Tab"))
                 slot.append(("back", .back, "Done"))
                 return slot
             }
             return [
-                ("adjust", .move(.right), "Adjust"),
-                ("tab", .nextSection, "Switch Tab"),
                 ("back", .back, "Done"),
             ]
         }
