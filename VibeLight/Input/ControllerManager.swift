@@ -65,6 +65,11 @@ final class ControllerManager {
     /// UI on mouse use.
     @ObservationIgnored var onInputActivity: ((InputMode) -> Void)?
 
+    /// Fired when a pad disconnects (after transient state is cleared). The
+    /// stream engine uses this to send a neutral snapshot so the host doesn't
+    /// keep the vanished pad's last buttons/sticks latched.
+    @ObservationIgnored var onPadDisconnected: (@MainActor () -> Void)?
+
     /// Stream passthrough. While non-nil, launcher navigation is fully unwired
     /// (no focus moves, no haptics, no chords) and every state change on any
     /// pad is forwarded raw to this closure — the stream owns the controller.
@@ -178,6 +183,11 @@ final class ControllerManager {
             // release — clear everything before rewiring.
             self?.resetTransientInputState()
             self?.refreshControllers()
+            // While streaming, the host also holds the pad's last snapshot —
+            // the engine sends a neutral state so buttons/sticks don't stay
+            // latched in the remote game. (Don't read the vanished pad: its
+            // properties still report the stale pressed state.)
+            self?.onPadDisconnected?()
         }
         observe(.GCControllerDidBecomeCurrent) { [weak self] in
             // The user switched pads: hint glyphs and the haptic engine both

@@ -109,6 +109,17 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
       normalizedX:(float)x
       normalizedY:(float)y;
 
+/// Announces a player-1 gamepad to the host with its capabilities, so the host
+/// materializes the virtual pad before the first input (games list it in
+/// controller menus immediately). Falls back to a plain controller event on
+/// hosts without arrival support.
+- (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
+                            capabilities:(uint16_t)capabilities;
+
+/// Restarts the audio unit after an AVAudioSession interruption ends (phone
+/// call, Siri, alarm). Safe no-op when no stream audio exists.
++ (void)resumeAudio;
+
 /// Forwards a complete player-1 gamepad snapshot to the host
 /// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
 /// Triggers: 0…255. No-op when this session isn't the active connection.

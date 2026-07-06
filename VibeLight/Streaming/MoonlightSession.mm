@@ -1,9 +1,28 @@
 #import "MoonlightSession.h"
 #import <AudioToolbox/AudioToolbox.h>
+#import <CFNetwork/CFNetwork.h>
 #import <Limelight.h>
 #import <opus_multistream.h>
 #import <string.h>
 #include <atomic>
+
+/// True when an active VPN/tunnel interface is up (Tailscale, WireGuard, …).
+/// Mirrors moonlight-ios Utils.m: the scoped proxy-settings dictionary lists
+/// per-interface keys; tunnels show up as utun/tap/tun/ppp/ipsec.
+static BOOL VLIsVpnActive(void) {
+    BOOL active = NO;
+    CFDictionaryRef settings = CFNetworkCopySystemProxySettings();
+    if (settings) {
+        NSDictionary *scoped = ((__bridge NSDictionary *)settings)[@"__SCOPED__"];
+        for (NSString *key in scoped.allKeys) {
+            if ([key containsString:@"utun"] || [key containsString:@"tap"] ||
+                [key containsString:@"tun"] || [key containsString:@"ppp"] ||
+                [key containsString:@"ipsec"]) { active = YES; break; }
+        }
+        CFRelease(settings);
+    }
+    return active;
+}
 
 // moonlight-common-c is a single-connection C library whose callbacks are global
 // function pointers, so we keep one active session and forward to it. (Same model
@@ -35,11 +54,27 @@ static dispatch_queue_t LifecycleQueue(void) {
     return q;
 }
 
+// Latched when the host rejects LiSendTouchEvent (older Sunshine): route all
+// subsequent touches through the absolute-mouse fallback without re-asking.
+static BOOL sNativeTouchUnsupported = NO;
+// Mouse-fallback state (mirrors moonlight-ios AbsoluteTouchHandler): a single
+// gesture owner (whichever pointer went down first — NOT slot 0, which gets
+// reassigned to later fingers mid-gesture), plus the last tap-up for the
+// double-click deadzone.
+static uint32_t sFallbackOwner = UINT32_MAX;
+static CFAbsoluteTime sLastTapUpTime = 0;
+static float sLastTapUpX = 0, sLastTapUpY = 0;
+// Defined in the audio section below; ArInit self-cleans on failure paths.
+static void ArCleanup(void);
+
 @implementation MoonlightSession {
     SERVER_INFORMATION _serverInfo;
     STREAM_CONFIGURATION _streamConfig;
-    // Backing storage the C structs point into — must outlive LiStartConnection.
-    NSString *_address, *_appVersion, *_gfeVersion, *_rtspUrl;
+    // Owned C-string storage SERVER_INFORMATION points into. -UTF8String returns
+    // an interior/temporary buffer that is NOT pinned by retaining the NSString
+    // (tagged-pointer strings hand back autoreleased memory) — the struct must
+    // point at storage with the session's own lifetime.
+    char _addressC[256], _appVersionC[64], _gfeVersionC[128], _rtspUrlC[512];
     // Video decode state.
     AVSampleBufferDisplayLayer *_displayLayer;
     CMVideoFormatDescriptionRef _formatDesc;
@@ -48,11 +83,16 @@ static dispatch_queue_t LifecycleQueue(void) {
     // Set (on LifecycleQueue) once LiStartConnection has actually run, so stop only
     // calls LiStopConnection for a connection that was really started.
     BOOL _didStart;
+    // Set by ClStageFailed; lets start() synthesize a failure callback when
+    // LiStartConnection fails BEFORE any stage ran (pre-validation errors would
+    // otherwise strand the UI in .launching forever).
+    BOOL _sawStageFailure;
     // Diagnostics: distinguish "frames never reached the decoder" (network/FEC)
     // from "frames decoded but nothing on screen" (display-layer/view) without
     // spamming the log.
     int _framesEnqueued;
     BOOL _loggedLayerFail;
+    int _notReadyStreak;   // consecutive frames with isReadyForMoreMediaData == NO
     int _videoWidth, _videoHeight;
     // Stream statistics. Written only on the video decode thread; read at 1 Hz
     // from the main thread (32/64-bit loads are single-copy atomic on arm64,
@@ -85,16 +125,16 @@ static dispatch_queue_t LifecycleQueue(void) {
                           aesIv:(NSData *)aesIv {
     if (!(self = [super init])) return nil;
 
-    _address = [address copy];
-    _appVersion = [appVersion copy];
-    _gfeVersion = [gfeVersion copy];
-    _rtspUrl = [rtspUrl copy];
+    strlcpy(_addressC, address.UTF8String ?: "", sizeof(_addressC));
+    strlcpy(_appVersionC, appVersion.UTF8String ?: "", sizeof(_appVersionC));
+    strlcpy(_gfeVersionC, gfeVersion.UTF8String ?: "", sizeof(_gfeVersionC));
+    strlcpy(_rtspUrlC, rtspUrl.UTF8String ?: "", sizeof(_rtspUrlC));
 
     memset(&_serverInfo, 0, sizeof(_serverInfo));
-    _serverInfo.address = _address.UTF8String;
-    _serverInfo.serverInfoAppVersion = _appVersion.UTF8String;
-    _serverInfo.serverInfoGfeVersion = _gfeVersion.length ? _gfeVersion.UTF8String : NULL;
-    _serverInfo.rtspSessionUrl = _rtspUrl.length ? _rtspUrl.UTF8String : NULL;
+    _serverInfo.address = _addressC;
+    _serverInfo.serverInfoAppVersion = _appVersionC;
+    _serverInfo.serverInfoGfeVersion = _gfeVersionC[0] ? _gfeVersionC : NULL;
+    _serverInfo.rtspSessionUrl = _rtspUrlC[0] ? _rtspUrlC : NULL;
     _serverInfo.serverCodecModeSupport = codecModeSupport;
 
     memset(&_streamConfig, 0, sizeof(_streamConfig));
@@ -102,8 +142,15 @@ static dispatch_queue_t LifecycleQueue(void) {
     _streamConfig.height = height;
     _streamConfig.fps = fps;
     _streamConfig.bitrate = bitrateKbps;
-    _streamConfig.packetSize = 1392;
-    _streamConfig.streamingRemotely = STREAM_CFG_AUTO;
+    // Over a VPN/tunnel (Tailscale et al.) the path MTU is ~1280 — 1392-byte
+    // payloads fragment or drop. Mirror moonlight-ios: force remote + 1024.
+    if (VLIsVpnActive()) {
+        _streamConfig.packetSize = 1024;
+        _streamConfig.streamingRemotely = STREAM_CFG_REMOTE;
+    } else {
+        _streamConfig.packetSize = 1392;
+        _streamConfig.streamingRemotely = STREAM_CFG_AUTO;
+    }
     _streamConfig.audioConfiguration = AUDIO_CONFIGURATION_STEREO;
     _streamConfig.supportedVideoFormats = VIDEO_FORMAT_H264;
     if (enableHevc) _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_H265;
@@ -144,6 +191,8 @@ static dispatch_queue_t LifecycleQueue(void) {
         // stale callback can land on this session.
         sActive = self;
         sNativeTouchUnsupported = NO;   // re-probe per connection (host may differ)
+        sFallbackOwner = UINT32_MAX;
+        sLastTapUpTime = 0;
 
         CONNECTION_LISTENER_CALLBACKS cl = {0};
         cl.stageStarting = ClStageStarting;
@@ -174,8 +223,14 @@ static dispatch_queue_t LifecycleQueue(void) {
         ar.capabilities = CAPABILITY_DIRECT_SUBMIT;
 
         self->_didStart = YES;
-        LiStartConnection(&self->_serverInfo, &self->_streamConfig, &cl, &dr, &ar,
-                          NULL, 0, NULL, 0);
+        self->_sawStageFailure = NO;
+        int ret = LiStartConnection(&self->_serverInfo, &self->_streamConfig, &cl, &dr, &ar,
+                                    NULL, 0, NULL, 0);
+        // Pre-stage validation failures return non-zero WITHOUT any stageFailed
+        // callback — synthesize one or the UI waits in .launching forever.
+        if (ret != 0 && !self->_sawStageFailure) {
+            [self notifyFailStage:MoonlightStagePlatformInit error:ret];
+        }
     });
 }
 
@@ -185,14 +240,21 @@ static dispatch_queue_t LifecycleQueue(void) {
     // Unblock any in-flight LiStartConnection so the serial queue drains and the
     // teardown below can run (and complete before the next session's start).
     LiInterruptConnection();
-    __weak typeof(self) weakSelf = self;
+    // Capture self STRONGLY: the engine drops its reference right after calling
+    // stop(), and a weak capture would deallocate the session before this block
+    // runs — skipping LiStopConnection entirely and leaking the connection's
+    // threads + audio unit. One-shot block ⇒ no retain cycle; the block's
+    // release afterward drops the last reference at exactly the right time.
     dispatch_async(LifecycleQueue(), ^{
-        typeof(self) s = weakSelf;
-        if (s && s->_didStart) {
-            s->_didStart = NO;
+        if (self->_didStart) {
+            self->_didStart = NO;
             LiStopConnection();
         }
     });
+}
+
+- (void)dealloc {
+    if (_formatDesc) { CFRelease(_formatDesc); _formatDesc = NULL; }
 }
 
 // MARK: - Perf stats (int reads are single-copy atomic on arm64; 1 Hz HUD polling)
@@ -206,34 +268,66 @@ static dispatch_queue_t LifecycleQueue(void) {
     return LiGetEstimatedRttInfo(rttMs, varianceMs) ? YES : NO;
 }
 
-// Latched when the host rejects LiSendTouchEvent (older Sunshine): route all
-// subsequent touches through the absolute-mouse fallback without re-asking.
-static BOOL sNativeTouchUnsupported = NO;
-
 - (void)sendTouch:(MoonlightTouchPhase)phase
         pointerId:(uint32_t)pointerId
       normalizedX:(float)x
       normalizedY:(float)y {
     if (sActive != self) return;
     if (!sNativeTouchUnsupported) {
-        float pressure = (phase == MoonlightTouchPhaseDown || phase == MoonlightTouchPhaseMove) ? 1.0f : 0.0f;
-        int err = LiSendTouchEvent((uint8_t)phase, pointerId, x, y, pressure, 0.0f, 0.0f, LI_ROT_UNKNOWN);
+        // Pressure 0.0 = "unknown" for contact phases per Limelight.h (1.0 would
+        // claim a max-force press to pen/touch-aware apps on the host).
+        int err = LiSendTouchEvent((uint8_t)phase, pointerId, x, y, 0.0f, 0.0f, 0.0f, LI_ROT_UNKNOWN);
         if (err != LI_ERR_UNSUPPORTED) return;
         sNativeTouchUnsupported = YES;
         NSLog(@"[VibeLight] host lacks native touch — falling back to absolute mouse");
     }
-    // Absolute-mouse fallback: single-pointer taps/drags become cursor moves +
-    // left clicks, normalized against the negotiated video size (mirrors
-    // moonlight-ios AbsoluteTouchHandler).
-    if (pointerId != 0) return;
+    // Absolute-mouse fallback: the FIRST finger down owns the gesture; extra
+    // fingers are ignored until it lifts (a stray second finger must not warp
+    // the cursor or re-click).
     short w = _videoWidth > 0 ? (short)_videoWidth : 1920;
     short h = _videoHeight > 0 ? (short)_videoHeight : 1080;
-    LiSendMousePositionEvent((short)(x * (float)w), (short)(y * (float)h), w, h);
-    if (phase == MoonlightTouchPhaseDown) {
-        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-    } else if (phase == MoonlightTouchPhaseUp || phase == MoonlightTouchPhaseCancel) {
-        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+    switch (phase) {
+        case MoonlightTouchPhaseDown: {
+            if (sFallbackOwner != UINT32_MAX) return;
+            sFallbackOwner = pointerId;
+            // Double-click deadzone: Windows measures double-click distance
+            // between the two button-DOWN cursor positions — a quick second tap
+            // near the last one must NOT move the cursor first or the wobble
+            // defeats the double-click.
+            BOOL nearLastTap = (CFAbsoluteTimeGetCurrent() - sLastTapUpTime < 0.5)
+                && fabsf(x - sLastTapUpX) < 0.02f && fabsf(y - sLastTapUpY) < 0.02f;
+            if (!nearLastTap) {
+                LiSendMousePositionEvent((short)(x * (float)w), (short)(y * (float)h), w, h);
+            }
+            LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+            break;
+        }
+        case MoonlightTouchPhaseMove:
+            if (pointerId != sFallbackOwner) return;
+            LiSendMousePositionEvent((short)(x * (float)w), (short)(y * (float)h), w, h);
+            break;
+        case MoonlightTouchPhaseUp:
+        case MoonlightTouchPhaseCancel:
+            if (pointerId != sFallbackOwner) return;
+            sFallbackOwner = UINT32_MAX;
+            // Release only — repositioning on lift would defeat the deadzone.
+            LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+            sLastTapUpTime = CFAbsoluteTimeGetCurrent();
+            sLastTapUpX = x; sLastTapUpY = y;
+            break;
     }
+}
+
+- (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
+                            capabilities:(uint16_t)capabilities {
+    if (sActive != self) return;
+    // Falls back to a plain LiSendMultiControllerEvent on hosts without
+    // arrival support, per Limelight.h.
+    LiSendControllerArrivalEvent(0, 0x1, LI_CTYPE_UNKNOWN, supportedButtons, capabilities);
+}
+
++ (void)resumeAudio {
+    if (sAudioUnit) AudioOutputUnitStart(sAudioUnit);
 }
 
 - (void)sendControllerButtonFlags:(int)buttonFlags
@@ -266,7 +360,11 @@ static BOOL sNativeTouchUnsupported = NO;
 
 static void ClStageStarting(int stage) {}
 static void ClStageComplete(int stage) { [sActive notifyStage:(MoonlightStage)stage]; }
-static void ClStageFailed(int stage, int errorCode) { [sActive notifyFailStage:(MoonlightStage)stage error:errorCode]; }
+static void ClStageFailed(int stage, int errorCode) {
+    MoonlightSession *s = sActive;
+    if (s) s->_sawStageFailure = YES;
+    [s notifyFailStage:(MoonlightStage)stage error:errorCode];
+}
 static void ClConnectionStarted(void) { [sActive notifyStage:MoonlightStageConnected]; }
 static void ClConnectionTerminated(int errorCode) { [sActive notifyTerminated:errorCode]; }
 static void ClLogMessage(const char *format, ...) {
@@ -297,10 +395,17 @@ static int startCodeLen(const uint8_t *p, int len) {
     if (hevc && _vps.length) { ps[count] = (const uint8_t *)_vps.bytes; sz[count] = _vps.length; count++; }
     ps[count] = (const uint8_t *)_sps.bytes; sz[count] = _sps.length; count++;
     ps[count] = (const uint8_t *)_pps.bytes; sz[count] = _pps.length; count++;
+    OSStatus st;
     if (hevc) {
-        CMVideoFormatDescriptionCreateFromHEVCParameterSets(kCFAllocatorDefault, count, ps, sz, 4, NULL, &_formatDesc);
+        st = CMVideoFormatDescriptionCreateFromHEVCParameterSets(kCFAllocatorDefault, count, ps, sz, 4, NULL, &_formatDesc);
     } else {
-        CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault, count, ps, sz, 4, &_formatDesc);
+        st = CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault, count, ps, sz, 4, &_formatDesc);
+    }
+    if (st != noErr) {
+        // Leave NULL: submit: then returns DR_NEED_IDR until a parseable
+        // parameter set arrives (silently keeping a stale desc corrupts).
+        NSLog(@"[VibeLight] format description create failed: %d", (int)st);
+        _formatDesc = NULL;
     }
 }
 
@@ -323,7 +428,11 @@ static int startCodeLen(const uint8_t *p, int len) {
         _stats.receiveDurationSumUs += du->enqueueTimeUs - du->receiveTimeUs;
     }
 
-    if (!_displayLayer) return DR_OK;
+    // Contract (Limelight.h): return DR_NEED_IDR whenever the frame can't be
+    // processed — DR_OK on an IDR marks it consumed in the depacketizer, after
+    // which NOTHING re-requests a keyframe and the stream is black/corrupt
+    // until manual disconnect.
+    if (!_displayLayer) return DR_NEED_IDR;
     if (_displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
         if (!_loggedLayerFail) {
             _loggedLayerFail = YES;   // once — decode/format problem, not network
@@ -334,11 +443,18 @@ static int startCodeLen(const uint8_t *p, int len) {
         return DR_NEED_IDR;   // ask the host to resend keyframe data
     }
     if (!_displayLayer.isReadyForMoreMediaData) {
-        // Back-pressure: the decoder can't keep up with this profile. Dropping a
-        // reference frame corrupts the chain anyway, so clear the backlog and
-        // resync on a keyframe instead of queueing unboundedly toward jetsam.
-        [_displayLayer flush];
-        return DR_NEED_IDR;
+        // Transient not-ready is NORMAL during network jitter bursts — the
+        // layer's queue legally absorbs extra samples and drains via
+        // DisplayImmediately, so keep enqueueing. Only a layer that stays
+        // not-ready for ~a second is genuinely stalled; then flush + resync on
+        // a keyframe (the jetsam guard) instead of queueing unboundedly.
+        if (++_notReadyStreak >= 120) {
+            _notReadyStreak = 0;
+            [_displayLayer flush];
+            return DR_NEED_IDR;
+        }
+    } else {
+        _notReadyStreak = 0;
     }
 
     // Walk the buffer chain. Parameter-set entries are whole NALUs and rebuild
@@ -401,18 +517,18 @@ static int startCodeLen(const uint8_t *p, int len) {
             i = j;
         }
     }
-    if (!_formatDesc || avcc.length == 0) return DR_OK;
+    if (!_formatDesc || avcc.length == 0) return DR_NEED_IDR;
 
     CMBlockBufferRef bb = NULL;
     if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, avcc.length, kCFAllocatorDefault,
-                                           NULL, 0, avcc.length, 0, &bb) != noErr) return DR_OK;
+                                           NULL, 0, avcc.length, 0, &bb) != noErr) return DR_NEED_IDR;
     CMBlockBufferReplaceDataBytes(avcc.bytes, bb, 0, avcc.length);
 
     CMSampleBufferRef sb = NULL;
     size_t sampleSize = avcc.length;
     OSStatus st = CMSampleBufferCreateReady(kCFAllocatorDefault, bb, _formatDesc, 1, 0, NULL, 1, &sampleSize, &sb);
     CFRelease(bb);
-    if (st != noErr || !sb) return DR_OK;
+    if (st != noErr || !sb) return DR_NEED_IDR;
 
     // Render as soon as possible — we don't buffer for A/V sync in this pass.
     CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sb, true);
@@ -464,6 +580,11 @@ static int  DrSubmit(PDECODE_UNIT decodeUnit) {
 static OpusMSDecoder *sOpusDecoder;
 static OPUS_MULTISTREAM_CONFIGURATION sOpusCfg;
 static AudioComponentInstance sAudioUnit;
+// Latency bound: max queued-but-unplayed PCM before new packets are dropped.
+// Without it, every jitter burst ratchets the backlog up (the ring only
+// dropped when FULL at ~0.7 s) and the lag never drains — audio ends up
+// permanently ~a second behind video. 60 ms of headroom; set per-config.
+static size_t sMaxAudioBacklogBytes = 11520;
 
 static const size_t kAudioRingCapacity = 256 * 1024;   // ~0.7 s of 48 kHz stereo
 static uint8_t sAudioRing[kAudioRingCapacity];
@@ -495,6 +616,7 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
                                                    opusConfig->mapping, &err);
     if (sOpusDecoder == NULL || err != OPUS_OK) {
         NSLog(@"[VibeLight] opus decoder create failed: %d", err);
+        ArCleanup();   // common-c never calls cleanup when init fails
         return -1;
     }
 
@@ -505,6 +627,7 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
     AudioComponent comp = AudioComponentFindNext(NULL, &desc);
     if (comp == NULL || AudioComponentInstanceNew(comp, &sAudioUnit) != noErr) {
         NSLog(@"[VibeLight] RemoteIO create failed");
+        ArCleanup();
         return -1;
     }
 
@@ -527,9 +650,12 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
 
     if (AudioUnitInitialize(sAudioUnit) != noErr) {
         NSLog(@"[VibeLight] RemoteIO init failed");
+        ArCleanup();
         return -1;
     }
     sRingHead.store(0); sRingTail.store(0);
+    // 60 ms latency bound at the negotiated rate/channels (16-bit samples).
+    sMaxAudioBacklogBytes = (size_t)opusConfig->sampleRate * (size_t)opusConfig->channelCount * 2 * 60 / 1000;
     NSLog(@"[VibeLight] audio: %d Hz, %d ch, %d samples/frame",
           opusConfig->sampleRate, opusConfig->channelCount, opusConfig->samplesPerFrame);
     return 0;
@@ -553,6 +679,15 @@ static void ArCleanup(void) {
 
 static void ArDecode(char *sampleData, int sampleLength) {
     if (sOpusDecoder == NULL) return;
+    // Latency bound: when the backlog already exceeds ~60 ms, drop this packet
+    // instead of queueing it — jitter-burst backlog otherwise ratchets up and
+    // NEVER drains (playback consumes exactly real-time), leaving audio
+    // permanently behind video.
+    {
+        const uint64_t head = sRingHead.load(std::memory_order_relaxed);
+        const uint64_t tail = sRingTail.load(std::memory_order_acquire);
+        if ((size_t)(head - tail) > sMaxAudioBacklogBytes) return;
+    }
     // Worst case: 8 channels × up to 3× nominal frame; NULL data = packet loss →
     // Opus PLC synthesizes concealment for one frame.
     int16_t pcm[1440 * AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];

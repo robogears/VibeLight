@@ -151,6 +151,23 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     /// output appended verbatim. Query shape mirrors moonlight-qt's launchApp().
     func launch(app: StreamApp, on host: StreamHost, at address: String, settings: StreamSettings,
                 rikeyHex: String, rikeyId: Int, extraLaunchParams: String) async throws -> String? {
+        try await launchOrResume(path: "/launch", app: app, on: host, at: address, settings: settings,
+                                 rikeyHex: rikeyHex, rikeyId: rikeyId, extraLaunchParams: extraLaunchParams)
+    }
+
+    /// `/resume` — required (not optional) when the host is already streaming
+    /// this app: Sunshine rejects `/launch` while any session is active. Same
+    /// query contract as `/launch` (Limelight.h mandates the
+    /// LiGetLaunchUrlQueryParameters fragment on both).
+    func resume(app: StreamApp, on host: StreamHost, at address: String, settings: StreamSettings,
+                rikeyHex: String, rikeyId: Int, extraLaunchParams: String) async throws -> String? {
+        try await launchOrResume(path: "/resume", app: app, on: host, at: address, settings: settings,
+                                 rikeyHex: rikeyHex, rikeyId: rikeyId, extraLaunchParams: extraLaunchParams)
+    }
+
+    private func launchOrResume(path: String, app: StreamApp, on host: StreamHost, at address: String,
+                                settings: StreamSettings, rikeyHex: String, rikeyId: Int,
+                                extraLaunchParams: String) async throws -> String? {
         // surroundAudioInfo = channelCount | (channelMask << 16); stereo = 2 | (0x3<<16).
         let surround = 2 | (0x3 << 16)
         var items = [
@@ -171,7 +188,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             items.append(URLQueryItem(name: "clientHdrCapVersion", value: "0"))
         }
         var request = try makeRequest(
-            address: address, port: httpsPort(for: host, at: address), path: "/launch", extraQuery: items)
+            address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: items)
         // LiGetLaunchUrlQueryParameters() is a raw pre-formed query fragment.
         if !extraLaunchParams.isEmpty, let url = request.url {
             let joiner = url.absoluteString.contains("?") ? "&" : "?"
@@ -185,7 +202,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
         }
-        let root = try Self.verifiedRoot(in: data, context: "launch")   // throws on status_code != 200
+        let root = try Self.verifiedRoot(in: data, context: path)   // throws on status_code != 200
         return root.child("sessionUrl0")?.text.trimmed
     }
 
