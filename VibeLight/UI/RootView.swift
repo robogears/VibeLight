@@ -160,8 +160,8 @@ struct ExternalDisplayContent: View {
 
     var body: some View {
         GeometryReader { geo in
-            let scale = max(min(geo.size.width / tvDesign.width,
-                                geo.size.height / tvDesign.height), 0.4)
+            let scale = max(min(geo.size.width / Self.tvDesign.width,
+                                geo.size.height / Self.tvDesign.height), 0.4)
             LauncherContent()
                 .frame(width: geo.size.width / scale, height: geo.size.height / scale,
                        alignment: .topLeading)
