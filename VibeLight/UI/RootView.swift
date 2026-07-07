@@ -160,9 +160,11 @@ struct ExternalDisplayContent: View {
     /// one makes tiles/text read larger from the couch, but it must stay wide
     /// enough that the launcher's landscape layout (header row, shelf, preset
     /// rail) doesn't crowd — 1280 was too narrow (that was the "misaligned").
-    /// External displays are @2× (Retina headroom), so this stays sharp at 4K:
-    /// a 1440-pt canvas rasterizes at 2880 px and upscales only ~1.3× to 3840.
-    /// One-line tunable — smaller = bigger icons.
+    /// The launcher renders at ≥2× (forced in `ExternalDisplay` — old 1080p TVs
+    /// report @1×, which would rasterize this canvas at 1× and upscale → blur),
+    /// so a 1440-pt canvas rasterizes at 2880 px and DOWNSAMPLES to the panel:
+    /// crisp on a 1080p TV, and sharp at 4K. One-line tunable — smaller = bigger
+    /// icons.
     private static let tvDesign = CGSize(width: 1440, height: 810)
 
     var body: some View {

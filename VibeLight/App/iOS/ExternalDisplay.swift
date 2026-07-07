@@ -34,8 +34,10 @@ final class ExternalDisplay {
     @ObservationIgnored private var streamVC: UIViewController?
     @ObservationIgnored private weak var streamLayer: AVSampleBufferDisplayLayer?
     /// Builds the launcher view controller (a `UIHostingController` bound to the
-    /// app's `AppState`); set once by the app after `AppState` exists.
-    @ObservationIgnored private var makeLauncher: (() -> UIViewController)?
+    /// app's `AppState`); set once by the app after `AppState` exists. Receives
+    /// the super-sample render scale (see `launcherRenderScale`) so the builder
+    /// can force the launcher to rasterize at ≥2× on low-DPI panels.
+    @ObservationIgnored private var makeLauncher: ((CGFloat) -> UIViewController)?
     @ObservationIgnored private var launcherVC: UIViewController?
 
     private init() {
@@ -55,7 +57,7 @@ final class ExternalDisplay {
 
     /// Called once by the app (in the scene `.task`) so the TV can render the
     /// launcher. If a display is already up and idle, swaps it in immediately.
-    func setLauncherBuilder(_ builder: @escaping () -> UIViewController) {
+    func setLauncherBuilder(_ builder: @escaping (CGFloat) -> UIViewController) {
         makeLauncher = builder
         launcherVC = nil
         if window != nil, streamLayer == nil { showLauncher() }
@@ -85,8 +87,13 @@ final class ExternalDisplay {
         self.pixelSize = px
         self.name = "the display"
         self.isConnected = true
+        // The launcher super-samples to ≥2× (see `launcherRenderScale`); surface
+        // that as a distinct fact so the panel's honest @1× and the render scale
+        // both read clearly on the companion screen.
+        let renderScale = max(2, scale)
         self.geometrySummary =
             "\(Int(px.width))×\(Int(px.height)) px  ·  \(Int(bounds.width))×\(Int(bounds.height)) pt @\(scale.clean)×"
+            + (renderScale != scale ? "  ·  UI \(renderScale.clean)×" : "")
         NSLog("[VibeLight] external display connected: \(self.geometrySummary!)")
 
         // Mid-stream connect → show the video; otherwise the launcher.
@@ -132,8 +139,25 @@ final class ExternalDisplay {
     }
 
     private func showLauncher() {
-        if launcherVC == nil { launcherVC = makeLauncher?() }
+        if launcherVC == nil, let make = makeLauncher {
+            let vc = make(launcherRenderScale)
+            // Belt for the trait override: force the CALayer backing-store scale
+            // directly too, in case the over-native `displayScale` trait alone
+            // doesn't enlarge the composited buffer on a 1× external scene.
+            vc.view.layer.contentsScale = launcherRenderScale
+            launcherVC = vc
+        }
         window?.rootViewController = launcherVC ?? blackViewController()
+    }
+
+    /// The launcher's render (super-sample) scale. Old 1080p TVs report
+    /// `displayScale` 1.0, so the launcher UI would rasterize at 1× and then
+    /// upscale to the panel → blur. Forcing ≥2× makes it rasterize at 2× and
+    /// DOWNSAMPLE to the panel (super-sampling) → crisp. Never downgrades a
+    /// genuine @2×/@3× panel. Only the launcher UI is affected; the stream video
+    /// path requests the panel's true pixel res and is untouched.
+    private var launcherRenderScale: CGFloat {
+        max(2, window?.windowScene?.traitCollection.displayScale ?? 1)
     }
 
     private func blackViewController() -> UIViewController {

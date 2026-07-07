@@ -2,6 +2,25 @@
 import SwiftUI
 import UIKit
 
+/// Hosts the launcher on the external display, super-sampled. On a 1× panel
+/// (old 1080p TVs report `displayScale` 1.0) the launcher would rasterize at 1×
+/// and upscale to the panel → blurry text. We force ≥2× rendering three ways at
+/// the SAME target so there's no mismatch: the `displayScale` trait override
+/// (set by the builder), the `\.displayScale` SwiftUI environment (also set by
+/// the builder), and the layer `contentsScale` (set in `ExternalDisplay`). This
+/// subclass just logs the realized scale once after layout, so if the iOS 26
+/// SDK silently clamps an over-native trait on an external scene it shows up in
+/// Console (`trait=1× layer=1×`) instead of only as "still looks soft".
+final class ExternalLauncherHost<V: View>: UIHostingController<V> {
+    private var loggedRenderScale = false
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard !loggedRenderScale, view.bounds.width > 0 else { return }
+        loggedRenderScale = true
+        NSLog("[VibeLight] external launcher render: trait=\(view.traitCollection.displayScale)× layer=\(view.layer.contentsScale)×")
+    }
+}
+
 /// Locks the app to landscape. On modern iOS/iPadOS (esp. the iOS 26 betas)
 /// neither the Info.plist orientation keys, `UIRequiresFullScreen`, NOR the
 /// `supportedInterfaceOrientationsFor` delegate mask reliably prevent a rotate
@@ -64,12 +83,14 @@ struct VibeLightApp: App {
                     // A connected TV renders the launcher UI (bound to this same
                     // AppState) when not streaming — so the external display is
                     // never a dead/frozen screen.
-                    ExternalDisplay.shared.setLauncherBuilder {
-                        let vc = UIHostingController(
+                    ExternalDisplay.shared.setLauncherBuilder { renderScale in
+                        let vc = ExternalLauncherHost(
                             rootView: ExternalDisplayContent()
                                 .environment(state)
+                                .environment(\.displayScale, renderScale)  // SwiftUI draws at ≥2×
                                 .preferredColorScheme(.dark))
                         vc.view.backgroundColor = .black
+                        vc.view.traitOverrides.displayScale = renderScale  // UIKit trait → layer scale
                         return vc
                     }
                 }

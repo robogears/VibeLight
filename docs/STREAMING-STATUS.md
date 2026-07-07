@@ -61,7 +61,12 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 Done since: **external display / TV output** (`App/iOS/ExternalDisplay.swift` —
 device-verified). When a TV/monitor is attached, the stream renders on it at the
 display's NATIVE resolution while the iPad keeps controls + acts as a trackpad.
-KEY LESSON: needs a real `UIWindowScene` — the legacy `UIWindow.screen=` API no
+The idle LAUNCHER UI on the TV is super-sampled to ≥2× (`launcherRenderScale` +
+`ExternalLauncherHost`): old 1080p TVs report `displayScale` 1.0, so a fixed-canvas
+`scaleEffect` would rasterize at 1× and UPSCALE to the panel → blurry text. Forcing
+≥2× (trait override + `\.displayScale` env + layer `contentsScale`, all at the same
+target) rasterizes at 2× and DOWNSAMPLES → crisp. Stream video is unaffected (native
+pixel res, separate root VC). KEY LESSON: needs a real `UIWindowScene` — the legacy `UIWindow.screen=` API no
 longer renders on external screens, and iOS only creates the external scene when
 `UIApplicationSupportsMultipleScenes: true` is in the Info.plist (with
 `UIRequiresFullScreen` still true so no Split View). Setting: Settings ▸ Video ▸
