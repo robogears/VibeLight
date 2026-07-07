@@ -50,6 +50,13 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
    also needs an explicit stop() — the callback alone leaves threads running.
 9. Host busy (`currentgame != 0`) → `/resume`, never `/launch` (Sunshine rejects
    it). 22-finding parity audit vs moonlight-ios landed 2026-07-06 (91d3ca1).
+10. **The ONE shared `displayLayer` re-parents between the iPad `DisplayLayerView`
+    and the TV `DisplayHostView`; guard re-attach on TREE MEMBERSHIP
+    (`display.superlayer !== layer`), never object identity.** `dismiss()` detaches
+    the layer (`removeFromSuperlayer`) but leaves the host's `attached` ref dangling,
+    so an identity guard (`attached === display`) skips `addSublayer` on the next
+    launch → the TV goes BLACK on every stream RE-launch (fixed 2026-07-07). The
+    layer is a lifetime `let`, so its `weak attached` cache never nils on its own.
 
 ## Remaining roadmap (in rough priority)
 

@@ -33,6 +33,9 @@ final class ExternalDisplay {
     @ObservationIgnored private var streamHost: DisplayHostView?
     @ObservationIgnored private var streamVC: UIViewController?
     @ObservationIgnored private weak var streamLayer: AVSampleBufferDisplayLayer?
+    /// Latest perf-HUD text mirrored from the engine, so a TV plugged in
+    /// mid-stream (fresh `DisplayHostView`) shows the numbers immediately.
+    @ObservationIgnored private var latestPerf: String?
     /// Builds the launcher view controller (a `UIHostingController` bound to the
     /// app's `AppState`); set once by the app after `AppState` exists. Receives
     /// the super-sample render scale (see `launcherRenderScale`) so the builder
@@ -99,6 +102,7 @@ final class ExternalDisplay {
         // Mid-stream connect → show the video; otherwise the launcher.
         if let layer = streamLayer {
             host.attach(layer)
+            host.setPerf(latestPerf)   // restore the HUD on the fresh host
             window.rootViewController = streamVC
         } else {
             showLauncher()
@@ -129,9 +133,18 @@ final class ExternalDisplay {
         window?.rootViewController = streamVC
     }
 
+    /// Mirror the iPad's perf HUD onto the TV (nil hides it). Cached so a TV
+    /// plugged in mid-stream can restore it (see `sceneConnected`).
+    func setPerfHUD(_ text: String?) {
+        latestPerf = text
+        streamHost?.setPerf(text)
+    }
+
     /// Stream ending: clear the last frame (no frozen image) and return the TV
     /// to the launcher UI.
     func dismiss() {
+        latestPerf = nil
+        streamHost?.setPerf(nil)
         streamLayer?.removeFromSuperlayer()
         streamLayer?.flushAndRemoveImage()   // kill the frozen final frame
         streamLayer = nil
@@ -174,21 +187,64 @@ private extension CGFloat {
     }
 }
 
-/// A plain black view that hosts (and keeps sized) the stream's display layer.
+/// A plain black view that hosts (and keeps sized) the stream's display layer,
+/// plus the perf HUD mirrored from the iPad so the numbers are visible on the TV.
 private final class DisplayHostView: UIView {
     private weak var attached: AVSampleBufferDisplayLayer?
+    private let perfLabel = PaddedLabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        perfLabel.numberOfLines = 0
+        perfLabel.font = .monospacedSystemFont(ofSize: 15, weight: .semibold)
+        perfLabel.textColor = UIColor.white.withAlphaComponent(0.9)
+        perfLabel.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        perfLabel.layer.cornerRadius = 10
+        perfLabel.layer.masksToBounds = true
+        perfLabel.isHidden = true
+        addSubview(perfLabel)   // stays a subview → always above the raw video sublayer
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func attach(_ display: AVSampleBufferDisplayLayer) {
-        if attached === display { display.frame = bounds; return }
-        attached?.removeFromSuperlayer()
-        attached = display
+        // Re-add whenever the layer isn't OUR sublayer — not just when the
+        // identity differs. On a stream re-launch the layer was detached by
+        // `dismiss()` (removeFromSuperlayer) while `attached` still pointed at it;
+        // an identity-only check skipped addSublayer and the TV stayed black.
+        if display.superlayer !== layer {
+            attached?.removeFromSuperlayer()
+            layer.insertSublayer(display, at: 0)   // video under the perf label
+            attached = display
+        }
         display.frame = bounds
-        layer.addSublayer(display)
+    }
+
+    func setPerf(_ text: String?) {
+        perfLabel.text = text
+        perfLabel.isHidden = (text?.isEmpty ?? true)
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         attached?.frame = bounds
+        let inset: CGFloat = 28
+        let maxW = bounds.width - inset * 2
+        let fit = perfLabel.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
+        perfLabel.frame = CGRect(x: inset, y: inset,
+                                 width: min(fit.width, maxW), height: fit.height)
+    }
+}
+
+/// UILabel with text insets — for the perf HUD's padded, rounded background.
+private final class PaddedLabel: UILabel {
+    private let insets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+    override func drawText(in rect: CGRect) { super.drawText(in: rect.inset(by: insets)) }
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let inner = CGSize(width: size.width - insets.left - insets.right, height: size.height)
+        let s = super.sizeThatFits(inner)
+        return CGSize(width: s.width + insets.left + insets.right,
+                      height: s.height + insets.top + insets.bottom)
     }
 }
 #endif

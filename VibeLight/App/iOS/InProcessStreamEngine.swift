@@ -162,6 +162,7 @@ final class InProcessStreamEngine: StreamEngine {
     func disconnect() {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
         session = nil
@@ -373,6 +374,7 @@ final class InProcessStreamEngine: StreamEngine {
         statsTask?.cancel()
         statsTask = nil
         perfStats = nil
+        ExternalDisplay.shared.setPerfHUD(nil)   // clear the TV mirror too
         guard active, showPerfOverlay, let session else { return }
         statsTask = Task { [weak self, weak session] in
             var last = VLStreamStats()
@@ -419,14 +421,55 @@ final class InProcessStreamEngine: StreamEngine {
                 }
                 lines.append(String(format: "Dropped: %.1f%% (%d total)", dropPct, s.networkDroppedFrames))
                 self.perfStats = lines.joined(separator: "\n")
+                ExternalDisplay.shared.setPerfHUD(self.perfStats)   // mirror to the TV
             }
         }
+    }
+
+    // MARK: - Companion (iPad) idle dimming
+
+    /// While a TV owns the video, the iPad shows a "Playing on the display"
+    /// companion. It fades to black after 30 s with no touch so it isn't a
+    /// glowing rectangle in a dark room while you play on the TV with a
+    /// controller; any touch on the iPad wakes it. Only meaningful when a TV is
+    /// attached (the companion is the only thing that reads this).
+    private(set) var companionDimmed = false
+    @ObservationIgnored private var companionIdleTask: Task<Void, Never>?
+    @ObservationIgnored private var lastCompanionActivity = ContinuousClock.now
+
+    /// Any iPad touch during a stream — wakes the companion and defers the dim.
+    func noteCompanionActivity() {
+        lastCompanionActivity = .now
+        if companionDimmed { companionDimmed = false }
+    }
+
+    private func armCompanionIdle() {
+        companionIdleTask?.cancel()
+        companionDimmed = false
+        lastCompanionActivity = .now
+        companionIdleTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                let idle = self.lastCompanionActivity.duration(to: .now)
+                let secs = Double(idle.components.seconds)
+                    + Double(idle.components.attoseconds) / 1e18
+                if secs >= 30, !self.companionDimmed { self.companionDimmed = true }
+            }
+        }
+    }
+
+    private func cancelCompanionIdle() {
+        companionIdleTask?.cancel()
+        companionIdleTask = nil
+        companionDimmed = false
     }
 
     func quitCompletely(host: StreamHost) async {
         remoteQuitRequested = true
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
         session = nil
@@ -458,6 +501,7 @@ final class InProcessStreamEngine: StreamEngine {
             phase = .streaming(app)
             setStreamInput(active: true)
             setStatsHUD(active: true)
+            armCompanionIdle()   // start the iPad companion's 30 s dim timer
             // Announce the pad so the host materializes the virtual controller
             // before first input (games list it in controller menus right away).
             // Only when a pad is actually attached — announcing on a touch-only
@@ -474,6 +518,7 @@ final class InProcessStreamEngine: StreamEngine {
     fileprivate func handleFail(stage: MoonlightStage, error: Int) {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         phase = .failed("Stream failed at stage \(stage.rawValue) (error \(error)). Make sure the host is awake and not busy.")
     }
@@ -481,6 +526,7 @@ final class InProcessStreamEngine: StreamEngine {
     fileprivate func handleTerminated(error: Int) {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         // Remote termination only DELIVERS the callback — the connection's
         // receive threads and the audio unit keep running until LiStopConnection.

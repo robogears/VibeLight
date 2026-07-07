@@ -43,11 +43,16 @@ struct StreamView: UIViewRepresentable {
         private var pointerIds: [ObjectIdentifier: UInt32] = [:]
 
         func attach(_ display: AVSampleBufferDisplayLayer) {
-            guard attached !== display else { return }
-            attached?.removeFromSuperlayer()
-            attached = display
+            // Re-add whenever the layer isn't OUR sublayer — not just when the
+            // identity differs. After the external path removes the shared layer
+            // (removeFromSuperlayer), `attached` still points at it; an
+            // identity-only check would skip addSublayer and leave the iPad black.
+            if display.superlayer !== layer {
+                attached?.removeFromSuperlayer()
+                layer.addSublayer(display)
+                attached = display
+            }
             display.frame = bounds
-            layer.addSublayer(display)
         }
 
         override func layoutSubviews() {
@@ -69,6 +74,7 @@ struct StreamView: UIViewRepresentable {
 
         private func forward(_ touches: Set<UITouch>, phase: MoonlightTouchPhase) {
             guard let engine else { return }
+            engine.noteCompanionActivity()   // any touch wakes the iPad companion
             for touch in touches {
                 let allocate = (phase == .down)
                 guard let id = pointerId(for: touch, allocate: allocate) else { continue }

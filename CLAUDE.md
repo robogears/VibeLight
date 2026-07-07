@@ -193,8 +193,16 @@ both platforms behind the two `Core/Contracts.swift` seams (`StreamEngine`,
 `PlatformChrome`). Convention: AppKit/`Process`/macOS-only code is under
 `#if os(macOS)`. **Streaming is real on iOS**: in-process moonlight-common-c
 (H.264 to native res @ 120fps, Opus audio, full controller passthrough with a
-hold-Select+R1 leave chord, touch-as-input with native passthrough + mouse
-fallback, Moonlight-parity perf HUD, keep-awake, quit-on-exit). Remaining
+held Start+Select+LB+RB leave chord that shows a 2 s progress ring, touch-as-input
+with native passthrough + mouse fallback, Moonlight-parity perf HUD, keep-awake,
+quit-on-exit). **External display / TV output (SHIPPED, device-verified & loved):**
+when a TV/monitor is attached (`App/iOS/ExternalDisplay.swift`, a real
+`UIWindowScene`) the game streams to it at the display's NATIVE resolution while
+the iPad becomes a companion — an OLED-safe "Playing on X" panel that doubles as a
+trackpad and fades to black after 30 s idle (any touch wakes it). The idle launcher
+also renders ON the TV, super-sampled to ≥2× so it's crisp even on 1× 1080p panels
+(see `docs/STREAMING-STATUS.md`). Perf HUD mirrors to both iPad and TV. Setting:
+Video ▸ Use TV / Monitor (default on, auto-engages). Remaining
 roadmap lives in `docs/STREAMING-STATUS.md` (HEVC/HDR, rumble, frame pacing).
 `DisabledStreamEngine` remains only as the contracts stub for platforms without
 an engine. GPLv3 = no App Store; sideload via Xcode/AltStore.

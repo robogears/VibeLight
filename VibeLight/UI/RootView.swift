@@ -43,12 +43,18 @@ struct RootView: View {
                 // A TV is showing the video → the iPad keeps only the controls
                 // and acts as a trackpad (StreamView doesn't host the layer).
                 let onTV = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
+                // When the iPad companion has blacked out for the dark room, hide
+                // its lit controls too so the blackout is complete — a touch wakes
+                // everything back (companionDimmed → false).
+                let dimmedOnTV = onTV && state.session.companionDimmed
                 StreamView(layer: state.session.displayLayer, engine: state.session, hostsLayer: !onTV)
                     .ignoresSafeArea()
-                    .overlay { if onTV { ExternalDisplayPlaceholder() } }
+                    .overlay { if onTV { ExternalDisplayPlaceholder(dimmed: state.session.companionDimmed) } }
                     .overlay(alignment: .topLeading) {
                         // Performance HUD (Settings ▸ Advanced ▸ Performance Stats).
-                        if let stats = state.session.perfStats {
+                        // On the iPad it also mirrors to the TV; hidden while the
+                        // companion is dimmed (still shown on the TV).
+                        if let stats = state.session.perfStats, !dimmedOnTV {
                             Text(stats)
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.9))
@@ -64,14 +70,16 @@ struct RootView: View {
                     .overlay(alignment: .topTrailing) {
                         // Until input lands (Phase 4), a tappable way back out so
                         // the stream screen isn't a trap.
-                        Button { state.session.disconnect() } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
-                                .background(.black.opacity(0.45), in: Circle())
+                        if !dimmedOnTV {
+                            Button { state.session.disconnect() } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(.black.opacity(0.45), in: Circle())
+                            }
+                            .padding(24)
                         }
-                        .padding(24)
                     }
                     .overlay {
                         // Hold Start+Select+L1+R1 → leave-stream progress ring.
@@ -187,11 +195,32 @@ struct ExternalDisplayContent: View {
 /// while idle it just says "use your controller".
 private struct ExternalDisplayPlaceholder: View {
     var streaming = true
+    /// True after ~30 s idle while streaming: the companion fades to PURE black
+    /// (only the lit glow + text fade — the base black stays opaque so it still
+    /// hides the video underneath) so it isn't a glowing rectangle in a dark
+    /// room. Any touch wakes it (see `noteCompanionActivity`).
+    var dimmed = false
 
     var body: some View {
-        // OLED-friendly: mostly black with a dim glow that slowly roams into the
-        // corners, and the content itself gently drifts — so no bright pixel
-        // stays lit in one place for the whole (possibly hours-long) session.
+        ZStack {
+            Color.black   // always opaque — hides the video underneath on the iPad
+            if !dimmed {
+                driftingContent
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.8), value: dimmed)
+        .contentShape(Rectangle())
+        // Streaming → pass touches through to the trackpad (they also wake the
+        // companion); idle → consume them so the hidden launcher can't be poked.
+        .allowsHitTesting(!streaming)
+        .ignoresSafeArea()
+    }
+
+    // OLED-friendly: a dim glow slowly roams into the corners and the content
+    // gently drifts — so no bright pixel stays lit in one place for the whole
+    // (possibly hours-long) session.
+    private var driftingContent: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             let dx = CGFloat(sin(t * 0.06))                 // slow, ~100 s period
@@ -225,11 +254,6 @@ private struct ExternalDisplayPlaceholder: View {
                 .offset(x: dx * 40, y: dy * 34)             // content drifts gently too
             }
         }
-        .contentShape(Rectangle())
-        // Streaming → pass touches through to the trackpad; idle → consume them
-        // so the hidden launcher underneath can't be poked.
-        .allowsHitTesting(!streaming)
-        .ignoresSafeArea()
     }
 }
 #endif
