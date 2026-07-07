@@ -188,6 +188,12 @@ private struct ExternalDisplayPlaceholder: View {
                                : "Use your controller to navigate on the big screen.")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
+                if let geometry = ExternalDisplay.shared.geometrySummary {
+                    Text(geometry)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                        .padding(.top, 4)
+                }
             }
         }
         .contentShape(Rectangle())

@@ -25,6 +25,9 @@ final class ExternalDisplay {
     private(set) var name = "the display"
     /// The external display's native pixel size — what the stream targets.
     private(set) var pixelSize: CGSize?
+    /// Human-readable geometry the OS reports for the display (pixels, points,
+    /// scale) — shown on the companion screen so the exact numbers are visible.
+    private(set) var geometrySummary: String?
 
     @ObservationIgnored private var window: UIWindow?
     @ObservationIgnored private var streamHost: DisplayHostView?
@@ -78,10 +81,13 @@ final class ExternalDisplay {
         self.streamHost = host
         self.streamVC = streamVC
         let scale = ws.traitCollection.displayScale
-        self.pixelSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        let px = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        self.pixelSize = px
         self.name = "the display"
         self.isConnected = true
-        NSLog("[VibeLight] external display connected: \(Int(bounds.width))×\(Int(bounds.height)) pt @\(scale)x")
+        self.geometrySummary =
+            "\(Int(px.width))×\(Int(px.height)) px  ·  \(Int(bounds.width))×\(Int(bounds.height)) pt @\(scale.clean)×"
+        NSLog("[VibeLight] external display connected: \(self.geometrySummary!)")
 
         // Mid-stream connect → show the video; otherwise the launcher.
         if let layer = streamLayer {
@@ -102,6 +108,7 @@ final class ExternalDisplay {
         streamVC = nil
         launcherVC = nil
         pixelSize = nil
+        geometrySummary = nil
         isConnected = false
     }
 
@@ -133,6 +140,13 @@ final class ExternalDisplay {
         let vc = UIViewController()
         vc.view.backgroundColor = .black
         return vc
+    }
+}
+
+private extension CGFloat {
+    /// "2" not "2.0", "1.5" stays "1.5" — for the @Nx scale readout.
+    var clean: String {
+        self == rounded() ? String(Int(self)) : String(format: "%.1f", Double(self))
     }
 }
 
