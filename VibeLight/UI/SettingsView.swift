@@ -34,6 +34,7 @@ struct SettingsView: View {
                         // Background row, so the choice is something you SEE.
                         if state.settingsTab == .themes {
                             ThemePreviewStrip()
+                                .padding(.top, 56)      // sit a touch lower — less top-heavy
                                 .padding(.bottom, 8)
                         }
                         ForEach(state.settingsTab.rows, id: \.rawValue) { row in
