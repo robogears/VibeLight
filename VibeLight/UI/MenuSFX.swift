@@ -44,11 +44,13 @@ final class MenuSFX {
         // resolve (E5 → G#4 → G#5), ~200 ms. Unmistakably the reboot cue.
         buffers[.restart] = Self.blip(
             segments: [(659.3, 0.05), (415.3, 0.05), (830.6, 0.10)], gain: 0.20, format: format)
-        // launch: a warm rising arrival (C4 → E4 → G4 → C5), ~450 ms, fuller and
-        // a touch louder — the "welcome in" swell as setup hands off to the app.
+        // launch: a long cinematic "arrival" — a C-major run climbing two octaves
+        // (C4 → E4 → G4 → C5 → E5 → G5) then a sustained bell that rings out,
+        // ~1.7 s. Plays under the setup finale's VibeLight wordmark reveal.
         buffers[.launch] = Self.blip(
-            segments: [(261.6, 0.09), (329.6, 0.09), (392.0, 0.09), (523.3, 0.19)],
-            gain: 0.26, format: format)
+            segments: [(261.6, 0.14), (329.6, 0.14), (392.0, 0.14),
+                       (523.3, 0.14), (659.3, 0.14), (784.0, 1.0)],
+            gain: 0.27, format: format)
     }
 
     func play(_ effect: Effect) {

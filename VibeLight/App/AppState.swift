@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 4
+    static let requiredSetupVersion = 5
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
