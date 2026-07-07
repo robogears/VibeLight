@@ -131,6 +131,14 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
                       rightStickX:(int16_t)rightStickX
                       rightStickY:(int16_t)rightStickY;
 
+/// Forwards one hardware-keyboard key change to the host (LiSendKeyboardEvent).
+/// `keyCode` is a Windows virtual-key code; `modifiers` is the MODIFIER_* mask
+/// of currently-held modifier keys. No-op when this session isn't the active
+/// connection.
+- (void)sendKeyboardEvent:(int16_t)keyCode
+                     down:(BOOL)down
+                modifiers:(uint8_t)modifiers;
+
 @end
 
 NS_ASSUME_NONNULL_END

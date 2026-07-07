@@ -95,8 +95,10 @@ delivery in-stream (disable system gestures on the pad while streaming).
 2. Client-driven virtual display (host makes a display matching the client) —
    Apollo's headline differentiator; VibeLight already sends res/fps in /launch.
 3. "Match current display" auto stream-mode (macOS side; iOS already native).
-4. iOS keyboard — virtual + hardware passthrough (killer combo with WoL: the
-   Windows login prompt after wake).
+4. iOS keyboard — ✅ HARDWARE passthrough DONE (`Input/KeyboardMap.swift`,
+   `ControllerManager.keyboardForwarder`, `MoonlightSession.sendKeyboardEvent`:
+   GCKeyboard raw keys → Windows VK codes via LiSendKeyboardEvent while
+   streaming; held keys released on leave). Virtual/on-screen keyboard still TODO.
 5. ✅ iPad → external display at native res — DONE (above).
 6. In-stream touch-mode switcher (direct / trackpad / off, mid-session).
 7. Surface Apollo per-client tier (permissions, input-only, connect/disconnect

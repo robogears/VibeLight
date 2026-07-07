@@ -243,8 +243,11 @@ final class InProcessStreamEngine: StreamEngine {
         guard let cm = controllerSource else { return }
         if active {
             electedPad = nil
+            keyboardModifiers = 0
+            heldKeys.removeAll()
             setSystemGestures(disabled: true)
             cm.streamForwarder = { [weak self] pad in self?.forward(pad) }
+            cm.keyboardForwarder = { [weak self] code, pressed in self?.forwardKey(code, pressed: pressed) }
             cm.onPadDisconnected = { [weak self] in
                 // Release everything host-side — the vanished pad's last
                 // snapshot stays latched in the game otherwise.
@@ -254,11 +257,38 @@ final class InProcessStreamEngine: StreamEngine {
                 self?.electedPad = nil   // re-elect on the next input
             }
         } else if cm.streamForwarder != nil {
+            releaseHeldKeys()            // no keys stuck down in the game on leave
             cm.streamForwarder = nil
+            cm.keyboardForwarder = nil
             cm.onPadDisconnected = nil
             cancelQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
         }
+    }
+
+    // MARK: - Keyboard → stream forwarding
+
+    /// MODIFIER_* mask of currently-held modifier keys, sent with every event.
+    @ObservationIgnored private var keyboardModifiers: UInt8 = 0
+    /// Virtual-key codes currently held down, so a stream that ends mid-keypress
+    /// can release them (the host latches the last state otherwise).
+    @ObservationIgnored private var heldKeys: Set<Int16> = []
+
+    private func forwardKey(_ code: GCKeyCode, pressed: Bool) {
+        guard let session, let vk = KeyboardMap.virtualKey(for: code) else { return }
+        if let bit = KeyboardMap.modifierBit(for: code) {
+            if pressed { keyboardModifiers |= bit } else { keyboardModifiers &= ~bit }
+        }
+        if pressed { heldKeys.insert(vk) } else { heldKeys.remove(vk) }
+        session.sendKeyboardEvent(vk, down: pressed, modifiers: keyboardModifiers)
+    }
+
+    private func releaseHeldKeys() {
+        if let session {
+            for vk in heldKeys { session.sendKeyboardEvent(vk, down: false, modifiers: 0) }
+        }
+        heldKeys.removeAll()
+        keyboardModifiers = 0
     }
 
     /// 0…1 fill of the hold-to-leave combo ring (nil = not holding). RootView

@@ -344,6 +344,11 @@ static void ArCleanup(void);
                                leftStickX, leftStickY, rightStickX, rightStickY);
 }
 
+- (void)sendKeyboardEvent:(int16_t)keyCode down:(BOOL)down modifiers:(uint8_t)modifiers {
+    if (sActive != self) return;
+    LiSendKeyboardEvent(keyCode, down ? KEY_ACTION_DOWN : KEY_ACTION_UP, (char)modifiers);
+}
+
 // MARK: - Delegate marshalling (called from C callbacks below, on the main queue)
 
 - (void)notifyStage:(MoonlightStage)stage {

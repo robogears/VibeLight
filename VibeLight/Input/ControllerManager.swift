@@ -82,6 +82,27 @@ final class ControllerManager {
         }
     }
 
+    /// Stream keyboard passthrough. While non-nil, every hardware-keyboard key
+    /// change is forwarded raw to this closure (GCKeyCode, isPressed) — the
+    /// stream owns the keyboard. Installed on the coalesced keyboard, and
+    /// re-installed when a keyboard connects mid-stream (see `wireKeyboard`).
+    @ObservationIgnored var keyboardForwarder: (@MainActor (GCKeyCode, Bool) -> Void)? {
+        didSet { wireKeyboard() }
+    }
+
+    /// Install (or clear) the raw key handler on the coalesced hardware keyboard.
+    private func wireKeyboard() {
+        guard let keyboard = GCKeyboard.coalesced else { return }
+        keyboard.handlerQueue = .main   // deliver on main, like controllers
+        if let forward = keyboardForwarder {
+            keyboard.keyboardInput?.keyChangedHandler = { _, _, keyCode, pressed in
+                MainActor.assumeIsolated { forward(keyCode, pressed) }
+            }
+        } else {
+            keyboard.keyboardInput?.keyChangedHandler = nil
+        }
+    }
+
     // MARK: - Tuning (values from docs/research/swiftui-bigpicture.md)
 
     private enum Tuning {
@@ -195,6 +216,10 @@ final class ControllerManager {
             self?.updateGlyphStyle()
             self?.rebuildHapticsEngine()
         }
+        // A hardware keyboard connected/disconnected — (re)install the raw key
+        // handler so mid-stream keyboard hot-plug forwards to the host.
+        observe(.GCKeyboardDidConnect) { [weak self] in self?.wireKeyboard() }
+        observe(.GCKeyboardDidDisconnect) { [weak self] in self?.wireKeyboard() }
         // CRITICAL: releases are dropped while we are backgrounded (the
         // stream/OS owns the foreground), so any held/repeat state from before
         // the handoff is stale. Without this reset, a d-pad held across the
