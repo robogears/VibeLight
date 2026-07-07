@@ -12,7 +12,11 @@ struct HomeView: View {
             .overlay(alignment: .trailing) {
                 PresetRail()
                     .padding(.trailing, 40)
+                    .introReveal(state.intro.arrived(LaunchIntro.late), y: 0, blur: 8)
             }
+            // The launch deal-in plays the first time home appears (once per app
+            // launch; a no-op after that — see LaunchIntro).
+            .onAppear { state.intro.begin() }
     }
 
     private var content: some View {
@@ -20,6 +24,7 @@ struct HomeView: View {
             HeaderBar()
                 .padding(.horizontal, 72)
                 .padding(.top, 48)
+                .introReveal(state.intro.arrived(LaunchIntro.header), y: -14)   // drops in from the top
 
             Spacer(minLength: 0)
 
@@ -51,6 +56,7 @@ struct HomeView: View {
             .frame(height: 110, alignment: .leading)
             .padding(.horizontal, 72)
             .animation(Theme.focusSpring, value: state.focus.focusedItemID)
+            .introReveal(state.intro.arrived(LaunchIntro.hero), y: 12)
 
             AppShelf()
                 .padding(.top, 18)
@@ -60,6 +66,7 @@ struct HomeView: View {
             HintBarView()
                 .padding(.horizontal, 72)
                 .padding(.bottom, 36)
+                .introReveal(state.intro.arrived(LaunchIntro.late), y: 10)
         }
     }
 }
@@ -212,9 +219,10 @@ private struct AppShelf: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 28) {
-                    ForEach(state.apps) { app in
+                    ForEach(Array(state.apps.enumerated()), id: \.element.id) { index, app in
                         AppTileView(app: app)
                             .id("app:\(state.appKey(app))")
+                            .introReveal(state.intro.tileArrived(index))   // left→right cascade
                     }
                 }
                 .padding(.leading, 72)

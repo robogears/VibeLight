@@ -49,6 +49,8 @@ final class AppState {
     #endif
     let focus = FocusEngine()
     let controller = ControllerManager()
+    /// The launch deal-in intro (plays once per app launch; see `LaunchIntro`).
+    let intro = LaunchIntro()
     let updateService = UpdateService()
     /// Console-style menu sounds (focus tick / confirm / back).
     @ObservationIgnored let sfx = MenuSFX()
@@ -396,6 +398,7 @@ final class AppState {
         }
         controller.onInputActivity = { [weak self] mode in
             guard let self else { return }
+            self.intro.skip()   // any controller/keyboard/mouse input ends the intro
             if mode == .directed {
                 // Console mode: cursor vanishes until the mouse moves again
                 // (the OS auto-reveals it on movement — no unhide bookkeeping).
@@ -1109,6 +1112,7 @@ final class AppState {
     /// exactly what was clicked, then activate it — so a click always hits the
     /// button under the cursor, never whatever the controller last focused.
     func pointerSelect(_ id: String) {
+        intro.skip()   // a tap/click ends the launch intro too
         if inputMode != .pointer { inputMode = .pointer }
         focus.focus(itemID: id)
         route(.select)

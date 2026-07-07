@@ -11,6 +11,9 @@ struct AppTileView: View {
     private var focusID: String { "app:\(state.appKey(app))" }
     // Not "focused" while the preset rail owns focus — avoids two highlights.
     private var isFocused: Bool { state.focus.focusedItemID == focusID && !state.isPresetRailActive }
+    // During the launch deal-in the focus ring holds off until the shelf has
+    // finished dealing, so it "lands" last. After the intro this equals isFocused.
+    private var showFocus: Bool { isFocused && state.intro.focusReady }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -20,24 +23,24 @@ struct AppTileView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 14)
                         .strokeBorder(
-                            isFocused ? Theme.accent : .white.opacity(0.08),
-                            lineWidth: isFocused ? 3 : 1
+                            showFocus ? Theme.accent : .white.opacity(0.08),
+                            lineWidth: showFocus ? 3 : 1
                         )
                 }
                 .shadow(
-                    color: isFocused ? Theme.accentGlow : .black.opacity(0.5),
-                    radius: isFocused ? 24 : 10,
-                    y: isFocused ? 6 : 4
+                    color: showFocus ? Theme.accentGlow : .black.opacity(0.5),
+                    radius: showFocus ? 24 : 10,
+                    y: showFocus ? 6 : 4
                 )
 
             Text(app.name)
-                .font(.system(size: 15, weight: isFocused ? .bold : .medium, design: .rounded))
-                .foregroundStyle(isFocused ? Theme.textPrimary : Theme.textSecondary)
+                .font(.system(size: 15, weight: showFocus ? .bold : .medium, design: .rounded))
+                .foregroundStyle(showFocus ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 210)
         }
-        .scaleEffect(isFocused ? 1.11 : 1.0)
-        .animation(Theme.focusSpring, value: isFocused)
+        .scaleEffect(showFocus ? 1.11 : 1.0)
+        .animation(Theme.focusSpring, value: showFocus)
         .onHover { hovering in
             // Hover only steals focus in pointer mode — otherwise tiles
             // scrolling under a parked cursor would fight the controller.
