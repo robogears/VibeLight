@@ -83,6 +83,7 @@ private struct WelcomeStep: View {
         .opacity(shown ? 1 : 0)
         .blur(radius: shown ? 0 : (reduceMotion ? 0 : 8))
         .onAppear {
+            state.beginOnboardingSession()   // snapshot preset state for step-skipping
             state.playQuack()   // 🦆 hello
             withAnimation(LaunchIntro.reveal) { shown = true }
             // Hold the moment, then hand off to the first step. The step change
@@ -362,10 +363,13 @@ private struct OnboardingButton: View {
     }
 }
 
-/// Progress dots for the content steps (theme … finish).
+/// Progress dots for the content steps actually shown (skipped steps drop out).
 private struct OnboardingPips: View {
+    @Environment(AppState.self) private var state
     let step: OnboardingStep
-    private var steps: [OnboardingStep] { [.theme, .quality, .presets, .finish] }
+    private var steps: [OnboardingStep] {
+        [.theme, .quality, .presets, .finish].filter { !state.shouldSkipStep($0) }
+    }
 
     var body: some View {
         HStack(spacing: 10) {

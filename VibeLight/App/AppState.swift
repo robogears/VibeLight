@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 7
+    static let requiredSetupVersion = 8
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -1175,13 +1175,27 @@ final class AppState {
         performSaveToSlot(0)
     }
 
-    /// Advance to the next wizard step, or finish on the last one. The presets
-    /// tutorial is skipped for users who already have presets.
+    /// Whether the user already had presets when the wizard started. Captured
+    /// once (not live) so seeding Preset 1 mid-flow for a fresh user doesn't
+    /// retroactively change which steps are skipped or the progress pips.
+    private(set) var onboardingHadPresets = false
+
+    /// Call when the wizard opens (welcome appears) to snapshot preset state.
+    func beginOnboardingSession() { onboardingHadPresets = hasAnyPreset }
+
+    /// Steps skipped for users who already have presets — they've clearly set up
+    /// their quality before, so the stream-quality AND presets-tutorial steps are
+    /// both redundant. Fresh users (no presets) see the full flow.
+    func shouldSkipStep(_ step: OnboardingStep) -> Bool {
+        (step == .quality || step == .presets) && onboardingHadPresets
+    }
+
+    /// Advance to the next wizard step (hopping over any skipped ones), or finish.
     func advanceOnboarding() {
         guard let step = onboardingStep else { return }
         sfx.play(step == .finish ? .quack : .select)   // quack on "Jump in"
         var raw = step.rawValue + 1
-        if OnboardingStep(rawValue: raw) == .presets, hasAnyPreset { raw += 1 }
+        while let s = OnboardingStep(rawValue: raw), shouldSkipStep(s) { raw += 1 }
         if let next = OnboardingStep(rawValue: raw) {
             onboardingStep = next   // view layer animates the step transition
         } else {
@@ -1192,7 +1206,7 @@ final class AppState {
     func backOnboarding() {
         guard let step = onboardingStep else { return }
         var raw = step.rawValue - 1
-        if OnboardingStep(rawValue: raw) == .presets, hasAnyPreset { raw -= 1 }
+        while let s = OnboardingStep(rawValue: raw), shouldSkipStep(s) { raw -= 1 }
         guard let prev = OnboardingStep(rawValue: raw) else { return }
         sfx.play(.back)
         onboardingStep = prev
