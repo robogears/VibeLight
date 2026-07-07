@@ -185,7 +185,7 @@ final class AppState {
 
     /// The launcher background style (Settings ▸ Themes). Global appearance pref,
     /// stored on its own key so it's NOT captured into per-session stream presets.
-    var backgroundTheme: BackgroundTheme = .ambient {
+    var backgroundTheme: BackgroundTheme = .parallaxDeep {
         didSet {
             guard oldValue != backgroundTheme else { return }
             UserDefaults.standard.set(backgroundTheme.rawValue, forKey: Self.backgroundThemeKey)
