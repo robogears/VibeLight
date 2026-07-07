@@ -30,9 +30,12 @@ moonlight-common-c C core for iOS.
   (device arm64 + universal simulator slices). Run it once before the first
   iOS build; mbedTLS's TLS layer does NOT build for iOS — only the `mbedcrypto`
   target is used.
-- Finder sometimes drops numbered `Info 2.plist` duplicates into `VibeLight/`;
-  they break the build with ghost pbxproj references. They're gitignored —
-  delete any strays and regenerate.
+- Finder sometimes drops numbered duplicates into `VibeLight/` — not just
+  `Info 2.plist` but also source copies like `AppState 2.swift`; the `.swift`
+  ones cause "invalid redeclaration" / "ambiguous use" errors (two copies of the
+  same types). They're gitignored — before building, delete any strays and
+  regenerate: `find VibeLight -name "* [0-9].swift" -delete; find VibeLight -name
+  "Info [0-9].plist" -delete`.
 
 Swift 6 strict concurrency is ON everywhere. macOS 15+ / iOS 17+ targets. No
 sandbox on macOS (we exec the stream helper and read Moonlight's plist).
