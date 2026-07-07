@@ -133,6 +133,13 @@ targets:
         GCSupportsControllerUserInteraction: true
         UILaunchScreen: {}
         UIRequiresFullScreen: true
+        # Opt into multiple scenes so iOS creates an EXTERNAL-DISPLAY scene when a
+        # TV/monitor is attached (ExternalDisplay renders the stream there at the
+        # display's native resolution). No UISceneConfigurations key — SwiftUI's
+        # WindowGroup still provides the primary scene; UIRequiresFullScreen keeps
+        # the iPad from opening Split-View second windows.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
         UIStatusBarHidden: true
         UIViewControllerBasedStatusBarAppearance: false
         # Landscape-only on both iPhone and iPad (big-picture UI is horizontal).
