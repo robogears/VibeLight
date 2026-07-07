@@ -149,13 +149,19 @@ struct LauncherContent: View {
 struct ExternalDisplayContent: View {
     @Environment(AppState.self) private var state
 
+    /// TV design canvas. The iPad's effective canvas is ~1536 wide; a SMALLER
+    /// one makes tiles/text read larger from the couch, but it must stay wide
+    /// enough that the launcher's landscape layout (header row, shelf, preset
+    /// rail) doesn't crowd — 1280 was too narrow (that was the "misaligned").
+    /// External displays are @2× (Retina headroom), so this stays sharp at 4K:
+    /// a 1440-pt canvas rasterizes at 2880 px and upscales only ~1.3× to 3840.
+    /// One-line tunable — smaller = bigger icons.
+    private static let tvDesign = CGSize(width: 1440, height: 810)
+
     var body: some View {
         GeometryReader { geo in
-            // Render the launcher in a canvas sized to the display's ACTUAL
-            // point size (÷ scale) so it rasterizes at the TV's native
-            // resolution — sharp on 4K, not a 720p upscale. Same fit rule as the
-            // iPad (uiScale), so element proportions and alignment match.
-            let scale = RootView.uiScale(for: geo.size)
+            let scale = max(min(geo.size.width / tvDesign.width,
+                                geo.size.height / tvDesign.height), 0.4)
             LauncherContent()
                 .frame(width: geo.size.width / scale, height: geo.size.height / scale,
                        alignment: .topLeading)
