@@ -255,8 +255,49 @@ final class InProcessStreamEngine: StreamEngine {
         } else if cm.streamForwarder != nil {
             cm.streamForwarder = nil
             cm.onPadDisconnected = nil
+            cancelQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
         }
+    }
+
+    /// 0…1 fill of the hold-to-leave combo ring (nil = not holding). RootView
+    /// renders `HoldProgressRing` from this.
+    private(set) var streamQuitProgress: Double?
+    @ObservationIgnored private var quitHoldTask: Task<Void, Never>?
+
+    /// Drives the ~2s leave-stream hold: publishes ring progress after a short
+    /// grace (so a quick brush never flashes it), then leaves when it completes.
+    private func startQuitHold() {
+        guard quitHoldTask == nil else { return }
+        let start = ContinuousClock.now
+        quitHoldTask = Task { @MainActor [weak self] in
+            let grace = 0.2, total = 2.0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(40))
+                guard let self, !Task.isCancelled else { return }
+                let d = start.duration(to: .now)
+                let elapsed = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+                if elapsed >= total {
+                    quitHoldTask = nil
+                    streamQuitProgress = nil
+                    // Release everything host-side, then leave (game keeps running).
+                    session?.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
+                                                       leftStickX: 0, leftStickY: 0,
+                                                       rightStickX: 0, rightStickY: 0)
+                    disconnect()
+                    return
+                }
+                if elapsed >= grace {
+                    streamQuitProgress = min(max((elapsed - grace) / (total - grace), 0), 1)
+                }
+            }
+        }
+    }
+
+    private func cancelQuitHold() {
+        quitHoldTask?.cancel()
+        quitHoldTask = nil
+        if streamQuitProgress != nil { streamQuitProgress = nil }
     }
 
     private func forward(_ pad: GCExtendedGamepad) {
@@ -298,22 +339,16 @@ final class InProcessStreamEngine: StreamEngine {
             flags |= 0x0010
         }
 
-        // Official Moonlight leave-stream combo — same as the desktop client:
-        // Start + Select/Share + L1 + R1 pressed together, fired instantly. All
-        // four at once is deliberate enough to never happen mid-game, so no hold
-        // or ring (matches Mac exactly). The game keeps running on the PC.
+        // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~2s (with a
+        // progress ring, like the launcher's hold-to-quit) so it's deliberate and
+        // gives feedback. While held, the buttons are suppressed (not forwarded
+        // to the game). The game keeps running on the PC.
         let quitCombo: Int32 = 0x0010 | 0x0020 | 0x0100 | 0x0200   // START|BACK|LB|RB
         if flags == quitCombo {
-            // Release everything host-side so the game isn't left with the combo
-            // stuck down, then leave. Defer the teardown out of this pad-handler
-            // invocation — disconnect() rewires (and releases) the very handler
-            // executing right now.
-            session.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
-                                              leftStickX: 0, leftStickY: 0,
-                                              rightStickX: 0, rightStickY: 0)
-            Task { @MainActor [weak self] in self?.disconnect() }
-            return
+            startQuitHold()
+            return   // don't forward the combo to the game while it's held
         }
+        cancelQuitHold()   // any other input aborts a pending hold
 
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
         session.sendControllerButtonFlags(

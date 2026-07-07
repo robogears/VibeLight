@@ -3,7 +3,8 @@
 **✅ SHIPPED & DEVICE-VERIFIED (2026-07-06):** in-process streaming on iPad works
 end-to-end — video (native 2752×2064@120 over a Tailscale DERP relay), game
 audio (Opus → RemoteIO), and controller input (full pad forwarding + the
-Start+Select+LB+RB quit chord). Perf HUD via Settings ▸ Advanced ▸ Performance
+Start+Select+LB+RB leave-stream chord — held ~2s with a progress ring, like the
+launcher's hold-to-quit). Perf HUD via Settings ▸ Advanced ▸ Performance
 Stats. User settings pass through uncapped; a too-hot profile over a relay
 shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 

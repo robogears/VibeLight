@@ -73,6 +73,13 @@ struct RootView: View {
                         }
                         .padding(24)
                     }
+                    .overlay {
+                        // Hold Start+Select+L1+R1 → leave-stream progress ring.
+                        if let p = state.session.streamQuitProgress {
+                            HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
+                                .transition(.opacity)
+                        }
+                    }
                     .transition(.opacity)
             }
         }
@@ -180,26 +187,40 @@ private struct ExternalDisplayPlaceholder: View {
     var streaming = true
 
     var body: some View {
-        ZStack {
-            Color.black
-            VStack(spacing: 16) {
-                Image(systemName: "tv")
-                    .font(.system(size: 54, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                Text(streaming ? "Playing on \(ExternalDisplay.shared.name)"
-                               : "VibeLight is on \(ExternalDisplay.shared.name)")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(streaming ? "This screen is a trackpad — drag to move the cursor."
-                               : "Use your controller to navigate on the big screen.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                if let geometry = ExternalDisplay.shared.geometrySummary {
-                    Text(geometry)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                        .padding(.top, 4)
+        // OLED-friendly: mostly black with a dim glow that slowly roams into the
+        // corners, and the content itself gently drifts — so no bright pixel
+        // stays lit in one place for the whole (possibly hours-long) session.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let dx = CGFloat(sin(t * 0.06))                 // slow, ~100 s period
+            let dy = CGFloat(cos(t * 0.045))
+            ZStack {
+                Color.black
+                RadialGradient(colors: [Theme.accent.opacity(0.12), .clear],
+                               center: .center, startRadius: 0, endRadius: 520)
+                    .offset(x: dx * 180, y: dy * 140)       // the glow roams widely
+                    .blendMode(.plusLighter)
+
+                VStack(spacing: 16) {
+                    Image(systemName: "tv")
+                        .font(.system(size: 54, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                    Text(streaming ? "Playing on \(ExternalDisplay.shared.name)"
+                                   : "VibeLight is on \(ExternalDisplay.shared.name)")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(streaming ? "This screen is a trackpad — drag to move the cursor."
+                                   : "Use your controller to navigate on the big screen.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    if let geometry = ExternalDisplay.shared.geometrySummary {
+                        Text(geometry)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            .padding(.top, 4)
+                    }
                 }
+                .offset(x: dx * 40, y: dy * 34)             // content drifts gently too
             }
         }
         .contentShape(Rectangle())
