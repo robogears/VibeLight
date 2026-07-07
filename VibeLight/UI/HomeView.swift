@@ -15,8 +15,9 @@ struct HomeView: View {
                     .introReveal(state.intro.arrived(LaunchIntro.late), y: 0, blur: 8)
             }
             // The launch deal-in plays the first time home appears (once per app
-            // launch; a no-op after that — see LaunchIntro).
-            .onAppear { state.intro.begin() }
+            // launch; a no-op after that — see LaunchIntro). Skipped during the
+            // first-run setup wizard; `completeSetup` fires it right after.
+            .onAppear { if !state.isOnboarding { state.intro.begin() } }
     }
 
     private var content: some View {

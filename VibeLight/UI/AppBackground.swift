@@ -44,6 +44,36 @@ struct AmbientBackground: View {
     }
 }
 
+/// A selectable theme preview card — a live thumbnail of the real background +
+/// its name, with an accent ring + lift when selected. Reused by the setup
+/// wizard and Settings ▸ Themes so users SEE each theme, not just a label.
+struct ThemeCard: View {
+    let theme: BackgroundTheme
+    var selected: Bool = false
+    var width: CGFloat = 220
+
+    var body: some View {
+        VStack(spacing: 10) {
+            AppBackground(theme: theme)
+                .allowsHitTesting(false)
+                .frame(width: width, height: width * 9 / 16)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(selected ? Theme.accent : .white.opacity(0.1),
+                                      lineWidth: selected ? 3 : 1)
+                }
+                .shadow(color: selected ? Theme.accentGlow : .black.opacity(0.4),
+                        radius: selected ? 20 : 8, y: 5)
+            Text(theme.title)
+                .font(.system(size: 16, weight: selected ? .bold : .medium, design: .rounded))
+                .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+        }
+        .scaleEffect(selected ? 1.04 : 1.0)
+        .animation(Theme.focusSpring, value: selected)
+    }
+}
+
 /// "Diagonal Drift": near-black with flat diagonal stripes that slowly crawl
 /// across the screen. FLAT on purpose — a single solid stripe with no bevel or
 /// sheen, so it reads painted/cartoony rather than brushed-metal. A

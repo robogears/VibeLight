@@ -112,6 +112,17 @@ struct RootView: View {
         // updates `placement` on attach + cross-screen moves + display churn.
         .background(ScenePlacementProbe(placement: placement))
         #endif
+        // First-run setup wizard — unskippable, over everything (both platforms).
+        // Input is already gated to it in AppState.route while a step is active.
+        .overlay {
+            ZStack {
+                if let step = state.onboardingStep {
+                    OnboardingFlow(step: step)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.4), value: state.onboardingStep)
+        }
     }
 
     /// The scale that maps the design canvas onto the real window. The UI is

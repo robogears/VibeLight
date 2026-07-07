@@ -30,6 +30,12 @@ enum Overlay: Equatable {
     case confirmSwitchStream(running: String, target: StreamApp)  // host busy — switch to target?
 }
 
+/// First-run setup wizard steps (see `OnboardingFlow`). Unskippable; shown once
+/// until `hasCompletedSetup`, and re-triggerable from Settings ▸ Restart Setup.
+enum OnboardingStep: Int, CaseIterable, Equatable {
+    case welcome, theme, quality, presets, finish
+}
+
 /// The composition root: owns every module, routes navigation events, and
 /// exposes observable state the views render from. All UI decisions flow
 /// through `route(_:)` so controller, keyboard, and mouse behave identically.
@@ -185,6 +191,23 @@ final class AppState {
         }
     }
 
+    // MARK: First-run setup wizard
+
+    /// The current setup-wizard step, or nil when the launcher is live. Non-nil
+    /// gates ALL input into `routeOnboarding` (see `route`), so it can't be
+    /// skipped or bypassed into the launcher.
+    private(set) var onboardingStep: OnboardingStep?
+    /// Which quality control (resolution / fps / bitrate) is focused on the
+    /// quality step (0…2).
+    private(set) var onboardingQualityFocus = 0
+    /// Set once the user finishes (or a fresh install hasn't). Persisted so the
+    /// wizard shows exactly once — a NEW key, so every existing user sees it once
+    /// after this update too.
+    private var hasCompletedSetup = false
+    /// The three quality controls the wizard asks about, in order.
+    let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
+    var isOnboarding: Bool { onboardingStep != nil }
+
     /// Settings rows currently adjustable via left/right (vList doesn't consume
     /// horizontal moves — that's how value adjustment works).
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -223,6 +246,7 @@ final class AppState {
 
     private static let settingsKey = "vibelight.streamSettings"
     private static let backgroundThemeKey = "vibelight.backgroundTheme"
+    private static let setupCompleteKey = "vibelight.setupComplete.v1"
 
     // MARK: - Boot
 
@@ -263,6 +287,10 @@ final class AppState {
            let theme = BackgroundTheme(rawValue: raw) {
             backgroundTheme = theme   // didSet doesn't fire during init
         }
+        // First run (or first launch after this update — a fresh key) → the
+        // unskippable setup wizard.
+        hasCompletedSetup = UserDefaults.standard.bool(forKey: Self.setupCompleteKey)
+        if !hasCompletedSetup { onboardingStep = .welcome }
 
         importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
         addedHosts = Self.loadAddedHosts()
@@ -1132,7 +1160,85 @@ final class AppState {
         route(.select)
     }
 
+    // MARK: - Onboarding
+
+    /// Advance to the next wizard step, or finish on the last one.
+    func advanceOnboarding() {
+        guard let step = onboardingStep else { return }
+        sfx.play(.select)
+        if let next = OnboardingStep(rawValue: step.rawValue + 1) {
+            onboardingStep = next   // view layer animates the step transition
+        } else {
+            completeSetup()
+        }
+    }
+
+    func backOnboarding() {
+        guard let step = onboardingStep, let prev = OnboardingStep(rawValue: step.rawValue - 1) else { return }
+        sfx.play(.back)
+        onboardingStep = prev
+    }
+
+    /// Finish: persist so the wizard never shows again, and hand off to the
+    /// launcher (which plays its own deal-in intro right after).
+    func completeSetup() {
+        hasCompletedSetup = true
+        UserDefaults.standard.set(true, forKey: Self.setupCompleteKey)
+        onboardingStep = nil
+        intro.begin()   // now play the launcher deal-in (skipped while setup showed)
+    }
+
+    /// Settings ▸ Restart Setup — replay the wizard from the top.
+    func restartSetup() {
+        onboardingQualityFocus = 0
+        screen = .home
+        overlay = nil
+        onboardingStep = .welcome
+    }
+
+    /// Touch: focus a specific quality control on the wizard's quality step.
+    func focusOnboardingQuality(_ i: Int) {
+        onboardingQualityFocus = min(max(i, 0), onboardingQualityRows.count - 1)
+    }
+
+    private func routeOnboarding(_ event: NavigationEvent) {
+        guard let step = onboardingStep else { return }
+        switch step {
+        case .welcome:
+            if event == .select || event == .move(.right) { advanceOnboarding() }
+        case .theme:
+            switch event {
+            case .move(.left):  backgroundTheme = Self.cycle(backgroundTheme, forward: false); sfx.play(.move)
+            case .move(.right): backgroundTheme = Self.cycle(backgroundTheme, forward: true); sfx.play(.move)
+            case .select:       advanceOnboarding()
+            case .back:         backOnboarding()
+            default: break
+            }
+        case .quality:
+            switch event {
+            case .move(.up):    onboardingQualityFocus = max(0, onboardingQualityFocus - 1); sfx.play(.move)
+            case .move(.down):  onboardingQualityFocus = min(onboardingQualityRows.count - 1, onboardingQualityFocus + 1); sfx.play(.move)
+            case .move(.left):  adjust(row: onboardingQualityRows[onboardingQualityFocus], forward: false)
+            case .move(.right): adjust(row: onboardingQualityRows[onboardingQualityFocus], forward: true)
+            case .select:       advanceOnboarding()
+            case .back:         backOnboarding()
+            default: break
+            }
+        case .presets:
+            if event == .select || event == .move(.right) { advanceOnboarding() }
+            else if event == .back { backOnboarding() }
+        case .finish:
+            if event == .select { completeSetup() }
+            else if event == .back { backOnboarding() }
+        }
+    }
+
     func route(_ event: NavigationEvent) {
+        // The setup wizard owns all input until it's done — unskippable.
+        if onboardingStep != nil {
+            routeOnboarding(event)
+            return
+        }
         // Menu SFX — deliberate actions make sound, navigation mostly doesn't:
         //  • Overlays (cards) keep normal select/back — they're deliberate.
         //  • Settings screen is SILENT except an explicit value change (adjust()).
@@ -1244,8 +1350,10 @@ final class AppState {
         case .select:
             if let i = onSlot {
                 requestSaveToSlot(i)           // save current settings into the slot
-            } else if focus.focusedItemID == SettingsRow.checkUpdates.focusID {
-                checkForUpdates()
+            } else if let rowID = focus.focusedItemID,
+                      let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }),
+                      row.isAction {
+                performSettingAction(row)      // Software Update / Restart Setup
             } else if focus.focusedItemID == SettingsRow.resolution.focusID {
                 openCustomResolution()         // type an arbitrary WxH
             }
@@ -1573,13 +1681,13 @@ final class AppState {
         case touchControls, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case background
-        case appVersion, checkUpdates
+        case appVersion, checkUpdates, restartSetup
 
         var focusID: String { "setting:\(rawValue)" }
 
         /// Action/readonly rows don't adjust with left/right and render without
         /// value chevrons (they respond to select instead).
-        var isAction: Bool { self == .checkUpdates }
+        var isAction: Bool { self == .checkUpdates || self == .restartSetup }
         var isReadonly: Bool { self == .appVersion }
 
         var title: String {
@@ -1612,6 +1720,7 @@ final class AppState {
             case .background: "Background"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
+            case .restartSetup: "Restart Setup"
             }
         }
     }
@@ -1640,7 +1749,7 @@ final class AppState {
                 #else
                 [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #endif
-            case .about: [.appVersion, .checkUpdates]
+            case .about: [.appVersion, .checkUpdates, .restartSetup]
             case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
             case .themes: [.background]
             }
@@ -1743,6 +1852,17 @@ final class AppState {
         case .background: backgroundTheme.title
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
+        case .restartSetup: "Replay the intro"
+        }
+    }
+
+    /// Runs an action row's action (the `.isAction` rows respond to select, not
+    /// left/right). Keeps the row views generic instead of hard-coding one action.
+    func performSettingAction(_ row: SettingsRow) {
+        switch row {
+        case .checkUpdates: checkForUpdates()
+        case .restartSetup: restartSetup()
+        default: break
         }
     }
 
@@ -1806,7 +1926,7 @@ final class AppState {
         case .performanceOverlay: settings.performanceOverlay.toggle()
         case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
         case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
-        case .appVersion, .checkUpdates: break  // not value rows
+        case .appVersion, .checkUpdates, .restartSetup: break  // not value rows
         }
     }
 

@@ -30,6 +30,12 @@ struct SettingsView: View {
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
+                        // Themes tab: visual previews of each background above the
+                        // Background row, so the choice is something you SEE.
+                        if state.settingsTab == .themes {
+                            ThemePreviewStrip()
+                                .padding(.bottom, 8)
+                        }
                         ForEach(state.settingsTab.rows, id: \.rawValue) { row in
                             SettingsRowView(row: row)
                                 .id(row.focusID)
@@ -230,7 +236,7 @@ private struct SettingsRowView: View {
                     .frame(minWidth: 120, alignment: .center)
                     .contentTransition(.numericText())
                 Button {
-                    if row.isAction { state.checkForUpdates() }
+                    if row.isAction { state.performSettingAction(row) }
                     else { state.adjust(row: row, forward: true) }
                 } label: {
                     Image(systemName: row.isAction ? "chevron.forward.circle.fill" : "chevron.right")
@@ -263,7 +269,23 @@ private struct SettingsRowView: View {
             // Clicking an action row (Software Update) triggers it; value rows
             // just take focus so the mouse and controller agree.
             state.focus.focus(itemID: row.focusID)
-            if row.isAction { state.checkForUpdates() }
+            if row.isAction { state.performSettingAction(row) }
+        }
+    }
+}
+
+/// Visual theme picker shown atop Settings ▸ Themes — tap a card to select it;
+/// the controller/keyboard still cycles via the Background row below.
+private struct ThemePreviewStrip: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        HStack(spacing: 22) {
+            ForEach(BackgroundTheme.allCases, id: \.self) { theme in
+                ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 210)
+                    .onTapGesture { state.backgroundTheme = theme }
+            }
+            Spacer(minLength: 0)
         }
     }
 }
