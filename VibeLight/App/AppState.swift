@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 3
+    static let requiredSetupVersion = 4
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -1201,12 +1201,20 @@ final class AppState {
     /// Finish: persist so the wizard never shows again, and hand off to the
     /// launcher (which plays its own deal-in intro right after).
     /// Called at the END of the finale (not the moment "Jump in" is pressed):
-    /// persist the completed version, drop into the launcher, and play the
-    /// deal-in intro (which was skipped while setup was up).
+    /// persist the completed version and drop into the launcher.
     func completeSetup() {
         UserDefaults.standard.set(Self.requiredSetupVersion, forKey: Self.setupVersionKey)
+        // Clear the overlay FIRST → it fades out to reveal the bare background
+        // with the UI still hidden (the intro hasn't started, so every element is
+        // at opacity 0). Then, after a clean beat of just-background, start the
+        // deal-in so the UI fades in on its own instead of appearing mid-fade
+        // (which read as a "jump"). First-launch-only — a normal launch deals in
+        // immediately via HomeView.onAppear.
         onboardingStep = nil
-        intro.begin()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.1))
+            self?.intro.begin()
+        }
     }
 
     /// The setup finale's "arrival" swell (played by `FinaleStep`).
