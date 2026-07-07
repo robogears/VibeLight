@@ -24,6 +24,19 @@ struct RootView: View {
         }
         .ignoresSafeArea()
         #if os(iOS)
+        // While a TV owns the display, the iPad is a companion screen — the
+        // launcher shows ONLY on the TV. Shown the instant a display connects
+        // (isConnected is observable), and only when not streaming (the stream
+        // overlay below provides its own placeholder + trackpad).
+        .overlay {
+            let tvActive = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
+            let idle: Bool = { if case .streaming = state.session.phase { false } else { true } }()
+            if tvActive && idle {
+                ExternalDisplayPlaceholder(streaming: false)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: ExternalDisplay.shared.isConnected)
         // Live stream covers the whole screen (unscaled) while it's up.
         .overlay {
             if case .streaming = state.session.phase {
@@ -136,9 +149,16 @@ struct LauncherContent: View {
 struct ExternalDisplayContent: View {
     @Environment(AppState.self) private var state
 
+    /// A TV is viewed from the couch — fit a SMALLER design canvas than the
+    /// iPad (1280×720 vs ~1920×1080) so tiles and text render noticeably bigger,
+    /// and it scales UP further on higher-resolution displays (a 4K TV reports a
+    /// larger point size → more zoom) — bigger icons, relative to the TV.
+    private static let tvCanvas = CGSize(width: 1280, height: 720)
+
     var body: some View {
         GeometryReader { geo in
-            let scale = RootView.uiScale(for: geo.size)
+            let scale = max(min(geo.size.width / Self.tvCanvas.width,
+                                geo.size.height / Self.tvCanvas.height), 0.3)
             LauncherContent()
                 .frame(width: geo.size.width / scale, height: geo.size.height / scale,
                        alignment: .topLeading)
@@ -149,10 +169,13 @@ struct ExternalDisplayContent: View {
     }
 }
 
-/// Shown on the iPad while the video is playing on a connected TV / monitor.
-/// The iPad screen still forwards touches (trackpad), so this is a calm status
-/// panel, not a dead end.
+/// The iPad companion screen shown whenever a TV / monitor is driving the
+/// display — VibeLight itself lives on the big screen, so the iPad is a calm
+/// status panel. While streaming it's also a trackpad (touches pass through);
+/// while idle it just says "use your controller".
 private struct ExternalDisplayPlaceholder: View {
+    var streaming = true
+
     var body: some View {
         ZStack {
             Color.black
@@ -160,15 +183,20 @@ private struct ExternalDisplayPlaceholder: View {
                 Image(systemName: "tv")
                     .font(.system(size: 54, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                Text("Playing on \(ExternalDisplay.shared.name)")
+                Text(streaming ? "Playing on \(ExternalDisplay.shared.name)"
+                               : "VibeLight is on \(ExternalDisplay.shared.name)")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
-                Text("This screen is a trackpad — drag to move the cursor.")
+                Text(streaming ? "This screen is a trackpad — drag to move the cursor."
+                               : "Use your controller to navigate on the big screen.")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
             }
         }
-        .allowsHitTesting(false)   // touches fall through to the stream trackpad
+        .contentShape(Rectangle())
+        // Streaming → pass touches through to the trackpad; idle → consume them
+        // so the hidden launcher underneath can't be poked.
+        .allowsHitTesting(!streaming)
         .ignoresSafeArea()
     }
 }
