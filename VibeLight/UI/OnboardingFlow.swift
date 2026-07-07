@@ -236,8 +236,8 @@ private struct PresetsStep: View {
 
     var body: some View {
         OnboardingStepScaffold(
-            title: "Save setups as Presets",
-            subtitle: "Keep favorite quality profiles a button-press away.",
+            title: "Your first preset",
+            subtitle: "We saved your setup as Preset 1 — presets keep quality profiles a button away.",
             primary: "Continue"
         ) {
             VStack(spacing: 22) {
@@ -249,12 +249,15 @@ private struct PresetsStep: View {
                 }
                 VStack(spacing: 6) {
                     Text("On the home screen, press ▶ to open your presets and load one.")
-                    Text("In Settings, save the current setup onto a slot.")
+                    Text("Save more setups onto the other slots anytime in Settings.")
                 }
                 .font(.system(size: 16, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
             }
+            // Seed Preset 1 from the res/fps/bitrate they just chose (only when
+            // they have no presets — which is the only time this step shows).
+            .onAppear { state.seedFirstPresetIfEmpty() }
         }
     }
 

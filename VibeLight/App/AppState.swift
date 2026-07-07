@@ -1164,11 +1164,25 @@ final class AppState {
 
     // MARK: - Onboarding
 
-    /// Advance to the next wizard step, or finish on the last one.
+    /// True if any preset slot is filled — used to skip the presets tutorial for
+    /// users who clearly already know how to use them.
+    var hasAnyPreset: Bool { presets.contains { $0 != nil } }
+
+    /// Seed Preset 1 from the setup's chosen settings — only for a user with NO
+    /// presets (the sole case the presets step is shown). Called from the step.
+    func seedFirstPresetIfEmpty() {
+        guard !hasAnyPreset else { return }
+        performSaveToSlot(0)
+    }
+
+    /// Advance to the next wizard step, or finish on the last one. The presets
+    /// tutorial is skipped for users who already have presets.
     func advanceOnboarding() {
         guard let step = onboardingStep else { return }
         sfx.play(.select)
-        if let next = OnboardingStep(rawValue: step.rawValue + 1) {
+        var raw = step.rawValue + 1
+        if OnboardingStep(rawValue: raw) == .presets, hasAnyPreset { raw += 1 }
+        if let next = OnboardingStep(rawValue: raw) {
             onboardingStep = next   // view layer animates the step transition
         } else {
             completeSetup()
@@ -1176,7 +1190,10 @@ final class AppState {
     }
 
     func backOnboarding() {
-        guard let step = onboardingStep, let prev = OnboardingStep(rawValue: step.rawValue - 1) else { return }
+        guard let step = onboardingStep else { return }
+        var raw = step.rawValue - 1
+        if OnboardingStep(rawValue: raw) == .presets, hasAnyPreset { raw -= 1 }
+        guard let prev = OnboardingStep(rawValue: raw) else { return }
         sfx.play(.back)
         onboardingStep = prev
     }

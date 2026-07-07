@@ -71,6 +71,9 @@ struct ThemeCard: View {
         }
         .scaleEffect(selected ? 1.04 : 1.0)
         .animation(Theme.focusSpring, value: selected)
+        // The whole card is clickable — the thumbnail itself is hit-test-off, so
+        // without this a mouse click on the preview (most of the card) misses.
+        .contentShape(Rectangle())
     }
 }
 
