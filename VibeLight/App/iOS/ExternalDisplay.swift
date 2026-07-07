@@ -3,20 +3,17 @@ import UIKit
 import AVFoundation
 import Observation
 
-/// Streams to a connected TV / external monitor at that display's NATIVE
-/// resolution, rendering fullscreen THERE instead of iOS's default (mirror the
-/// iPad panel, letterboxed). The iPad screen keeps the controls and doubles as
-/// a trackpad.
+/// Drives a connected TV / external monitor as a proper second screen:
+///   • idle  → the full VibeLight launcher UI (same `AppState`, so it mirrors)
+///   • stream → the game video at the display's NATIVE resolution, fullscreen
+/// The iPad keeps the controls and doubles as a trackpad.
 ///
-/// iOS surfaces an external display as a non-interactive `UIWindowScene`
-/// (only when the app opts into multiple scenes — see `UIApplicationSceneManifest`
-/// in the Info.plist). We host ONE window on that scene containing just the
-/// stream's `AVSampleBufferDisplayLayer`. A plain `UIWindow` with the legacy
-/// `window.screen =` API no longer renders on modern iOS — it must be created
+/// iOS surfaces an external display as a non-interactive `UIWindowScene` (only
+/// when the app opts into multiple scenes — `UIApplicationSceneManifest` in the
+/// Info.plist). We host one window there and swap its root view controller
+/// between the launcher and the raw stream layer. A plain `UIWindow` via the
+/// legacy `window.screen=` API no longer renders on modern iOS — it must come
 /// from the scene.
-///
-/// The engine reads `pixelSize` at launch to request the stream at the TV's
-/// resolution, and calls `present`/`dismiss` to move its display layer here.
 @MainActor
 @Observable
 final class ExternalDisplay {
@@ -24,19 +21,23 @@ final class ExternalDisplay {
 
     /// True while a TV / monitor is connected.
     private(set) var isConnected = false
-    /// Name for the placeholder ("the TV").
+    /// Name for the iPad placeholder.
     private(set) var name = "the display"
     /// The external display's native pixel size — what the stream targets.
     private(set) var pixelSize: CGSize?
 
     @ObservationIgnored private var window: UIWindow?
-    @ObservationIgnored private var hostView: DisplayHostView?
+    @ObservationIgnored private var streamHost: DisplayHostView?
+    @ObservationIgnored private var streamVC: UIViewController?
     @ObservationIgnored private weak var streamLayer: AVSampleBufferDisplayLayer?
+    /// Builds the launcher view controller (a `UIHostingController` bound to the
+    /// app's `AppState`); set once by the app after `AppState` exists.
+    @ObservationIgnored private var makeLauncher: (() -> UIViewController)?
+    @ObservationIgnored private var launcherVC: UIViewController?
 
     private init() {
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIScene.willConnectNotification, object: nil, queue: .main) { note in
-            // Grab the Sendable scene before the actor hop (Notification isn't Sendable).
             let scene = note.object as? UIWindowScene
             MainActor.assumeIsolated { if let scene { self.sceneConnected(scene) } }
         }
@@ -44,10 +45,17 @@ final class ExternalDisplay {
             let scene = note.object as? UIWindowScene
             MainActor.assumeIsolated { if let scene { self.sceneDisconnected(scene) } }
         }
-        // A display attached before the app launched → its scene is already up.
         for scene in UIApplication.shared.connectedScenes {
             if let ws = scene as? UIWindowScene { sceneConnected(ws) }
         }
+    }
+
+    /// Called once by the app (in the scene `.task`) so the TV can render the
+    /// launcher. If a display is already up and idle, swaps it in immediately.
+    func setLauncherBuilder(_ builder: @escaping () -> UIViewController) {
+        makeLauncher = builder
+        launcherVC = nil
+        if window != nil, streamLayer == nil { showLauncher() }
     }
 
     // MARK: - External scene lifecycle
@@ -63,45 +71,68 @@ final class ExternalDisplay {
         let host = DisplayHostView(frame: bounds)
         host.backgroundColor = .black
         host.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        let vc = UIViewController()
-        vc.view = host
-        window.rootViewController = vc
-        window.isHidden = false
+        let streamVC = UIViewController()
+        streamVC.view = host
 
         self.window = window
-        self.hostView = host
+        self.streamHost = host
+        self.streamVC = streamVC
         let scale = ws.traitCollection.displayScale
         self.pixelSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         self.name = "the display"
         self.isConnected = true
         NSLog("[VibeLight] external display connected: \(Int(bounds.width))×\(Int(bounds.height)) pt @\(scale)x")
 
-        // A stream is already running → move its video onto the TV now.
-        if let layer = streamLayer { host.attach(layer) }
+        // Mid-stream connect → show the video; otherwise the launcher.
+        if let layer = streamLayer {
+            host.attach(layer)
+            window.rootViewController = streamVC
+        } else {
+            showLauncher()
+        }
+        window.isHidden = false
     }
 
     private func sceneDisconnected(_ ws: UIWindowScene) {
         guard ws === window?.windowScene else { return }
-        streamLayer?.removeFromSuperlayer()   // RootView re-parents to the iPad
+        streamLayer?.removeFromSuperlayer()
         window?.isHidden = true
         window = nil
-        hostView = nil
+        streamHost = nil
+        streamVC = nil
+        launcherVC = nil
         pixelSize = nil
         isConnected = false
     }
 
     // MARK: - Engine hand-off
 
-    /// Called when a stream starts (and on mid-stream connect). Moves the layer
-    /// onto the TV if one is attached; otherwise it stays on the iPad.
+    /// Stream starting (or mid-stream connect): show the video on the TV.
     func present(_ layer: AVSampleBufferDisplayLayer) {
         streamLayer = layer
-        hostView?.attach(layer)
+        guard let host = streamHost else { return }
+        host.attach(layer)
+        window?.rootViewController = streamVC
     }
 
-    /// Called when the stream ends — the layer is going away.
+    /// Stream ending: clear the last frame (no frozen image) and return the TV
+    /// to the launcher UI.
     func dismiss() {
+        streamLayer?.removeFromSuperlayer()
+        streamLayer?.flushAndRemoveImage()   // kill the frozen final frame
         streamLayer = nil
+        if window != nil { showLauncher() }
+    }
+
+    private func showLauncher() {
+        if launcherVC == nil { launcherVC = makeLauncher?() }
+        window?.rootViewController = launcherVC ?? blackViewController()
+    }
+
+    private func blackViewController() -> UIViewController {
+        let vc = UIViewController()
+        vc.view.backgroundColor = .black
+        return vc
     }
 }
 

@@ -59,7 +59,20 @@ struct VibeLightApp: App {
                 .preferredColorScheme(.dark)
                 .statusBarHidden(true)
                 .persistentSystemOverlays(.hidden)
-                .task { state.chrome = chrome }
+                .task {
+                    state.chrome = chrome
+                    // A connected TV renders the launcher UI (bound to this same
+                    // AppState) when not streaming — so the external display is
+                    // never a dead/frozen screen.
+                    ExternalDisplay.shared.setLauncherBuilder {
+                        let vc = UIHostingController(
+                            rootView: ExternalDisplayContent()
+                                .environment(state)
+                                .preferredColorScheme(.dark))
+                        vc.view.backgroundColor = .black
+                        return vc
+                    }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     // Runaway-repeat guard: controller button releases are
                     // dropped while backgrounded, so reset transient input state

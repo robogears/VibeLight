@@ -9,7 +9,7 @@ struct RootView: View {
     var body: some View {
         GeometryReader { geo in
             let scale = Self.uiScale(for: geo.size)
-            content
+            LauncherContent()
                 // Lay the whole UI out in a virtual canvas (real size ÷ scale),
                 // then scale it to fill the screen from the top-leading corner
                 // (GeometryReader anchors its child there). On a normal Mac scale
@@ -66,34 +66,6 @@ struct RootView: View {
         #endif
     }
 
-    private var content: some View {
-        ZStack {
-            AmbientBackground()
-
-            switch state.screen {
-            case .home:
-                HomeView()
-                    .transition(.opacity)
-            case .settings:
-                SettingsView()
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-
-            if let overlay = state.overlay {
-                OverlayHost(overlay: overlay)
-                    .transition(.opacity)
-            }
-
-            if let hold = state.controller.holdProgress {
-                HoldProgressRing(progress: hold)
-                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
-            }
-        }
-        .animation(Theme.focusSpring, value: state.screen)
-        .animation(.easeOut(duration: 0.18), value: state.overlay)
-        .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
-    }
-
     /// The scale that maps the design canvas onto the real window. The UI is
     /// authored on a landscape design canvas; we fit that canvas to the real
     /// window across BOTH dimensions so it never overflows — the previous
@@ -122,7 +94,61 @@ struct RootView: View {
     }
 }
 
+/// The big-picture launcher surface — ambient background, the current screen,
+/// and any overlays. Extracted from `RootView` so the external-display window
+/// can render the SAME UI (bound to the SAME `AppState`) on a connected TV.
+struct LauncherContent: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        ZStack {
+            AmbientBackground()
+
+            switch state.screen {
+            case .home:
+                HomeView()
+                    .transition(.opacity)
+            case .settings:
+                SettingsView()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            if let overlay = state.overlay {
+                OverlayHost(overlay: overlay)
+                    .transition(.opacity)
+            }
+
+            if let hold = state.controller.holdProgress {
+                HoldProgressRing(progress: hold)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
+        }
+        .animation(Theme.focusSpring, value: state.screen)
+        .animation(.easeOut(duration: 0.18), value: state.overlay)
+        .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
+    }
+}
+
 #if os(iOS)
+/// What the external display (TV / monitor) shows when NOT streaming: the full
+/// launcher UI, fit to the TV. During a stream the window swaps to the raw
+/// stream layer (see `ExternalDisplay`), so this view is only the idle surface.
+struct ExternalDisplayContent: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        GeometryReader { geo in
+            let scale = RootView.uiScale(for: geo.size)
+            LauncherContent()
+                .frame(width: geo.size.width / scale, height: geo.size.height / scale,
+                       alignment: .topLeading)
+                .scaleEffect(scale, anchor: .topLeading)
+        }
+        .ignoresSafeArea()
+        .background(Theme.background)
+    }
+}
+
 /// Shown on the iPad while the video is playing on a connected TV / monitor.
 /// The iPad screen still forwards touches (trackpad), so this is a calm status
 /// panel, not a dead end.
