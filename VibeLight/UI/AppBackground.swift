@@ -44,17 +44,20 @@ struct AmbientBackground: View {
     }
 }
 
-/// "Diagonal Drift": near-black with fine diagonal grooves that slowly crawl
-/// across the screen. A `TimelineView` advances the stripe phase; the whole
-/// pattern is one `Canvas` pass, so it's cheap regardless of stripe count.
+/// "Diagonal Drift": near-black with flat diagonal stripes that slowly crawl
+/// across the screen. FLAT on purpose — a single solid stripe with no bevel or
+/// sheen, so it reads painted/cartoony rather than brushed-metal. A
+/// `TimelineView` advances the stripe phase; the whole pattern is one `Canvas`
+/// pass, so it's cheap regardless of stripe count.
 struct DiagonalStripesBackground: View {
     // Tunables — safe to tweak to taste.
-    private let spacing: CGFloat = 62         // gap between grooves
+    private let spacing: CGFloat = 66         // gap between stripes
     private let tilt = Angle(degrees: 58)     // "/" lean — negate to lean the other way
     private let driftPerSecond: CGFloat = 6   // slow crawl
+    private let lineWidth: CGFloat = 4        // flat, chunky-ish stripe
 
-    private let base = Color(red: 0.035, green: 0.042, blue: 0.05)
-    private let highlight = Color(red: 0.42, green: 0.58, blue: 0.62)   // cool steel/teal edge
+    private let base = Color(red: 0.02, green: 0.03, blue: 0.03)     // near-black
+    private let stripe = Color(red: 0.13, green: 0.27, blue: 0.24)   // flat, friendly teal-green
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -64,7 +67,7 @@ struct DiagonalStripesBackground: View {
             Canvas { context, size in
                 var ctx = context
                 ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base))
-                // Draw in a rotated, oversized space so the vertical grooves read
+                // Draw in a rotated, oversized space so the vertical stripes read
                 // as parallel diagonals covering the whole view.
                 let diag = hypot(size.width, size.height)
                 ctx.translateBy(x: size.width / 2, y: size.height / 2)
@@ -73,17 +76,11 @@ struct DiagonalStripesBackground: View {
                 let count = Int((2 * diag) / spacing) + 2
                 for i in 0...count {
                     let x = CGFloat(i) * spacing + phase
-                    // A dark groove with a faint cool highlight on its edge —
-                    // reads as a subtle beveled diagonal line.
-                    var groove = Path()
-                    groove.move(to: CGPoint(x: x, y: 0))
-                    groove.addLine(to: CGPoint(x: x, y: 2 * diag))
-                    ctx.stroke(groove, with: .color(.black.opacity(0.55)), lineWidth: 2.2)
-
-                    var edge = Path()
-                    edge.move(to: CGPoint(x: x + 1.4, y: 0))
-                    edge.addLine(to: CGPoint(x: x + 1.4, y: 2 * diag))
-                    ctx.stroke(edge, with: .color(highlight.opacity(0.06)), lineWidth: 1.0)
+                    // One flat, solid stroke — no groove, no highlight, no sheen.
+                    var line = Path()
+                    line.move(to: CGPoint(x: x, y: 0))
+                    line.addLine(to: CGPoint(x: x, y: 2 * diag))
+                    ctx.stroke(line, with: .color(stripe), lineWidth: lineWidth)
                 }
             }
         }
