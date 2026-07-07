@@ -96,9 +96,14 @@ final class ExternalScenePlacement {
     /// this state, so the extra backing store is transient and not during a stream.
     private static func setSupersample(_ window: UIWindow?, on: Bool) {
         guard let window else { return }
+        // The `traitOverrides.displayScale` GETTER asserts when no override is
+        // present ("Can't return value for trait DisplayScale that has no
+        // override"), so gate every read behind `contains` (short-circuited).
+        let has = window.traitOverrides.contains(UITraitDisplayScale.self)
         if on {
-            if window.traitOverrides.displayScale != 3 { window.traitOverrides.displayScale = 3 }
-        } else if window.traitOverrides.displayScale != 0 {
+            guard !has || window.traitOverrides.displayScale != 3 else { return }
+            window.traitOverrides.displayScale = 3
+        } else if has {
             window.traitOverrides.remove(UITraitDisplayScale.self)
         }
     }
