@@ -201,7 +201,7 @@ private struct CheatSheetCard: View {
                 row(.quitChord, "Quit the remote game completely")
                 #if os(macOS)
                 row(.quitApp, "Quit VibeLight (hold on home)")
-                keyRow("⌘⇧ Q", "Quit the remote game completely (keyboard)")
+                keyRow("⌘⇧ Q", "Hold to quit the remote game completely (keyboard)")
                 #endif
 
                 #if os(iOS)

@@ -139,6 +139,16 @@ final class ControllerManager {
     @ObservationIgnored private var backLongPressFired = false
     @ObservationIgnored private var backHoldTask: Task<Void, Never>?
 
+    // Press-and-hold quit from the keyboard (⌘⇧Q / ⌘Q) and from touch/mouse hint
+    // buttons — both reuse `runHoldChord` so they share the controller's ring.
+    #if os(macOS)
+    @ObservationIgnored private var kbHoldTask: Task<Void, Never>?
+    @ObservationIgnored private var kbHoldHeld = false
+    @ObservationIgnored private var kbHoldRequiredMods: NSEvent.ModifierFlags = []
+    #endif
+    @ObservationIgnored private var pointerHoldTask: Task<Void, Never>?
+    @ObservationIgnored private var pointerHoldActive = false
+
     @ObservationIgnored private var hapticEngine: CHHapticEngine?
     #if os(macOS)
     @ObservationIgnored private var keyMonitor: Any?
@@ -417,6 +427,39 @@ final class ControllerManager {
         }
     }
 
+    // MARK: - Pointer / touch hold (hint-bar quit buttons)
+
+    /// Begin a press-and-hold quit from a touch or mouse hint button — drives the
+    /// same ring and fires the same event as the controller/keyboard holds.
+    func beginPointerHold(for event: NavigationEvent) {
+        let kind: HoldProgress.Kind
+        let duration: Duration
+        switch event {
+        case .quitChord: kind = .quitGame; duration = Tuning.quitChordHold
+        case .quitApp:
+            guard quitAppChordEnabled?() ?? false else { return }   // home only, like the pad's B-hold
+            kind = .quitApp; duration = Tuning.quitAppHold
+        default: return
+        }
+        pointerHoldTask?.cancel()
+        pointerHoldActive = true
+        pointerHoldTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runHoldChord(
+                kind: kind, duration: duration, event: event,
+                stillHeld: { self.pointerHoldActive },
+                markFired: { self.pointerHoldActive = false })
+        }
+    }
+
+    /// Release before completion cancels the hold (the ring clears).
+    func cancelPointerHold() {
+        pointerHoldActive = false
+        pointerHoldTask?.cancel()
+        pointerHoldTask = nil
+        if holdProgress != nil { holdProgress = nil }
+    }
+
     // MARK: - Menu button (short press vs quit chord)
 
     private func menuButtonChanged(pressed: Bool) {
@@ -503,6 +546,10 @@ final class ControllerManager {
         menuLongPressFired = false
         backIsDown = false
         backLongPressFired = false
+        #if os(macOS)
+        kbHoldTask?.cancel(); kbHoldTask = nil; kbHoldHeld = false; kbHoldRequiredMods = []
+        #endif
+        pointerHoldTask?.cancel(); pointerHoldTask = nil; pointerHoldActive = false
         holdProgress = nil
     }
 
@@ -565,15 +612,52 @@ final class ControllerManager {
     /// Local (own-app-only, no Accessibility permission) keyDown monitor so
     /// the keyboard drives the exact same NavigationEvent stream as a pad.
     private func installKeyboardMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             // Local monitors run on the main thread; hop into the actor
             // without a send (NSEvent is not Sendable).
             var verdict: NSEvent? = event
             MainActor.assumeIsolated {
-                verdict = self.handleKeyDown(event)
+                if event.type == .flagsChanged {
+                    self.handleFlagsChanged(event)   // observe only; never consume
+                } else {
+                    verdict = self.handleKeyDown(event)
+                }
             }
             return verdict
+        }
+    }
+
+    /// A keyboard quit hold stays armed only while its FULL modifier chord is held
+    /// (⌘⇧ for the game, ⌘ for the app). The instant any required modifier lifts
+    /// we end the hold. macOS never delivers a keyUp for a letter pressed under
+    /// Command, so tracking the modifiers is the reliable release signal — and it
+    /// stops a "tap Q, keep Command resting" from ever completing a quit.
+    private func handleFlagsChanged(_ event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if !flags.isSuperset(of: kbHoldRequiredMods) { kbHoldHeld = false }
+    }
+
+    /// Arms a keyboard quit hold (⌘⇧Q → quit game, ⌘Q → quit VibeLight) using the
+    /// same ring + threshold as the controller. `kbHoldRequiredMods` records the
+    /// chord that must stay held; `handleFlagsChanged` ends the hold the instant
+    /// any of it is released.
+    private func armKeyboardHold(for event: NavigationEvent) {
+        let kind: HoldProgress.Kind
+        let duration: Duration
+        switch event {
+        case .quitChord: kind = .quitGame; duration = Tuning.quitChordHold; kbHoldRequiredMods = [.command, .shift]
+        case .quitApp:   kind = .quitApp;  duration = Tuning.quitAppHold;   kbHoldRequiredMods = [.command]
+        default: return
+        }
+        kbHoldTask?.cancel()
+        kbHoldHeld = true
+        kbHoldTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runHoldChord(
+                kind: kind, duration: duration, event: event,
+                stillHeld: { self.kbHoldHeld },
+                markFired: { self.kbHoldHeld = false })
         }
     }
 
@@ -585,18 +669,28 @@ final class ControllerManager {
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        // Chorded bindings: Cmd-, opens settings; Cmd-Shift-Q is the keyboard
-        // path to "quit the remote game completely" (the hint bar advertises
-        // it, so it must exist — controllers use the Menu long-press instead).
-        // Every other Cmd/Ctrl/Opt chord belongs to the system or menus
-        // (plain Cmd-Q quits VibeLight itself via the app menu).
+        // Chorded bindings: Cmd-, opens settings. Quit is press-and-hold, owned
+        // here rather than the app menu — hold ⌘⇧Q to quit the remote game, hold
+        // ⌘Q to quit VibeLight (home only, same gate as the pad's B-hold). Every
+        // other Cmd/Ctrl/Opt chord belongs to the system or menus and passes
+        // through.
         if flags.contains(.command) {
             if event.charactersIgnoringModifiers == "," {
                 emit(.settings)
                 return nil
             }
-            if flags.contains(.shift), event.charactersIgnoringModifiers?.lowercased() == "q" {
-                emit(.quitChord)
+            // Quit is press-and-hold, same as controllers: ⌘⇧Q holds to quit the
+            // remote game; ⌘Q holds to quit VibeLight (home only, via the same
+            // gate as the pad's B-hold). Arm on the first keydown, ignore
+            // auto-repeats, and always consume so ⌘Q can't instant-quit the app.
+            if event.charactersIgnoringModifiers?.lowercased() == "q" {
+                if !event.isARepeat {
+                    if flags.contains(.shift) {
+                        armKeyboardHold(for: .quitChord)
+                    } else if quitAppChordEnabled?() ?? false {
+                        armKeyboardHold(for: .quitApp)
+                    }
+                }
                 return nil
             }
             return event

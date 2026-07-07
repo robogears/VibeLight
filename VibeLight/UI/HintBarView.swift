@@ -30,8 +30,29 @@ private struct HintChip: View {
     let label: String?
     var touch = false
     @State private var hovering = false
+    @State private var holding = false
+
+    /// Quit hints are press-and-hold (fill the ring), matching the controller;
+    /// every other hint is a plain tap.
+    private var isHold: Bool { event == .quitChord || event == .quitApp }
 
     var body: some View {
+        activation(chrome)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            // Hold-gesture robustness: when the ring clears for ANY reason (fired,
+            // cancelled, input reset) release the once-guard so the next press
+            // works; if the chip is torn down mid-hold, cancel it so an
+            // interrupted gesture can't silently complete the quit.
+            .onChange(of: state.controller.holdProgress == nil) { _, cleared in
+                if cleared { holding = false }
+            }
+            .onDisappear {
+                if holding { holding = false; state.controller.cancelPointerHold() }
+            }
+    }
+
+    @ViewBuilder private var chrome: some View {
         if touch {
             Text(label ?? InputGlyphs.glyph(for: event, style: .keyboard).label)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -41,9 +62,6 @@ private struct HintChip: View {
                 .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
                 .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
                 .contentShape(Capsule())
-                .onTapGesture { state.route(event) }
-                .onHover { hovering = $0 }
-                .animation(.easeOut(duration: 0.12), value: hovering)
         } else {
             let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
             HStack(spacing: 7) {
@@ -56,9 +74,25 @@ private struct HintChip: View {
             .padding(.vertical, 5)
             .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .onTapGesture { state.route(event) }
-            .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+    }
+
+    /// Quit = press-and-hold to fill the ring (touch or mouse), releasing early
+    /// cancels; everything else routes on a tap.
+    @ViewBuilder private func activation(_ content: some View) -> some View {
+        if isHold {
+            content.gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !holding { holding = true; state.controller.beginPointerHold(for: event) }
+                    }
+                    .onEnded { _ in
+                        holding = false
+                        state.controller.cancelPointerHold()
+                    }
+            )
+        } else {
+            content.onTapGesture { state.route(event) }
         }
     }
 }
@@ -88,8 +122,9 @@ struct HintBarView: View {
         #endif
     }
 
-    /// Touch buttons only make sense for hints that carry a label (the glyph-only
-    /// hold-chords like quit have no tappable equivalent).
+    /// Touch shows only hints that carry a label. Quit now carries one and is a
+    /// press-and-hold button (fills the ring like the controller); unlabeled
+    /// hints still drop out.
     private var shownHints: [(String, NavigationEvent, String?)] {
         touchButtons ? hints.filter { $0.2 != nil } : hints
     }
@@ -114,10 +149,10 @@ struct HintBarView: View {
                 ("select", .select, "Play"),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
-                ("quitgame", .quitChord, nil),
+                ("quitgame", .quitChord, "Hold to Quit Game"),
             ]
             #if os(macOS)
-            home.append(("quitapp", .quitApp, "Hold to Quit Application"))
+            home.append(("quitapp", .quitApp, "Quit VibeLight"))
             #endif
             return home
         case .settings:
