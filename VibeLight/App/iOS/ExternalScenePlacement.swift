@@ -35,6 +35,11 @@ final class ExternalScenePlacement {
     func evaluate(for window: UIWindow?) {
         lastWindow = window
         let candidate = Self.isCertainlyExternal(window)
+        // Super-sample the redirect card the instant we're on an external screen
+        // (idempotent; removed when back on the iPad) so its text is crisp — the
+        // main window renders at the panel's native scale otherwise, which looks
+        // softer than the @2× iPad. Same lever as the launcher supersample.
+        Self.setSupersample(window, on: candidate)
         // Bias to safe: any non-external verdict is applied immediately.
         guard candidate else {
             if isOnExternalScreen { isOnExternalScreen = false }
@@ -80,6 +85,21 @@ final class ExternalScenePlacement {
     private static func hasNonInteractiveExternalScene() -> Bool {
         UIApplication.shared.connectedScenes.contains {
             ($0 as? UIWindowScene)?.session.role == .windowExternalDisplayNonInteractive
+        }
+    }
+
+    /// Force the host window to render at 3× while on the external display so the
+    /// redirect card's text is crystal-clear (the panel's native scale otherwise
+    /// rasterizes it softer than the @2× iPad); cleanly removed when back on the
+    /// iPad. Idempotent, and a no-op on the iPad (no override present → skipped),
+    /// so the normal UI is never touched. Only the redirect card is on screen in
+    /// this state, so the extra backing store is transient and not during a stream.
+    private static func setSupersample(_ window: UIWindow?, on: Bool) {
+        guard let window else { return }
+        if on {
+            if window.traitOverrides.displayScale != 3 { window.traitOverrides.displayScale = 3 }
+        } else if window.traitOverrides.displayScale != 0 {
+            window.traitOverrides.remove(UITraitDisplayScale.self)
         }
     }
 
