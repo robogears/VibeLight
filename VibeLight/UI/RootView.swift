@@ -5,6 +5,12 @@ import SwiftUI
 /// the same physical proportions at any display size (see `uiScale`).
 struct RootView: View {
     @Environment(AppState.self) private var state
+    #if os(iOS)
+    /// Detects the accidental case where iPadOS puts THIS window on an external
+    /// screen (Stage Manager, launched from the TV). Safe-by-default — see
+    /// `ExternalScenePlacement`. Scene-scoped state, not a singleton.
+    @State private var placement = ExternalScenePlacement()
+    #endif
 
     var body: some View {
         GeometryReader { geo in
@@ -91,6 +97,20 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        // Accidental case: the app's OWN window is on an external screen (Stage
+        // Manager extended display, launched from the TV). Guide the user back to
+        // the iPad. Last overlay → wins the z-order; safe-by-default so it can
+        // never cover the normal iPad UI (see `ExternalScenePlacement`). The
+        // `!isConnected` gate is redundant belt-and-suspenders with the placement
+        // guards, and makes the card hide the instant the real TV scene engages.
+        .overlay {
+            if placement.isOnExternalScreen && !ExternalDisplay.shared.isConnected {
+                ExternalRedirectCard()
+            }
+        }
+        // Always-present, invisible probe: reads RootView's own hosting window and
+        // updates `placement` on attach + cross-screen moves + display churn.
+        .background(ScenePlacementProbe(placement: placement))
         #endif
     }
 
