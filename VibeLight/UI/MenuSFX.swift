@@ -18,6 +18,7 @@ final class MenuSFX {
         case back       // dismiss — soft tone down
         case restart    // restart PC — a distinctive power-cycle motif
         case launch     // setup finale — a warm rising "arrival" swell
+        case quack      // a buzzy comic duck quack (setup welcome + jump-in)
     }
 
     private let engine = AVAudioEngine()
@@ -51,6 +52,7 @@ final class MenuSFX {
             segments: [(261.6, 0.14), (329.6, 0.14), (392.0, 0.14),
                        (523.3, 0.14), (659.3, 0.14), (784.0, 1.0)],
             gain: 0.27, format: format)
+        buffers[.quack] = Self.quack(gain: 0.28, format: format)
     }
 
     func play(_ effect: Effect) {
@@ -92,6 +94,34 @@ final class MenuSFX {
                 samples[frame] = sample * attack * decay * gain
                 frame += 1
             }
+        }
+        return buffer
+    }
+
+    /// A short buzzy comic "quack" — a descending honk (≈600→300 Hz) built from
+    /// stacked harmonics (nasal, sawtooth-ish, not a pure tone) with a
+    /// two-syllable "qua-ack" amplitude envelope and a little roughness. Phase is
+    /// integrated so the pitch glide has no clicks.
+    private static func quack(gain: Float, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let duration = 0.24
+        let total = AVAudioFrameCount(duration * sampleRate)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total),
+              let samples = buffer.floatChannelData?[0] else { return nil }
+        buffer.frameLength = total
+        let n = Int(total)
+        var phase = 0.0
+        for i in 0..<n {
+            let p = Double(i) / Double(n)                 // 0…1
+            let freq = 300 + 300 * (1 - p)                // 600 → 300 Hz descending honk
+            phase += 2 * .pi * freq / Self.sampleRate
+            var s = 0.0
+            for h in 1...6 { s += sin(phase * Double(h)) / Double(h) }   // buzzy harmonics
+            s /= 1.8
+            let attack = min(p / 0.04, 1.0)
+            let release = p > 0.75 ? max(0, 1 - (p - 0.75) / 0.25) : 1.0
+            let syllables = 0.72 + 0.28 * abs(sin(.pi * 2 * p))         // "qua-ack" two humps
+            let rough = 0.85 + 0.15 * sin(2 * .pi * 32 * Double(i) / Self.sampleRate)
+            samples[i] = Float(s) * Float(attack * release * syllables * rough) * gain
         }
         return buffer
     }

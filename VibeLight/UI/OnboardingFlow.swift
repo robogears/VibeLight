@@ -83,6 +83,7 @@ private struct WelcomeStep: View {
         .opacity(shown ? 1 : 0)
         .blur(radius: shown ? 0 : (reduceMotion ? 0 : 8))
         .onAppear {
+            state.playQuack()   // 🦆 hello
             withAnimation(LaunchIntro.reveal) { shown = true }
             // Hold the moment, then hand off to the first step. The step change
             // itself animates (Theme.focusSpring) so it reads as a pop-forward.
@@ -121,7 +122,7 @@ private struct FinaleStep: View {
         state.playLaunchCue()                                    // the cool swell
         withAnimation(.easeOut(duration: 0.8)) { shown = true }  // reveal, front-and-center
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.6))            // hold on the mark
+            try? await Task.sleep(for: .seconds(2.6))            // hold on the mark (1s longer)
             withAnimation(.easeInOut(duration: 0.8)) { faded = true }   // slow fade out
             try? await Task.sleep(for: .seconds(1.8))            // finish fade + ~1s of nothing
             state.completeSetup()                               // → the launcher deals in
