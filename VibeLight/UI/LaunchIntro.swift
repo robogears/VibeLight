@@ -23,6 +23,9 @@ final class LaunchIntro {
     private(set) var started = false
 
     @ObservationIgnored private var task: Task<Void, Never>?
+    /// When true, `skip()` is ignored — the post-setup deal-in plays out in full
+    /// so a stray input right after the (long) finale can't cut it short.
+    @ObservationIgnored private var protected = false
 
     // Beat map: header, hero, then shelf tiles (index i on `tileBase + min(i,
     // tileCap)`), then the focus ring + hint bar + preset rail on `late`.
@@ -39,9 +42,21 @@ final class LaunchIntro {
     /// overlapping wave.
     static let reveal = Animation.spring(response: 0.85, dampingFraction: 0.98)
 
+    /// Reset to a fresh, un-played state — used before the post-setup deal-in so
+    /// it's guaranteed to play from scratch even if it somehow already ran.
+    func reset() {
+        task?.cancel(); task = nil
+        beat = 0
+        finished = false
+        started = false
+        protected = false
+    }
+
     /// Start the sequence. Idempotent — only the first call does anything.
-    func begin() {
+    /// `protected` makes it unskippable (for the one-time post-setup deal-in).
+    func begin(protected: Bool = false) {
         guard !started else { return }
+        self.protected = protected
         started = true
         task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -59,7 +74,7 @@ final class LaunchIntro {
     /// Any input during the intro snaps the remainder in fast — never a jarring
     /// cut, and a returning power-user is never held hostage by the animation.
     func skip() {
-        guard started, !finished else { return }
+        guard started, !finished, !protected else { return }
         task?.cancel(); task = nil
         withAnimation(.easeOut(duration: 0.2)) {
             beat = Self.late

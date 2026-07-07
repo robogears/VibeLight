@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 6
+    static let requiredSetupVersion = 7
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -1211,9 +1211,10 @@ final class AppState {
         // (which read as a "jump"). First-launch-only — a normal launch deals in
         // immediately via HomeView.onAppear.
         onboardingStep = nil
+        intro.reset()   // guarantee a fresh, un-played deal-in
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.1))
-            self?.intro.begin()
+            self?.intro.begin(protected: true)   // plays out fully — no accidental skip
         }
     }
 
