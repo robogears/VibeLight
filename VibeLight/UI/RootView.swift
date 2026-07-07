@@ -149,16 +149,13 @@ struct LauncherContent: View {
 struct ExternalDisplayContent: View {
     @Environment(AppState.self) private var state
 
-    /// A TV is viewed from the couch — fit a SMALLER design canvas than the
-    /// iPad (1280×720 vs ~1920×1080) so tiles and text render noticeably bigger,
-    /// and it scales UP further on higher-resolution displays (a 4K TV reports a
-    /// larger point size → more zoom) — bigger icons, relative to the TV.
-    private static let tvCanvas = CGSize(width: 1280, height: 720)
-
     var body: some View {
         GeometryReader { geo in
-            let scale = max(min(geo.size.width / Self.tvCanvas.width,
-                                geo.size.height / Self.tvCanvas.height), 0.3)
+            // Render the launcher in a canvas sized to the display's ACTUAL
+            // point size (÷ scale) so it rasterizes at the TV's native
+            // resolution — sharp on 4K, not a 720p upscale. Same fit rule as the
+            // iPad (uiScale), so element proportions and alignment match.
+            let scale = RootView.uiScale(for: geo.size)
             LauncherContent()
                 .frame(width: geo.size.width / scale, height: geo.size.height / scale,
                        alignment: .topLeading)
