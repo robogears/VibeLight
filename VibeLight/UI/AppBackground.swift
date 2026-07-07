@@ -149,8 +149,8 @@ struct NightfallSheenBackground: View {
 /// with a diffuse nebula glowing off one corner and breathing. The star array is
 /// built ONCE (deterministically) and only its positions/alpha animate — cheap.
 struct ParallaxDeepBackground: View {
-    private let base      = Color(red: 0.027, green: 0.035, blue: 0.067)  // #070911
-    private let voidCol   = Color(red: 0.016, green: 0.020, blue: 0.039)  // #04050a
+    private let base      = Color.black                                   // pitch black
+    private let voidCol   = Color.black
     private let starCol   = Color(red: 0.804, green: 0.847, blue: 0.941)  // #cdd8f0
     private let nebNavy   = Color(red: 0.173, green: 0.227, blue: 0.420)  // #2c3a6b
     private let nebViolet = Color(red: 0.227, green: 0.173, blue: 0.357)  // #3a2c5b
@@ -160,10 +160,10 @@ struct ParallaxDeepBackground: View {
 
     init() {
         var made: [Star] = []
-        for i in 0..<110 {
+        for i in 0..<340 {
             let x     = CGFloat(Self.frac(Double(i) * 0.61803398875 + 0.13))
             let y     = CGFloat(Self.frac(Double(i) * 0.41421356237 + 0.29))
-            let r     = CGFloat(0.6 + Self.frac(Double(i) * 0.75487766624 + 0.5) * 1.3)
+            let r     = CGFloat(0.5 + Self.frac(Double(i) * 0.75487766624 + 0.5) * 1.6)
             let phase = Self.frac(Double(i) * 0.31830988618) * 2 * .pi
             let fast  = Self.frac(Double(i) * 0.9) > 0.55
             made.append(Star(x: x, y: y, r: r, phase: phase, fast: fast))
@@ -179,8 +179,8 @@ struct ParallaxDeepBackground: View {
                 let breathe = 0.55 + 0.45 * (0.5 + 0.5 * sin(t * .pi * 2 / 18))
                 ZStack {
                     base
-                    RadialGradient(colors: [nebNavy.opacity(0.16 * breathe),
-                                            nebViolet.opacity(0.07 * breathe), .clear],
+                    RadialGradient(colors: [nebNavy.opacity(0.08 * breathe),
+                                            nebViolet.opacity(0.035 * breathe), .clear],
                                    center: UnitPoint(x: 0.8, y: 0.18),
                                    startRadius: 0, endRadius: d * 0.85)
                         .blendMode(.plusLighter)
@@ -196,7 +196,7 @@ struct ParallaxDeepBackground: View {
                             if px < 0 { px += w }
                             let py = star.y * h
                             let tw = 0.5 + 0.5 * sin(t * 1.1 + star.phase)
-                            let alpha = 0.05 + 0.12 * tw
+                            let alpha = 0.10 + 0.42 * tw   // brighter — stars pop on pitch black
                             let rect = CGRect(x: px - star.r / 2, y: py - star.r / 2,
                                               width: star.r, height: star.r)
                             ctx.fill(Path(ellipseIn: rect), with: .color(starCol.opacity(alpha)))

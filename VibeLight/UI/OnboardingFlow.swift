@@ -22,7 +22,9 @@ struct OnboardingFlow: View {
                 .animation(.easeInOut(duration: 0.6), value: step)
 
             content
-                .frame(maxWidth: 980)
+                // The theme picker runs edge-to-edge like Settings ▸ Themes; every
+                // other step stays in a comfortable centered column.
+                .frame(maxWidth: step == .theme ? .infinity : 980)
                 .padding(.horizontal, 40)
                 .id(step)
                 .transition(.asymmetric(
