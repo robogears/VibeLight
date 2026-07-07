@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 9
+    static let requiredSetupVersion = 10
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -1193,7 +1193,7 @@ final class AppState {
     /// Advance to the next wizard step (hopping over any skipped ones), or finish.
     func advanceOnboarding() {
         guard let step = onboardingStep else { return }
-        sfx.play(step == .finish ? .quack : .select)   // quack on "Jump in"
+        sfx.play(.select)
         var raw = step.rawValue + 1
         while let s = OnboardingStep(rawValue: raw), shouldSkipStep(s) { raw += 1 }
         if let next = OnboardingStep(rawValue: raw) {

@@ -308,9 +308,6 @@ private struct FinishStep: View {
             Text("You're all set")
                 .font(.system(size: 44, weight: .black, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
-            Text("\(state.backgroundTheme.title)  ·  \(state.value(for: .resolution))  ·  \(state.settings.fps) fps  ·  \(state.settings.bitrateKbps / 1000) Mbps")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.textSecondary)
             OnboardingButton(title: "Jump in", prominent: true) { state.advanceOnboarding() }
                 .padding(.top, 6)
         }
