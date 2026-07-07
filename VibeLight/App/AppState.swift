@@ -176,6 +176,15 @@ final class AppState {
         didSet { persistSettings() }
     }
 
+    /// The launcher background style (Settings ▸ Themes). Global appearance pref,
+    /// stored on its own key so it's NOT captured into per-session stream presets.
+    var backgroundTheme: BackgroundTheme = .ambient {
+        didSet {
+            guard oldValue != backgroundTheme else { return }
+            UserDefaults.standard.set(backgroundTheme.rawValue, forKey: Self.backgroundThemeKey)
+        }
+    }
+
     /// Settings rows currently adjustable via left/right (vList doesn't consume
     /// horizontal moves — that's how value adjustment works).
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -213,6 +222,7 @@ final class AppState {
     }
 
     private static let settingsKey = "vibelight.streamSettings"
+    private static let backgroundThemeKey = "vibelight.backgroundTheme"
 
     // MARK: - Boot
 
@@ -249,6 +259,10 @@ final class AppState {
         loaded.bitrateKbps = min(max(((loaded.bitrateKbps + step / 2) / step) * step,
                                      Self.bitrateMin), Self.bitrateMax)
         settings = loaded
+        if let raw = UserDefaults.standard.string(forKey: Self.backgroundThemeKey),
+           let theme = BackgroundTheme(rawValue: raw) {
+            backgroundTheme = theme   // didSet doesn't fire during init
+        }
 
         importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
         addedHosts = Self.loadAddedHosts()
@@ -1558,6 +1572,7 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss
         case touchControls, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
+        case background
         case appVersion, checkUpdates
 
         var focusID: String { "setting:\(rawValue)" }
@@ -1594,6 +1609,7 @@ final class AppState {
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
             case .stopStreamOnExit: "Quit Game on App Exit"
+            case .background: "Background"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             }
@@ -1602,11 +1618,11 @@ final class AppState {
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, input, advanced, about
+        case video, audio, input, advanced, themes, about
         var title: String {
             switch self {
             case .video: "Video"; case .audio: "Audio"; case .input: "Input"
-            case .advanced: "Advanced"; case .about: "About"
+            case .advanced: "Advanced"; case .themes: "Themes"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
@@ -1626,6 +1642,7 @@ final class AppState {
                 #endif
             case .about: [.appVersion, .checkUpdates]
             case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+            case .themes: [.background]
             }
         }
     }
@@ -1723,6 +1740,7 @@ final class AppState {
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
         case .stopStreamOnExit: settings.stopStreamOnExit ? "On" : "Off"
+        case .background: backgroundTheme.title
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         }
@@ -1787,6 +1805,7 @@ final class AppState {
         case .keepAwake: settings.keepAwake.toggle(); refreshKeepAwake()
         case .performanceOverlay: settings.performanceOverlay.toggle()
         case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
+        case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
         case .appVersion, .checkUpdates: break  // not value rows
         }
     }

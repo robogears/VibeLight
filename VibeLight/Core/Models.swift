@@ -118,6 +118,19 @@ enum CaptureSystemKeys: String, Codable, CaseIterable, Sendable {
 /// Codable is DECODE-lenient (custom `init(from:)` with `decodeIfPresent`) so
 /// adding a field never invalidates a user's saved settings — missing keys just
 /// take the fallback default.
+/// The launcher's background style (Settings ▸ Themes). A GLOBAL app appearance
+/// preference — deliberately NOT part of `StreamSettings`, so it's never captured
+/// into a per-session stream preset.
+enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
+    case ambient, diagonal
+    var title: String {
+        switch self {
+        case .ambient: "Ambient"
+        case .diagonal: "Diagonal Drift"
+        }
+    }
+}
+
 struct StreamSettings: Sendable, Codable, Equatable {
     // Video
     var width: Int

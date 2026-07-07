@@ -150,7 +150,7 @@ struct LauncherContent: View {
 
     var body: some View {
         ZStack {
-            AmbientBackground()
+            AppBackground(theme: state.backgroundTheme)
 
             switch state.screen {
             case .home:
@@ -278,33 +278,3 @@ private struct ExternalDisplayPlaceholder: View {
 }
 #endif
 
-/// Deep console-dark backdrop with a slow-breathing accent wash — gives the
-/// whole app the ambient glow Big Picture screens have, without any artwork
-/// dependency.
-private struct AmbientBackground: View {
-    @State private var breathe = false
-
-    var body: some View {
-        ZStack {
-            Theme.background
-
-            RadialGradient(
-                colors: [Theme.accent.opacity(breathe ? 0.16 : 0.09), .clear],
-                center: .init(x: 0.25, y: 0.15),
-                startRadius: 0,
-                endRadius: 900
-            )
-            RadialGradient(
-                colors: [Color(red: 0.45, green: 0.2, blue: 0.75).opacity(breathe ? 0.08 : 0.13), .clear],
-                center: .init(x: 0.85, y: 0.85),
-                startRadius: 0,
-                endRadius: 800
-            )
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) {
-                breathe = true
-            }
-        }
-    }
-}
