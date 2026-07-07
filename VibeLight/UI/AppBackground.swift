@@ -316,6 +316,18 @@ struct ThemeCard: View {
                         .background(.black.opacity(0.4), in: Capsule())
                         .padding(8)
                 }
+                // A little red "my favourite" flag on Parallax Deep — same chip style.
+                .overlay(alignment: .bottomLeading) {
+                    if theme == .parallaxDeep {
+                        Text("my favourite")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.black.opacity(0.4), in: Capsule())
+                            .padding(8)
+                    }
+                }
                 .shadow(color: selected ? Theme.accentGlow : .black.opacity(0.4),
                         radius: selected ? 20 : 8, y: 5)
             Text(theme.title)
