@@ -26,6 +26,10 @@ final class MenuSFX {
     private var buffers: [Effect: AVAudioPCMBuffer] = [:]
     private var engineStarted = false
     private var loggedFailure = false
+    /// The quack is a real recording (Resources/quack.mp3), played via a simple
+    /// AVAudioPlayer; the synthesized `.quack` buffer stays a fallback if the
+    /// file is ever missing from the bundle.
+    private var quackPlayer: AVAudioPlayer?
 
     private static let sampleRate: Double = 44_100
 
@@ -53,9 +57,22 @@ final class MenuSFX {
                        (523.3, 0.14), (659.3, 0.14), (784.0, 1.0)],
             gain: 0.27, format: format)
         buffers[.quack] = Self.quack(gain: 0.28, format: format)
+
+        if let url = Bundle.main.url(forResource: "quack", withExtension: "mp3"),
+           let player = try? AVAudioPlayer(contentsOf: url) {
+            player.volume = 0.85
+            player.prepareToPlay()
+            quackPlayer = player
+        }
     }
 
     func play(_ effect: Effect) {
+        // The quack plays the bundled recording; everything else is synth PCM.
+        if effect == .quack, let quackPlayer {
+            quackPlayer.currentTime = 0
+            quackPlayer.play()
+            return
+        }
         guard let buffer = buffers[effect] else { return }
         if !engineStarted {
             do {

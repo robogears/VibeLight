@@ -153,7 +153,8 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
 - Reset all input repeat state on `didBecomeActiveNotification` — releases are
   dropped while backgrounded (runaway-repeat bug otherwise).
 - One focus spring animation everywhere: `Theme.focusSpring`. Menu SFX
-  (`UI/MenuSFX.swift`, synthesized PCM — no assets) tick alongside haptics.
+  (`UI/MenuSFX.swift`, mostly synthesized PCM; the setup quack is the one
+  bundled asset, `VibeLight/Resources/quack.mp3`) tick alongside haptics.
 - iOS is landscape-only (Info.plist + `UIApplicationDelegateAdaptor`); the
   hint bar becomes tappable label buttons when no controller is driving.
 
