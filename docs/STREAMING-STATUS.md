@@ -57,9 +57,36 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 - Rumble (ConnListenerRumble → GCController.haptics)
 - Frame pacing / A-V sync polish; stats HUD could add host fps + loss %
 
-Done since: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
+Done since: **external display / TV output** (`App/iOS/ExternalDisplay.swift` —
+device-verified). When a TV/monitor is attached, the stream renders on it at the
+display's NATIVE resolution while the iPad keeps controls + acts as a trackpad.
+KEY LESSON: needs a real `UIWindowScene` — the legacy `UIWindow.screen=` API no
+longer renders on external screens, and iOS only creates the external scene when
+`UIApplicationSupportsMultipleScenes: true` is in the Info.plist (with
+`UIRequiresFullScreen` still true so no Split View). Setting: Settings ▸ Video ▸
+Use TV / Monitor (default on, auto-engages). Something stock moonlight-ios can't
+do (their issue #634, open since 2024).
+
+Also done: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
 with double-tap deadzone; Settings ▸ Input ▸ Touch Control), keep-awake during
 stream (`refreshKeepAwake` — Auto-Lock killed an 8-minute session; gamepad
-input never resets the idle timer), and iOS "Quit Game on App Exit"
+input never resets the idle timer), iOS "Quit Game on App Exit"
 (scenePhase .background → teardown + /cancel in a UIKit background task; also
-prevents host-side stale-session poisoning on relaunch).
+prevents host-side stale-session poisoning on relaunch), and PS/Home-button
+delivery in-stream (disable system gestures on the pad while streaming).
+
+## QoL roadmap (from deep-research, ranked by demand × solo-app feasibility)
+
+1. Clipboard sync (client↔host text) — most-reacted open moonlight-qt issue;
+   Apollo/Vibepollo has the host side, reverse the wire format from Artemis.
+2. Client-driven virtual display (host makes a display matching the client) —
+   Apollo's headline differentiator; VibeLight already sends res/fps in /launch.
+3. "Match current display" auto stream-mode (macOS side; iOS already native).
+4. iOS keyboard — virtual + hardware passthrough (killer combo with WoL: the
+   Windows login prompt after wake).
+5. ✅ iPad → external display at native res — DONE (above).
+6. In-stream touch-mode switcher (direct / trackpad / off, mid-session).
+7. Surface Apollo per-client tier (permissions, input-only, connect/disconnect
+   commands like auto-pause).
+8. Custom on-screen buttons (keyboard commands as tappable buttons).
+- Microphone passthrough: high demand but blocked on unmerged host PRs — watch.
