@@ -98,6 +98,13 @@ final class InProcessStreamEngine: StreamEngine {
             // hdrMode=1 in /launch while negotiating an SDR stream makes hosts
             // engage HDR for a client that can't display it.
             effective.hdr = false
+            // A TV / monitor is attached → stream at ITS native resolution and
+            // render there (fullscreen, sharp) instead of mirroring the iPad.
+            if settings.externalDisplay, let tv = ExternalDisplay.shared.pixelSize {
+                effective.width = (Int(tv.width) / 2) * 2      // H.264 needs even dims
+                effective.height = (Int(tv.height) / 2) * 2
+                NSLog("[VibeLight] external display: streaming at \(effective.width)×\(effective.height)")
+            }
 
             // Remote-input AES material: rikey = 16 random bytes (hex), rikeyid =
             // a positive 31-bit int whose big-endian bytes seed the IV.
@@ -138,6 +145,9 @@ final class InProcessStreamEngine: StreamEngine {
             session.delegate = proxy
             displayLayer.flush()
             session.attach(displayLayer)
+            // Route the video to the TV if one is attached (else it stays on the
+            // iPad's StreamView). Safe when no display is connected — no-op.
+            if settings.externalDisplay { ExternalDisplay.shared.present(displayLayer) }
             self.session = session
             self.launchingApp = app
             session.start()
@@ -152,6 +162,7 @@ final class InProcessStreamEngine: StreamEngine {
     func disconnect() {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
         session = nil
         proxy = nil
@@ -381,6 +392,7 @@ final class InProcessStreamEngine: StreamEngine {
         remoteQuitRequested = true
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
         session = nil
         do {
@@ -427,12 +439,14 @@ final class InProcessStreamEngine: StreamEngine {
     fileprivate func handleFail(stage: MoonlightStage, error: Int) {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         phase = .failed("Stream failed at stage \(stage.rawValue) (error \(error)). Make sure the host is awake and not busy.")
     }
 
     fileprivate func handleTerminated(error: Int) {
         setStreamInput(active: false)
         setStatsHUD(active: false)
+        ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         // Remote termination only DELIVERS the callback — the connection's
         // receive threads and the audio unit keep running until LiStopConnection.
         // Without this, a host-side quit leaks the whole stream stack.

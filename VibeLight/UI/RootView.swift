@@ -27,8 +27,12 @@ struct RootView: View {
         // Live stream covers the whole screen (unscaled) while it's up.
         .overlay {
             if case .streaming = state.session.phase {
-                StreamView(layer: state.session.displayLayer, engine: state.session)
+                // A TV is showing the video → the iPad keeps only the controls
+                // and acts as a trackpad (StreamView doesn't host the layer).
+                let onTV = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
+                StreamView(layer: state.session.displayLayer, engine: state.session, hostsLayer: !onTV)
                     .ignoresSafeArea()
+                    .overlay { if onTV { ExternalDisplayPlaceholder() } }
                     .overlay(alignment: .topLeading) {
                         // Performance HUD (Settings ▸ Advanced ▸ Performance Stats).
                         if let stats = state.session.perfStats {
@@ -117,6 +121,32 @@ struct RootView: View {
         #endif
     }
 }
+
+#if os(iOS)
+/// Shown on the iPad while the video is playing on a connected TV / monitor.
+/// The iPad screen still forwards touches (trackpad), so this is a calm status
+/// panel, not a dead end.
+private struct ExternalDisplayPlaceholder: View {
+    var body: some View {
+        ZStack {
+            Color.black
+            VStack(spacing: 16) {
+                Image(systemName: "tv")
+                    .font(.system(size: 54, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                Text("Playing on \(ExternalDisplay.shared.name)")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("This screen is a trackpad — drag to move the cursor.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .allowsHitTesting(false)   // touches fall through to the stream trackpad
+        .ignoresSafeArea()
+    }
+}
+#endif
 
 /// Deep console-dark backdrop with a slow-breathing accent wash — gives the
 /// whole app the ambient glow Big Picture screens have, without any artwork

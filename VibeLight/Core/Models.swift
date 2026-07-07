@@ -140,6 +140,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
     var swapGamepadButtons: Bool
     var backgroundGamepad: Bool
     var touchControls: Bool        // iOS: direct touch drives the remote screen
+    var externalDisplay: Bool      // iOS: stream to a connected TV at its native res
     // Advanced
     var vsync: Bool
     var framePacing: Bool
@@ -157,6 +158,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
          muteOnFocusLoss: Bool = false, absoluteMouse: Bool = false, swapMouseButtons: Bool = false,
          reverseScrolling: Bool = false, captureSystemKeys: CaptureSystemKeys = .fullscreen,
          swapGamepadButtons: Bool = false, backgroundGamepad: Bool = false, touchControls: Bool = true,
+         externalDisplay: Bool = true,
          vsync: Bool = true,
          framePacing: Bool = false, gameOptimizations: Bool = true, quitAppAfter: Bool = false,
          keepAwake: Bool = true, performanceOverlay: Bool = false, stopStreamOnExit: Bool = true) {
@@ -166,7 +168,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
         self.absoluteMouse = absoluteMouse; self.swapMouseButtons = swapMouseButtons
         self.reverseScrolling = reverseScrolling; self.captureSystemKeys = captureSystemKeys
         self.swapGamepadButtons = swapGamepadButtons; self.backgroundGamepad = backgroundGamepad
-        self.touchControls = touchControls
+        self.touchControls = touchControls; self.externalDisplay = externalDisplay
         self.vsync = vsync; self.framePacing = framePacing; self.gameOptimizations = gameOptimizations
         self.quitAppAfter = quitAppAfter; self.keepAwake = keepAwake; self.performanceOverlay = performanceOverlay
         self.stopStreamOnExit = stopStreamOnExit
@@ -193,6 +195,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
         swapGamepadButtons = try c.decodeIfPresent(Bool.self, forKey: .swapGamepadButtons) ?? f.swapGamepadButtons
         backgroundGamepad = try c.decodeIfPresent(Bool.self, forKey: .backgroundGamepad) ?? f.backgroundGamepad
         touchControls = try c.decodeIfPresent(Bool.self, forKey: .touchControls) ?? f.touchControls
+        externalDisplay = try c.decodeIfPresent(Bool.self, forKey: .externalDisplay) ?? f.externalDisplay
         vsync = try c.decodeIfPresent(Bool.self, forKey: .vsync) ?? f.vsync
         framePacing = try c.decodeIfPresent(Bool.self, forKey: .framePacing) ?? f.framePacing
         gameOptimizations = try c.decodeIfPresent(Bool.self, forKey: .gameOptimizations) ?? f.gameOptimizations

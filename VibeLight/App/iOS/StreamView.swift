@@ -14,19 +14,24 @@ struct StreamView: UIViewRepresentable {
     let layer: AVSampleBufferDisplayLayer
     /// The engine to forward touches to; nil disables touch control entirely.
     weak var engine: InProcessStreamEngine?
+    /// False when a TV owns the video (ExternalDisplay) — then this view must NOT
+    /// touch the layer (a layer has one superlayer; re-attaching here would yank
+    /// it off the TV). Touch forwarding stays live so the iPad is still a trackpad.
+    var hostsLayer = true
 
     func makeUIView(context: Context) -> DisplayLayerView {
         let view = DisplayLayerView()
         view.backgroundColor = .black
         view.isMultipleTouchEnabled = true
-        view.attach(layer)
         view.engine = engine
+        if hostsLayer { view.attach(layer) }
         return view
     }
 
     func updateUIView(_ view: DisplayLayerView, context: Context) {
-        view.attach(layer)
         view.engine = engine
+        if hostsLayer { view.attach(layer) }
+        // When !hostsLayer the external display owns the layer — leave it alone.
     }
 
     final class DisplayLayerView: UIView {
