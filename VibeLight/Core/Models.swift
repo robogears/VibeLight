@@ -122,11 +122,30 @@ enum CaptureSystemKeys: String, Codable, CaseIterable, Sendable {
 /// preference — deliberately NOT part of `StreamSettings`, so it's never captured
 /// into a per-session stream preset.
 enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
-    case ambient, diagonal
+    // Order here IS the picker/cycle order — STATIC themes first, then ANIMATED
+    // ones (see `isAnimated`). Raw values are frozen (they persist in
+    // UserDefaults) — never rename an existing case; reordering cases is fine.
+    case nightfallSheen, inkPool,                                      // static
+         livingGlass, parallaxDeep, constellation, ambient, diagonal   // animated
+
     var title: String {
         switch self {
-        case .ambient: "Ambient"
-        case .diagonal: "Diagonal Drift"
+        case .nightfallSheen: "Nightfall Sheen"
+        case .inkPool:        "Ink Pool"
+        case .livingGlass:    "Living Glass"
+        case .parallaxDeep:   "Parallax Deep"
+        case .constellation:  "Constellation"
+        case .ambient:        "Ambient"
+        case .diagonal:       "Diagonal Drift"
+        }
+    }
+
+    /// Whether the theme moves — drives the "Static"/"Animated" tag on each
+    /// preview card and the static-first ordering above.
+    var isAnimated: Bool {
+        switch self {
+        case .nightfallSheen, .inkPool: false
+        default:                        true
         }
     }
 }

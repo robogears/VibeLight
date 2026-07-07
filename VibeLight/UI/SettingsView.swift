@@ -34,7 +34,7 @@ struct SettingsView: View {
                         // Background row, so the choice is something you SEE.
                         if state.settingsTab == .themes {
                             ThemePreviewStrip()
-                                .padding(.top, 56)      // sit a touch lower — less top-heavy
+                                .padding(.top, 38)      // sit a touch lower — less top-heavy
                                 .padding(.bottom, 8)
                         }
                         ForEach(state.settingsTab.rows, id: \.rawValue) { row in
@@ -281,12 +281,24 @@ private struct ThemePreviewStrip: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        HStack(spacing: 22) {
-            ForEach(BackgroundTheme.allCases, id: \.self) { theme in
-                ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 210)
-                    .onTapGesture { state.backgroundTheme = theme }
+        // Horizontal scroll so any number of themes fits without squishing; the
+        // selected card is kept centered as the controller cycles through them.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 22) {
+                    ForEach(BackgroundTheme.allCases, id: \.self) { theme in
+                        ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 200)
+                            .id(theme)
+                            .onTapGesture { state.backgroundTheme = theme }
+                    }
+                }
+                .padding(.vertical, 24)
+                .padding(.horizontal, 2)
             }
-            Spacer(minLength: 0)
+            .onChange(of: state.backgroundTheme) { _, theme in
+                withAnimation(Theme.focusSpring) { proxy.scrollTo(theme, anchor: .center) }
+            }
+            .onAppear { proxy.scrollTo(state.backgroundTheme, anchor: .center) }
         }
     }
 }

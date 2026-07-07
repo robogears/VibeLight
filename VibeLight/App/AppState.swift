@@ -205,7 +205,7 @@ final class AppState {
     /// when a new setup step is added). The wizard shows whenever the user's
     /// stored completed version is below this. (Switching to this versioned key
     /// from the old boolean also re-shows setup once for everyone now.)
-    static let requiredSetupVersion = 10
+    static let requiredSetupVersion = 11
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -1217,6 +1217,7 @@ final class AppState {
     /// Called at the END of the finale (not the moment "Jump in" is pressed):
     /// persist the completed version and drop into the launcher.
     func completeSetup() {
+        guard onboardingStep != nil else { return }   // idempotent — never re-deal the intro
         UserDefaults.standard.set(Self.requiredSetupVersion, forKey: Self.setupVersionKey)
         // Clear the overlay FIRST → it fades out to reveal the bare background
         // with the UI still hidden (the intro hasn't started, so every element is

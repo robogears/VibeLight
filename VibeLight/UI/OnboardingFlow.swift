@@ -68,6 +68,7 @@ private struct WelcomeStep: View {
     @Environment(AppState.self) private var state
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown = false
+    @State private var started = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -83,13 +84,19 @@ private struct WelcomeStep: View {
         .opacity(shown ? 1 : 0)
         .blur(radius: shown ? 0 : (reduceMotion ? 0 : 8))
         .onAppear {
+            guard !started else { return }   // onAppear can fire twice — run once
+            started = true
             state.beginOnboardingSession()   // snapshot preset state for step-skipping
-            state.playQuack()   // 🦆 hello
-            withAnimation(LaunchIntro.reveal) { shown = true }
-            // Hold the moment, then hand off to the first step. The step change
-            // itself animates (Theme.focusSpring) so it reads as a pop-forward.
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2.8))
+                // Let the background breathe on its own first — a beat of calm
+                // before anything appears.
+                try? await Task.sleep(for: .seconds(1.0))
+                guard state.onboardingStep == .welcome else { return }
+                state.playQuack()   // 🦆 hello — lands with the wordmark
+                withAnimation(LaunchIntro.reveal) { shown = true }
+                // Hold the greeting a beat longer, then hand off. The step change
+                // itself animates (Theme.focusSpring) so it reads as a pop-forward.
+                try? await Task.sleep(for: .seconds(3.8))
                 if state.onboardingStep == .welcome { state.advanceOnboarding() }
             }
         }
@@ -107,6 +114,7 @@ private struct FinaleStep: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown = false
     @State private var faded = false
+    @State private var started = false
 
     var body: some View {
         Text("VibeLight")
@@ -120,6 +128,8 @@ private struct FinaleStep: View {
     }
 
     private func runFinale() {
+        guard !started else { return }   // onAppear can fire twice — run once
+        started = true
         state.playLaunchCue()                                    // the cool swell
         withAnimation(.easeOut(duration: 0.8)) { shown = true }  // reveal, front-and-center
         Task { @MainActor in
@@ -142,11 +152,24 @@ private struct ThemeStep: View {
             subtitle: "Change it anytime in Settings ▸ Themes.",
             primary: "Continue"
         ) {
-            HStack(spacing: 28) {
-                ForEach(BackgroundTheme.allCases, id: \.self) { theme in
-                    ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 260)
-                        .onTapGesture { state.backgroundTheme = theme }
+            // Scrolls so every theme fits; the selected card is kept centered as
+            // the controller/keyboard cycles (◀ ▶), and touch can swipe freely.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 26) {
+                        ForEach(BackgroundTheme.allCases, id: \.self) { theme in
+                            ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 240)
+                                .id(theme)
+                                .onTapGesture { state.backgroundTheme = theme }
+                        }
+                    }
+                    .padding(.horizontal, 60)
+                    .padding(.vertical, 24)
                 }
+                .onChange(of: state.backgroundTheme) { _, theme in
+                    withAnimation(Theme.focusSpring) { proxy.scrollTo(theme, anchor: .center) }
+                }
+                .onAppear { proxy.scrollTo(state.backgroundTheme, anchor: .center) }
             }
         }
     }
