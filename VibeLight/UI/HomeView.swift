@@ -24,7 +24,7 @@ struct HomeView: View {
             HeaderBar()
                 .padding(.horizontal, 72)
                 .padding(.top, 48)
-                .introReveal(state.intro.arrived(LaunchIntro.header), y: -14)   // drops in from the top
+                .introReveal(state.intro.arrived(LaunchIntro.header), y: -8)   // eases in from the top
 
             Spacer(minLength: 0)
 
@@ -56,7 +56,7 @@ struct HomeView: View {
             .frame(height: 110, alignment: .leading)
             .padding(.horizontal, 72)
             .animation(Theme.focusSpring, value: state.focus.focusedItemID)
-            .introReveal(state.intro.arrived(LaunchIntro.hero), y: 12)
+            .introReveal(state.intro.arrived(LaunchIntro.hero), y: 8)
 
             AppShelf()
                 .padding(.top, 18)
@@ -66,7 +66,7 @@ struct HomeView: View {
             HintBarView()
                 .padding(.horizontal, 72)
                 .padding(.bottom, 36)
-                .introReveal(state.intro.arrived(LaunchIntro.late), y: 10)
+                .introReveal(state.intro.arrived(LaunchIntro.late), y: 6)
         }
     }
 }

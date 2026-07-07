@@ -28,9 +28,16 @@ final class LaunchIntro {
     // tileCap)`), then the focus ring + hint bar + preset rail on `late`.
     static let header = 1, hero = 2, tileBase = 3, tileCap = 5, late = 9
 
-    /// Absolute ms from start for beats 1…late — front-loaded header/hero, a
-    /// paced shelf cascade, then a beat of settle before the focus ring lands.
-    @ObservationIgnored private let schedule = [150, 430, 660, 790, 910, 1020, 1120, 1210, 1650]
+    /// Absolute ms from start for beats 1…late — spread over ~3s so the UI looks
+    /// like it's gently rebuilding itself: header/hero, a paced shelf cascade,
+    /// then a longer settle before the focus ring lands.
+    @ObservationIgnored private let schedule = [250, 620, 980, 1180, 1380, 1560, 1740, 1900, 2450]
+
+    /// A gentle, slow settle (not the snappy focus spring) — each piece fades and
+    /// eases into place so the whole thing reads "fade in / reassembling", not
+    /// "dealt". Long relative to the beat spacing, so pieces materialize in an
+    /// overlapping wave.
+    static let reveal = Animation.spring(response: 0.85, dampingFraction: 0.98)
 
     /// Start the sequence. Idempotent — only the first call does anything.
     func begin() {
@@ -42,9 +49,9 @@ final class LaunchIntro {
             for (i, ms) in self.schedule.enumerated() {
                 try? await Task.sleep(for: .milliseconds(ms - prev)); prev = ms
                 if Task.isCancelled { return }
-                withAnimation(Theme.focusSpring) { self.beat = i + 1 }
+                withAnimation(Self.reveal) { self.beat = i + 1 }
             }
-            try? await Task.sleep(for: .milliseconds(280))
+            try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled { self.finished = true }
         }
     }
@@ -73,8 +80,8 @@ final class LaunchIntro {
 /// spatial focus engine's geometry is untouched.
 struct IntroReveal: ViewModifier {
     let visible: Bool
-    var y: CGFloat = 20
-    var blur: CGFloat = 6
+    var y: CGFloat = 10
+    var blur: CGFloat = 8
     func body(content: Content) -> some View {
         content
             .blur(radius: visible ? 0 : blur)
@@ -84,7 +91,9 @@ struct IntroReveal: ViewModifier {
 }
 
 extension View {
-    func introReveal(_ visible: Bool, y: CGFloat = 20, blur: CGFloat = 6) -> some View {
+    // Small offset + a soft blur that clears: opacity + un-blur do most of the
+    // work, so pieces "materialize" (fade in) rather than slide in.
+    func introReveal(_ visible: Bool, y: CGFloat = 10, blur: CGFloat = 8) -> some View {
         modifier(IntroReveal(visible: visible, y: y, blur: blur))
     }
 }
