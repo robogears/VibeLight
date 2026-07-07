@@ -34,6 +34,7 @@ enum Overlay: Equatable {
 /// until `hasCompletedSetup`, and re-triggerable from Settings ▸ Restart Setup.
 enum OnboardingStep: Int, CaseIterable, Equatable {
     case welcome, theme, quality, presets, finish
+    case finale   // cinematic hand-off after "Jump in" — non-interactive
 }
 
 /// The composition root: owns every module, routes navigation events, and
@@ -200,10 +201,11 @@ final class AppState {
     /// Which quality control (resolution / fps / bitrate) is focused on the
     /// quality step (0…2).
     private(set) var onboardingQualityFocus = 0
-    /// Set once the user finishes (or a fresh install hasn't). Persisted so the
-    /// wizard shows exactly once — a NEW key, so every existing user sees it once
-    /// after this update too.
-    private var hasCompletedSetup = false
+    /// Bump this to FORCE every user to redo setup on their next update (e.g.
+    /// when a new setup step is added). The wizard shows whenever the user's
+    /// stored completed version is below this. (Switching to this versioned key
+    /// from the old boolean also re-shows setup once for everyone now.)
+    static let requiredSetupVersion = 1
     /// The three quality controls the wizard asks about, in order.
     let onboardingQualityRows: [SettingsRow] = [.resolution, .fps, .bitrate]
     var isOnboarding: Bool { onboardingStep != nil }
@@ -246,7 +248,7 @@ final class AppState {
 
     private static let settingsKey = "vibelight.streamSettings"
     private static let backgroundThemeKey = "vibelight.backgroundTheme"
-    private static let setupCompleteKey = "vibelight.setupComplete.v1"
+    private static let setupVersionKey = "vibelight.setupVersion"
 
     // MARK: - Boot
 
@@ -287,10 +289,10 @@ final class AppState {
            let theme = BackgroundTheme(rawValue: raw) {
             backgroundTheme = theme   // didSet doesn't fire during init
         }
-        // First run (or first launch after this update — a fresh key) → the
-        // unskippable setup wizard.
-        hasCompletedSetup = UserDefaults.standard.bool(forKey: Self.setupCompleteKey)
-        if !hasCompletedSetup { onboardingStep = .welcome }
+        // Show the setup wizard when the user hasn't completed the CURRENT
+        // required version (fresh install → 0; a bump forces a redo for all).
+        let completedSetup = UserDefaults.standard.integer(forKey: Self.setupVersionKey)
+        if completedSetup < Self.requiredSetupVersion { onboardingStep = .welcome }
 
         importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
         addedHosts = Self.loadAddedHosts()
@@ -1181,12 +1183,17 @@ final class AppState {
 
     /// Finish: persist so the wizard never shows again, and hand off to the
     /// launcher (which plays its own deal-in intro right after).
+    /// Called at the END of the finale (not the moment "Jump in" is pressed):
+    /// persist the completed version, drop into the launcher, and play the
+    /// deal-in intro (which was skipped while setup was up).
     func completeSetup() {
-        hasCompletedSetup = true
-        UserDefaults.standard.set(true, forKey: Self.setupCompleteKey)
+        UserDefaults.standard.set(Self.requiredSetupVersion, forKey: Self.setupVersionKey)
         onboardingStep = nil
-        intro.begin()   // now play the launcher deal-in (skipped while setup showed)
+        intro.begin()
     }
+
+    /// The setup finale's "arrival" swell (played by `FinaleStep`).
+    func playLaunchCue() { sfx.play(.launch) }
 
     /// Settings ▸ Restart Setup — replay the wizard from the top.
     func restartSetup() {
@@ -1228,8 +1235,10 @@ final class AppState {
             if event == .select || event == .move(.right) { advanceOnboarding() }
             else if event == .back { backOnboarding() }
         case .finish:
-            if event == .select { completeSetup() }
+            if event == .select { advanceOnboarding() }   // → the cinematic finale
             else if event == .back { backOnboarding() }
+        case .finale:
+            break   // non-interactive; FinaleStep auto-hands off to the launcher
         }
     }
 

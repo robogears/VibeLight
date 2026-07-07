@@ -17,6 +17,7 @@ final class MenuSFX {
         case select     // confirm — bright two-tone up
         case back       // dismiss — soft tone down
         case restart    // restart PC — a distinctive power-cycle motif
+        case launch     // setup finale — a warm rising "arrival" swell
     }
 
     private let engine = AVAudioEngine()
@@ -43,6 +44,11 @@ final class MenuSFX {
         // resolve (E5 → G#4 → G#5), ~200 ms. Unmistakably the reboot cue.
         buffers[.restart] = Self.blip(
             segments: [(659.3, 0.05), (415.3, 0.05), (830.6, 0.10)], gain: 0.20, format: format)
+        // launch: a warm rising arrival (C4 → E4 → G4 → C5), ~450 ms, fuller and
+        // a touch louder — the "welcome in" swell as setup hands off to the app.
+        buffers[.launch] = Self.blip(
+            segments: [(261.6, 0.09), (329.6, 0.09), (392.0, 0.09), (523.3, 0.19)],
+            gain: 0.26, format: format)
     }
 
     func play(_ effect: Effect) {

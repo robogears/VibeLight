@@ -15,8 +15,8 @@ struct OnboardingFlow: View {
             // Live, blurred background that morphs as the user picks a theme —
             // it previews the product the whole time. Heavier blur on welcome.
             AppBackground(theme: state.backgroundTheme)
-                .blur(radius: step == .welcome ? 42 : 16)
-                .overlay(Color.black.opacity(step == .welcome ? 0.38 : 0.5))
+                .blur(radius: bigMoment ? 42 : 16)
+                .overlay(Color.black.opacity(bigMoment ? 0.42 : 0.5))
                 .ignoresSafeArea()
                 .animation(.easeInOut(duration: 0.6), value: state.backgroundTheme)
                 .animation(.easeInOut(duration: 0.6), value: step)
@@ -29,13 +29,14 @@ struct OnboardingFlow: View {
                     insertion: .opacity.combined(with: .scale(scale: 0.96)),
                     removal: .opacity))
 
-            // Persistent chrome: progress pips up top, hint bar at the bottom.
+            // Persistent chrome: progress pips up top, hint bar at the bottom —
+            // hidden on the full-screen cinematic beats (welcome + finale).
             VStack {
-                if step != .welcome {
+                if !bigMoment {
                     OnboardingPips(step: step).padding(.top, 44)
                 }
                 Spacer()
-                if step != .welcome {
+                if !bigMoment {
                     OnboardingHints(step: step).padding(.bottom, 40)
                 }
             }
@@ -45,6 +46,10 @@ struct OnboardingFlow: View {
         .animation(Theme.focusSpring, value: step)   // step→step transitions
     }
 
+    /// Welcome + finale are full-screen cinematic beats: no pips, no hint bar,
+    /// heavier blur.
+    private var bigMoment: Bool { step == .welcome || step == .finale }
+
     @ViewBuilder private var content: some View {
         switch step {
         case .welcome: WelcomeStep()
@@ -52,6 +57,7 @@ struct OnboardingFlow: View {
         case .quality: QualityStep()
         case .presets: PresetsStep()
         case .finish:  FinishStep()
+        case .finale:  FinaleStep()
         }
     }
 }
@@ -84,6 +90,41 @@ private struct WelcomeStep: View {
                 try? await Task.sleep(for: .seconds(2.8))
                 if state.onboardingStep == .welcome { state.advanceOnboarding() }
             }
+        }
+    }
+}
+
+// MARK: - Finale
+
+/// The cinematic hand-off after "Jump in": the blurred background holds, the
+/// VibeLight wordmark reveals front-and-center with a warm swell, slowly fades
+/// out, then ~1s of quiet anticipation before the launcher deals itself in
+/// (`completeSetup` → the launch intro). Non-interactive.
+private struct FinaleStep: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
+    @State private var faded = false
+
+    var body: some View {
+        Text("VibeLight")
+            .font(.system(size: 80, weight: .black, design: .rounded))
+            .foregroundStyle(Theme.textPrimary)
+            .shadow(color: Theme.accentGlow, radius: 40)
+            .scaleEffect(shown ? 1 : (reduceMotion ? 1 : 0.9))
+            .opacity(faded ? 0 : (shown ? 1 : 0))
+            .blur(radius: shown ? 0 : (reduceMotion ? 0 : 12))
+            .onAppear(perform: runFinale)
+    }
+
+    private func runFinale() {
+        state.playLaunchCue()                                    // the cool swell
+        withAnimation(.easeOut(duration: 0.8)) { shown = true }  // reveal, front-and-center
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))            // hold on the mark
+            withAnimation(.easeInOut(duration: 0.8)) { faded = true }   // slow fade out
+            try? await Task.sleep(for: .seconds(1.8))            // finish fade + ~1s of nothing
+            state.completeSetup()                               // → the launcher deals in
         }
     }
 }
@@ -265,7 +306,7 @@ private struct FinishStep: View {
             Text("\(state.backgroundTheme.title)  ·  \(state.value(for: .resolution))  ·  \(state.settings.fps) fps  ·  \(state.settings.bitrateKbps / 1000) Mbps")
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme.textSecondary)
-            OnboardingButton(title: "Jump in", prominent: true) { state.completeSetup() }
+            OnboardingButton(title: "Jump in", prominent: true) { state.advanceOnboarding() }
                 .padding(.top, 6)
         }
     }
@@ -350,7 +391,7 @@ private struct OnboardingHints: View {
             }
             hint(step == .finish ? "checkmark.circle" : "arrow.right.circle",
                  step == .finish ? "Jump in" : "Continue") {
-                if step == .finish { state.completeSetup() } else { state.advanceOnboarding() }
+                state.advanceOnboarding()
             }
         }
         .padding(.horizontal, 22)
