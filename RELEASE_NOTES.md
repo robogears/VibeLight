@@ -1,30 +1,26 @@
-# VibeLight v0.1.9 — iPad polish: PS button, rock-solid landscape, calmer sounds
+# VibeLight v0.1.10 — iPad → TV output + hardware keyboard passthrough
 
-### 🎮 The PS / Xbox button works in-stream (iPad & iPhone)
-iOS reserves the PS/Home button (and Share/Options) for its own system gestures, so games never saw it. VibeLight now claims those buttons while streaming — **press the PS button in-game and Steam Big Picture / the PS overlay opens**, just like on Mac. The system gestures come back the moment you leave the stream.
+*This release's headline features are for **iPad / iPhone**. Stream to your big screen at full native resolution, with your iPad as a companion, and type on the host with a hardware keyboard.*
 
-### 🔄 Leave the stream the official Moonlight way
-**Start + Select + L1 + R1** pressed together now exits the stream instantly on iPad — the exact combo the desktop Moonlight client (and the Mac app) uses. The game keeps running on your PC; the tap-✕ button still works too. (Replaces the previous hold-two-buttons gesture.)
+### 📺 Stream to your TV / monitor at native resolution
+Plug your iPad into a TV or monitor and the game streams **there**, full-screen at the display's **native resolution** (1080p, 1440p, 4K — whatever the panel is), while your iPad becomes a **companion screen**. Auto-engages the moment a display is connected. *(Settings ▸ Video ▸ Use TV / Monitor, on by default.)*
 
-### 📐 Landscape lock that actually locks
-Newer iPadOS versions started ignoring the app's declared orientations, letting the UI rotate into a squished portrait layout. VibeLight now actively snaps itself back to landscape on every rotation — portrait is genuinely impossible.
+- **The iPad is your controls + trackpad.** A calm "Playing on _the display_" panel that doubles as a trackpad — drag to move the host cursor.
+- **The launcher lives on the big screen too** when you're not streaming, super-sampled so text and box art stay **crisp even on a 1× 1080p TV**.
+- **OLED-safe.** The companion panel gently drifts so nothing burns in, and **fades to black after 30 seconds** of no touch (any touch wakes it) — no glowing rectangle while you play in the dark.
+- **Perf HUD on both screens** — the stream stats mirror to the iPad *and* the TV.
 
-### 🔊 Calmer, smarter menu sounds
-- Scrolling the games shelf is now **silent** — sounds mark actions, not travel.
-- The **Restart PC** button has its own "power-cycle" cue; hovering it (or the computer chip) gives a soft tick.
-- **Settings are silent** except when you actually change a value.
+### ⌨️ Hardware keyboard → host
+A keyboard attached to your iPad (Magic Keyboard, Bluetooth, USB-C) now **types straight into the game or desktop** you're streaming — letters, arrows, function keys, and **Ctrl / Alt / ⌘ shortcuts**. Works whether the video is on the iPad or the TV. Held keys are released cleanly when you leave, so nothing sticks down in the game.
 
-### 📊 Full stream profile at a glance
-- The home hero now shows **resolution and bitrate** next to FPS (e.g. `HDR · 1440p · 120 FPS · 100 MBPS`).
-- Preset slots show their bitrate too (`1080p · 60 fps · 20 Mbps`), with a wider rail so it all fits.
+### 🎯 Leave-stream ring
+The **Start + Select + L1 + R1** leave chord now shows a **2-second hold ring** (like the launcher's hold-to-quit) instead of firing instantly — deliberate, with clear feedback. The game keeps running on your PC.
 
-### 📖 Shortcuts sheet rewritten
-Per-platform now: iPad shows the four-button leave combo, tap-✕, the PS-button overlay tip, and touch controls; Mac keeps the Moonlight hotkeys. Both list the new d-pad-up shortcut to Restart PC / the computer switcher.
-
-### 🐛 Also
-- Audio-session setup failures are now logged (easier "no sound" debugging).
-- Docs overhauled: the README finally tells the world about iPad/iPhone streaming.
+### 🐛 Fixes
+- **No more black screen on the TV when re-launching** a stream without unplugging — the shared video layer now re-attaches correctly every time.
+- **Opened VibeLight *on* the TV by mistake?** (Stage Manager can launch it there.) It now shows a crisp "Open VibeLight on your iPad — it'll stream here automatically" card instead of a broken layout.
+- Frozen last frame no longer lingers on the TV after a stream ends.
 
 ---
-*Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight will offer this update in-app.*
+*Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight offers this update in-app. (This release is iPad/iPhone-focused — the Mac app is unchanged from 0.1.9.)*
 *Install (iPad/iPhone): build `VibeLight-iOS` from source with Xcode, or sideload via AltStore.*
