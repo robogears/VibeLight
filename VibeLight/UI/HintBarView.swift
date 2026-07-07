@@ -32,9 +32,9 @@ private struct HintChip: View {
     @State private var hovering = false
     @State private var holding = false
 
-    /// Quit hints are press-and-hold (fill the ring), matching the controller;
-    /// every other hint is a plain tap.
-    private var isHold: Bool { event == .quitChord || event == .quitApp }
+    /// Only the quit-GAME hint is press-and-hold (fills the ring). Quit-app (⌘Q /
+    /// the "Quit VibeLight" chip) is an instant tap; everything else taps too.
+    private var isHold: Bool { event == .quitChord }
 
     var body: some View {
         activation(chrome)

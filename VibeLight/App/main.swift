@@ -53,9 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state?.session.disconnect()
     }
 
-    /// Minimal main menu for the standard app-level items a borderless app still
-    /// needs (Settings ⌘, / Hide ⌘H / About / Quit). Quit carries NO ⌘Q
-    /// accelerator — quit is press-and-hold, owned by the keyboard monitor.
+    /// Minimal main menu so ⌘Q / ⌘H / ⌘, work — a borderless app still needs
+    /// standard app-level shortcuts. (⌘⇧Q, the hold-to-quit-game chord, is owned
+    /// by the keyboard monitor, not the menu.)
     private func installMainMenu() {
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
@@ -75,10 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide VibeLight",
                         action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        // No ⌘Q accelerator: quit is press-and-hold (hold ⌘Q on home), owned by
-        // the keyboard monitor. The menu item still quits VibeLight on click.
         appMenu.addItem(withTitle: "Quit VibeLight",
-                        action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+                        action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         NSApp.mainMenu = mainMenu
     }

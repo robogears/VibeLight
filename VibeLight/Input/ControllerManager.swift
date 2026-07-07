@@ -669,28 +669,17 @@ final class ControllerManager {
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        // Chorded bindings: Cmd-, opens settings. Quit is press-and-hold, owned
-        // here rather than the app menu — hold ⌘⇧Q to quit the remote game, hold
-        // ⌘Q to quit VibeLight (home only, same gate as the pad's B-hold). Every
-        // other Cmd/Ctrl/Opt chord belongs to the system or menus and passes
-        // through.
+        // Chorded bindings: Cmd-, opens settings; ⌘⇧Q holds to quit the remote
+        // game (fills the ring, like the pad's Menu-hold). Plain ⌘Q quits
+        // VibeLight instantly via the app menu, so we let it — and every other
+        // Cmd/Ctrl/Opt chord — pass straight through.
         if flags.contains(.command) {
             if event.charactersIgnoringModifiers == "," {
                 emit(.settings)
                 return nil
             }
-            // Quit is press-and-hold, same as controllers: ⌘⇧Q holds to quit the
-            // remote game; ⌘Q holds to quit VibeLight (home only, via the same
-            // gate as the pad's B-hold). Arm on the first keydown, ignore
-            // auto-repeats, and always consume so ⌘Q can't instant-quit the app.
-            if event.charactersIgnoringModifiers?.lowercased() == "q" {
-                if !event.isARepeat {
-                    if flags.contains(.shift) {
-                        armKeyboardHold(for: .quitChord)
-                    } else if quitAppChordEnabled?() ?? false {
-                        armKeyboardHold(for: .quitApp)
-                    }
-                }
+            if flags.contains(.shift), event.charactersIgnoringModifiers?.lowercased() == "q" {
+                if !event.isARepeat { armKeyboardHold(for: .quitChord) }
                 return nil
             }
             return event

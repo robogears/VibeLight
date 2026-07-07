@@ -75,8 +75,8 @@ enum InputGlyphs {
 
     // MARK: - Labels
 
-    /// Action labels. Quit is press-and-hold on every input now, so the "hold"
-    /// wording is style-independent.
+    /// Action labels. Quit-game is press-and-hold on every input; quit-app only
+    /// holds on a controller (whose B is also Back), so ⌘Q reads a plain "Quit".
     private static func label(for event: NavigationEvent, style: ControllerGlyphStyle) -> String {
         switch event {
         case .move: "Move"
@@ -88,7 +88,7 @@ enum InputGlyphs {
         case .nextSection: "Next"
         case .settings: "Settings"
         case .quitChord: "Hold to Quit Game"
-        case .quitApp: "Hold to Quit"
+        case .quitApp: style == .keyboard ? "Quit" : "Hold to Quit"
         }
     }
 
