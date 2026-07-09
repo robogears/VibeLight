@@ -120,6 +120,9 @@ final class AppState {
         var ip: String
         var uuid: String?
         var serverCert: Data?
+        /// Learned from serverinfo on refresh — enables Wake-on-LAN for hosts
+        /// paired in-app (optional: old saved records decode with nil).
+        var mac: Data?
     }
 
     /// Live pairing state for the computer manager.
@@ -500,6 +503,9 @@ final class AppState {
                     dismissOverlay()
                 } else {
                     presentOverlay(.sessionEnded(app))
+                    // Default focus = the headline action. Landing on "Resume"
+                    // meant an impatient double-press resumed by accident.
+                    focus.focus(itemID: "ended:quit")
                 }
             } else {
                 rebuildFocus()
@@ -629,7 +635,7 @@ final class AppState {
                    localAddress: added.ip, localPort: 47989,
                    remoteAddress: nil, remotePort: 47989,
                    manualAddress: added.ip, manualPort: 47989,
-                   macAddress: nil, serverCertPEM: added.serverCert, apps: [])
+                   macAddress: added.mac, serverCertPEM: added.serverCert, apps: [])
     }
 
     // MARK: - Pairing
@@ -711,12 +717,13 @@ final class AppState {
     /// on also /cancel the remote game. Runs inside a UIKit background task so
     /// the HTTPS round-trip has time to land before suspension.
     func handleAppDidEnterBackground() {
-        let live: Bool
-        switch session.phase {
-        case .streaming, .launching: live = true
-        default: live = false
-        }
-        guard live else { return }
+        // Same predicate as the macOS app-quit path: anything the host would
+        // keep doing after we're gone (live stream OR a game still running
+        // after a keep-playing disconnect) gets the quit-on-exit treatment.
+        // The old .streaming/.launching-only guard missed the .ending and
+        // idle-but-host-busy states, so a swipe-kill after disconnecting left
+        // the game running on the PC.
+        guard hasActiveRemoteSession else { return }
         let taskID = UIApplication.shared.beginBackgroundTask()
         Task {
             // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
@@ -936,11 +943,12 @@ final class AppState {
 
     /// Once a probe learns an added host's real UUID/name, upgrade the stored
     /// entry so it de-dupes against Moonlight and shows a friendly name.
-    private func upgradeAddedHost(ip: String, uuid: String?, name: String?) {
+    private func upgradeAddedHost(ip: String, uuid: String?, name: String?, mac: Data? = nil) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         var changed = false
         if let uuid, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
         if let name, !name.isEmpty, addedHosts[i].name == ip { addedHosts[i].name = name; changed = true }
+        if let mac, addedHosts[i].mac != mac { addedHosts[i].mac = mac; changed = true }
         if changed {
             persistAddedHosts()
             let keepID = selectedHostID
@@ -974,9 +982,10 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
-            // A freshly-added host reports its real name here.
+            // A freshly-added host reports its real name here — and its MAC,
+            // which is what makes Wake-on-LAN possible for in-app-paired hosts.
             if isAddedHost(host), let ip = host.manualAddress {
-                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname)
+                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
             apps = displayApps(from: fresh)
@@ -1304,15 +1313,17 @@ final class AppState {
         // Menu SFX — deliberate actions make sound, navigation mostly doesn't:
         //  • Overlays (cards) keep normal select/back — they're deliberate.
         //  • Settings screen is SILENT except an explicit value change (adjust()).
-        //  • Home: select confirms; the Restart PC button gets its own reboot cue
-        //    (the host chip / apps just confirm). Focus-move ticks are header-only
-        //    (onFocusChange).
+        //  • Home: select confirms. The rising reboot cue plays ONLY when a PC
+        //    restart actually fires (the confirm/setup overlay buttons) — the
+        //    header button just opens the confirm, so it's a plain select.
         switch event {
         case .select:
             if overlay != nil {
-                sfx.play(.select)
+                let firesRestart = !moonDeckRestarting &&
+                    (focus.focusedItemID == "restartpc:yes" || focus.focusedItemID == "moondeck:restart")
+                sfx.play(firesRestart ? .restart : .select)
             } else if screen != .settings {
-                sfx.play(focus.focusedItemID == "header:restart" ? .restart : .select)
+                sfx.play(.select)
             }
         case .back:
             if overlay != nil || screen != .settings { sfx.play(.back) }
@@ -1697,6 +1708,10 @@ final class AppState {
     /// The headline feature: fully terminate the remote game, from anywhere.
     func quitRemoteGameCompletely() {
         guard let host = selectedHost else { return }
+        // Dismiss the card on the SAME press: the /cancel round-trip (~1 s)
+        // used to hold it open, which read as "the button didn't work" and
+        // invited a double-press that resumed the stream instead.
+        if case .sessionEnded = overlay { dismissOverlay() }
         Task {
             await session.quitCompletely(host: host)
             if case .failed = session.phase {

@@ -6,6 +6,12 @@ import SwiftUI
 struct HostMenuCard: View {
     @Environment(AppState.self) private var state
     @FocusState private var ipFieldFocused: Bool
+    /// iPadOS auto-directs first-responder (and thus the software keyboard)
+    /// into the card's lone TextField the moment it appears — and nothing ever
+    /// resigns it as the D-pad moves across host rows. Gate: the field stays
+    /// DISABLED (cannot become first responder, so no keyboard) until the user
+    /// explicitly taps it. macOS is unaffected — AppKit never auto-focuses.
+    @State private var ipFieldActive = false
 
     var body: some View {
         Group {
@@ -23,7 +29,19 @@ struct HostMenuCard: View {
         .onChange(of: ipFieldFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }
-        .onDisappear { state.controller.keyboardCaptureEnabled = true }
+        // Moving the app's own focus anywhere but the add row re-arms the gate
+        // and dismisses the keyboard — D-padding through computers can never
+        // leave the field focused.
+        .onChange(of: state.focus.focusedItemID) { _, id in
+            if id != "hostmenu:add", ipFieldActive || ipFieldFocused {
+                ipFieldFocused = false
+                ipFieldActive = false
+            }
+        }
+        .onDisappear {
+            state.controller.keyboardCaptureEnabled = true
+            ipFieldActive = false
+        }
     }
 
     private var computerList: some View {
@@ -66,8 +84,13 @@ struct HostMenuCard: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
+                .disabled(!ipFieldActive)   // the keyboard gate — see ipFieldActive
                 .focused($ipFieldFocused)
-                .onSubmit { state.addHost() }
+                .onSubmit {
+                    state.addHost()
+                    ipFieldFocused = false
+                    ipFieldActive = false
+                }
             Button {
                 state.addHost()
             } label: {
@@ -89,7 +112,15 @@ struct HostMenuCard: View {
             RoundedRectangle(cornerRadius: 13)
                 .strokeBorder(.white.opacity(ipFieldFocused ? 0.3 : 0.08), lineWidth: 1)
         }
-        .onTapGesture { ipFieldFocused = true }
+        .onTapGesture {
+            // Explicit tap = the ONLY way the keyboard appears. Align the
+            // focus engine with the row so the resign-sync above doesn't
+            // immediately undo it, enable the field, then focus it once the
+            // enable has landed (focusing a disabled field is ignored).
+            state.focus.focus(itemID: "hostmenu:add")
+            ipFieldActive = true
+            Task { @MainActor in ipFieldFocused = true }
+        }
     }
 }
 
