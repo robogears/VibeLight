@@ -74,8 +74,10 @@ final class InProcessStreamEngine: StreamEngine {
         }
         connectedOnce = false
         remoteQuitRequested = false
+        streamQuitProgress = nil   // never start a new stream pre-blacked (ON-7 pin)
         showPerfOverlay = settings.performanceOverlay
         touchControlsEnabled = settings.touchControls
+        touchWithControllerEnabled = settings.touchWithController
         phase = .launching(app)
         // Game audio must play regardless of the silent switch, and keep going
         // if Control Center pauses other audio. Failures here are the root of
@@ -186,6 +188,9 @@ final class InProcessStreamEngine: StreamEngine {
     /// Whether direct-touch control is on for the current stream
     /// (Settings ▸ Input ▸ Touch Control; captured at launch).
     @ObservationIgnored private var touchControlsEnabled = true
+    /// Whether touches still forward while a controller is connected
+    /// (Settings ▸ Input ▸ Touch With Controller; captured at launch).
+    @ObservationIgnored private var touchWithControllerEnabled = false
 
     /// Forwards a touch from the stream view. `location` is in view coordinates;
     /// the engine maps it into the aspect-fit video rect (mirroring
@@ -193,6 +198,14 @@ final class InProcessStreamEngine: StreamEngine {
     func sendTouch(_ phase: MoonlightTouchPhase, pointerId: UInt32,
                    location: CGPoint, viewSize: CGSize) {
         guard touchControlsEnabled, let session else { return }
+        // Controller-only play: a stray palm/grip touch used to warp the host
+        // cursor to that spot AND left-click (absolute touch → mouse fallback)
+        // — the "phantom cursor mid-game" bug. While an extended gamepad is
+        // connected, touch stays quiet unless the user opts back in.
+        if !touchWithControllerEnabled,
+           controllerSource?.connectedControllers.contains(where: { $0.extendedGamepad != nil }) == true {
+            return
+        }
         let vw = CGFloat(max(session.videoWidth(), 1))
         let vh = CGFloat(max(session.videoHeight(), 1))
         guard viewSize.width > 0, viewSize.height > 0 else { return }
@@ -216,13 +229,100 @@ final class InProcessStreamEngine: StreamEngine {
     /// While active, every pad state change becomes a LiSendMultiControllerEvent
     /// snapshot and the launcher UI hears nothing (no focus moves, no haptics).
 
-    /// The single pad driving player 1. Elected on first input after the
-    /// forwarder installs (or after a disconnect); other pads are ignored —
-    /// two pads' full-state snapshots otherwise fight and cancel each other.
-    @ObservationIgnored private weak var electedPad: GCExtendedGamepad?
+    /// Multi-controller: each physical pad owns its own host slot (0–3 — the
+    /// GFE-safe cap; Sunshine allows more). Keyed on GCController identity —
+    /// `playerIndex` is not stable and `GCController.controllers()` has no
+    /// documented ordering, so we own the map (mirrors moonlight-ios).
+    /// A slot is never renumbered while its pad is present.
+    @ObservationIgnored private var padSlots: [ObjectIdentifier: UInt8] = [:]
+    /// Live set of allocated slots, sent as activeGamepadMask with every event.
+    /// An event whose mask has a slot's bit CLEARED destroys that virtual pad.
+    @ObservationIgnored private var slotMask: UInt16 = 0
+    /// Slots whose arrival event has been sent (once per pad per stream).
+    @ObservationIgnored private var announcedSlots: Set<UInt8> = []
     /// Holds START down for ≥100 ms after a Menu press: old MFi pads emit an
     /// instantaneous down+up that games otherwise miss.
     @ObservationIgnored private var menuStickyUntil: ContinuousClock.Instant?
+    @ObservationIgnored private weak var menuStickyPad: GCExtendedGamepad?
+
+    /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
+    private enum LiControllerType {
+        static let unknown: UInt8 = 0x00
+        static let xbox: UInt8 = 0x01
+        static let ps: UInt8 = 0x02
+        static let nintendo: UInt8 = 0x03
+    }
+
+    private func resetPadSlots() {
+        padSlots.removeAll()
+        slotMask = 0
+        announcedSlots.removeAll()
+    }
+
+    /// The slot for this pad, allocating the lowest free one (and announcing
+    /// the pad to the host) on first sight. nil = four pads already active.
+    private func slot(for pad: GCExtendedGamepad) -> UInt8? {
+        guard let controller = pad.controller else { return nil }
+        let key = ObjectIdentifier(controller)
+        if let existing = padSlots[key] { return existing }
+        for candidate: UInt8 in 0..<4 where slotMask & (1 << candidate) == 0 {
+            padSlots[key] = candidate
+            slotMask |= (1 << candidate)
+            announce(controller, slot: candidate)
+            return candidate
+        }
+        return nil
+    }
+
+    /// Arrival event: tells the host WHAT this pad is so Sunshine/Apollo's
+    /// `gamepad=auto` materializes a matching virtual pad — a DualSense or
+    /// DualShock becomes a virtual DS4 (PlayStation glyphs + features in
+    /// games) instead of the default X360. Ordering is load-bearing: the
+    /// arrival must be the slot's FIRST packet, or the host permanently
+    /// allocates an X360 for the session the moment a plain event leaks out.
+    private func announce(_ controller: GCController, slot: UInt8) {
+        guard !announcedSlots.contains(slot), let session else { return }
+        announcedSlots.insert(slot)
+        let pad = controller.extendedGamepad
+        var type = LiControllerType.unknown
+        if pad is GCXboxGamepad {
+            type = LiControllerType.xbox
+        } else if pad is GCDualShockGamepad || pad is GCDualSenseGamepad {
+            type = LiControllerType.ps
+        } else if controller.productCategory.localizedCaseInsensitiveContains("switch")
+                    || controller.productCategory.localizedCaseInsensitiveContains("nintendo") {
+            type = LiControllerType.nintendo
+        }
+        // A/B/X/Y + dpad + LB/RB + START + stick clicks + GUIDE; BACK only when
+        // the pad actually has an Options button.
+        var buttons: UInt32 = 0xF000 | 0x000F | 0x0310 | 0x00C0 | 0x0400
+        if pad?.buttonOptions != nil { buttons |= 0x0020 }
+        // Honest caps only (analog triggers): rumble/motion/touchpad aren't
+        // forwarded yet — advertising them would make the host expect events
+        // we never send, and a virtual-DS4 touchpad that Steam maps to mouse
+        // is exactly the phantom-cursor trap we're avoiding elsewhere.
+        session.sendControllerArrival(forNumber: slot, activeMask: slotMask,
+                                      type: type, supportedButtons: buttons,
+                                      capabilities: 0x01)
+    }
+
+    /// A pad vanished: release its slot. The zeroed event with the bit cleared
+    /// from the mask is what makes the host destroy the virtual pad (and
+    /// unsticks its last snapshot from the game).
+    private func reconcileSlots() {
+        let live = Set(GCController.controllers()
+            .filter { $0.extendedGamepad != nil }
+            .map(ObjectIdentifier.init))
+        for (key, slot) in padSlots where !live.contains(key) {
+            padSlots.removeValue(forKey: key)
+            slotMask &= ~(UInt16(1) << UInt16(slot))
+            announcedSlots.remove(slot)
+            session?.sendControllerNumber(slot, activeMask: slotMask,
+                                          buttonFlags: 0, leftTrigger: 0, rightTrigger: 0,
+                                          leftStickX: 0, leftStickY: 0,
+                                          rightStickX: 0, rightStickY: 0)
+        }
+    }
 
     /// iOS reserves the PS/Home ("Guide"), Share, and Options buttons for its own
     /// system gestures by default, so those presses never reach the app and the
@@ -242,19 +342,16 @@ final class InProcessStreamEngine: StreamEngine {
     private func setStreamInput(active: Bool) {
         guard let cm = controllerSource else { return }
         if active {
-            electedPad = nil
+            resetPadSlots()
             keyboardModifiers = 0
             heldKeys.removeAll()
             setSystemGestures(disabled: true)
             cm.streamForwarder = { [weak self] pad in self?.forward(pad) }
             cm.keyboardForwarder = { [weak self] code, pressed in self?.forwardKey(code, pressed: pressed) }
             cm.onPadDisconnected = { [weak self] in
-                // Release everything host-side — the vanished pad's last
+                // Release the vanished pad's slot host-side — its last
                 // snapshot stays latched in the game otherwise.
-                self?.session?.sendControllerButtonFlags(
-                    0, leftTrigger: 0, rightTrigger: 0,
-                    leftStickX: 0, leftStickY: 0, rightStickX: 0, rightStickY: 0)
-                self?.electedPad = nil   // re-elect on the next input
+                self?.reconcileSlots()
             }
         } else if cm.streamForwarder != nil {
             releaseHeldKeys()            // no keys stuck down in the game on leave
@@ -296,13 +393,13 @@ final class InProcessStreamEngine: StreamEngine {
     private(set) var streamQuitProgress: Double?
     @ObservationIgnored private var quitHoldTask: Task<Void, Never>?
 
-    /// Drives the ~2s leave-stream hold: publishes ring progress after a short
+    /// Drives the ~1s leave-stream hold: publishes ring progress after a short
     /// grace (so a quick brush never flashes it), then leaves when it completes.
     private func startQuitHold() {
         guard quitHoldTask == nil else { return }
         let start = ContinuousClock.now
         quitHoldTask = Task { @MainActor [weak self] in
-            let grace = 0.2, total = 2.0
+            let grace = 0.15, total = 1.0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(40))
                 guard let self, !Task.isCancelled else { return }
@@ -310,11 +407,17 @@ final class InProcessStreamEngine: StreamEngine {
                 let elapsed = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
                 if elapsed >= total {
                     quitHoldTask = nil
-                    streamQuitProgress = nil
-                    // Release everything host-side, then leave (game keeps running).
-                    session?.sendControllerButtonFlags(0, leftTrigger: 0, rightTrigger: 0,
-                                                       leftStickX: 0, leftStickY: 0,
-                                                       rightStickX: 0, rightStickY: 0)
+                    // Pin the fade fully black through the teardown (the scrim
+                    // in RootView reads this) so the exit is a fade, not a jump
+                    // cut. launch() resets it before the next stream.
+                    streamQuitProgress = 1
+                    // Release every pad host-side, then leave (game keeps running).
+                    for slot in padSlots.values {
+                        session?.sendControllerNumber(slot, activeMask: slotMask,
+                                                      buttonFlags: 0, leftTrigger: 0, rightTrigger: 0,
+                                                      leftStickX: 0, leftStickY: 0,
+                                                      rightStickX: 0, rightStickY: 0)
+                    }
                     disconnect()
                     return
                 }
@@ -333,8 +436,7 @@ final class InProcessStreamEngine: StreamEngine {
 
     private func forward(_ pad: GCExtendedGamepad) {
         guard let session else { return }
-        if electedPad == nil { electedPad = pad }
-        guard pad === electedPad else { return }
+        guard let slot = slot(for: pad) else { return }   // 5th+ pad: no free slot
         var flags: Int32 = 0
         if pad.buttonA.isPressed { flags |= 0x1000 }                      // A
         if pad.buttonB.isPressed { flags |= 0x2000 }                      // B
@@ -362,11 +464,12 @@ final class InProcessStreamEngine: StreamEngine {
                     try? await Task.sleep(for: .milliseconds(120))
                     guard let self else { return }
                     self.menuStickyUntil = nil
-                    if let pad = self.electedPad { self.forward(pad) }
+                    if let sticky = self.menuStickyPad { self.forward(sticky) }
                 }
             }
             menuStickyUntil = now.advanced(by: .milliseconds(100))
-        } else if let until = menuStickyUntil, now < until {
+            menuStickyPad = pad
+        } else if let until = menuStickyUntil, now < until, pad === menuStickyPad {
             flags |= 0x0010
         }
 
@@ -382,8 +485,9 @@ final class InProcessStreamEngine: StreamEngine {
         cancelQuitHold()   // any other input aborts a pending hold
 
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
-        session.sendControllerButtonFlags(
-            flags,
+        session.sendControllerNumber(
+            slot, activeMask: slotMask,
+            buttonFlags: flags,
             leftTrigger: UInt8(min(max(pad.leftTrigger.value, 0), 1) * 255),
             rightTrigger: UInt8(min(max(pad.rightTrigger.value, 0), 1) * 255),
             leftStickX: axis(pad.leftThumbstick.xAxis.value),
@@ -532,14 +636,13 @@ final class InProcessStreamEngine: StreamEngine {
             setStreamInput(active: true)
             setStatsHUD(active: true)
             armCompanionIdle()   // start the iPad companion's 30 s dim timer
-            // Announce the pad so the host materializes the virtual controller
-            // before first input (games list it in controller menus right away).
-            // Only when a pad is actually attached — announcing on a touch-only
-            // session would create a phantom gamepad on the host.
-            if controllerSource?.connectedControllers.contains(where: { $0.extendedGamepad != nil }) == true {
-                let standardButtons: UInt32 = 0xF000 | 0x000F | 0x0330 | 0x00C0 | 0x0400
-                session?.sendControllerArrival(withButtons: standardButtons,
-                                               capabilities: 0x01)   // LI_CCAP_ANALOG_TRIGGERS
+            // Announce every attached pad — with its REAL family — so the host
+            // materializes matching virtual controllers before first input
+            // (a DualSense shows up as a PlayStation pad, games list them in
+            // controller menus right away). Touch-only sessions announce
+            // nothing: a phantom gamepad would appear on the host otherwise.
+            for controller in GCController.controllers() {
+                if let pad = controller.extendedGamepad { _ = slot(for: pad) }
             }
             onStreamDidStart?(nil)
         }

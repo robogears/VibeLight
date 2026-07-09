@@ -1755,7 +1755,7 @@ final class AppState {
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss
-        case touchControls, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
+        case touchControls, touchWithController, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case background
         case appVersion, checkUpdates, restartSetup
@@ -1780,6 +1780,7 @@ final class AppState {
             case .muteHostSpeakers: "Mute Host Speakers"
             case .muteOnFocusLoss: "Mute When Inactive"
             case .touchControls: "Touch Control"
+            case .touchWithController: "Touch With Controller"
             case .externalDisplay: "Use TV / Monitor"
             case .absoluteMouse: "Remote Desktop Mouse"
             case .swapMouseButtons: "Swap Mouse Buttons"
@@ -1822,7 +1823,7 @@ final class AppState {
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
             case .input:
                 #if os(iOS)
-                [.touchControls, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+                [.touchControls, .touchWithController, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #else
                 [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #endif
@@ -1912,6 +1913,7 @@ final class AppState {
         case .muteHostSpeakers: settings.muteHostSpeakers ? "On" : "Off"
         case .muteOnFocusLoss: settings.muteOnFocusLoss ? "On" : "Off"
         case .touchControls: settings.touchControls ? "On" : "Off"
+        case .touchWithController: settings.touchWithController ? "On" : "Off"
         case .externalDisplay: settings.externalDisplay ? "On" : "Off"
         case .absoluteMouse: settings.absoluteMouse ? "On" : "Off"
         case .swapMouseButtons: settings.swapMouseButtons ? "On" : "Off"
@@ -1989,6 +1991,7 @@ final class AppState {
         case .muteHostSpeakers: settings.muteHostSpeakers.toggle()
         case .muteOnFocusLoss: settings.muteOnFocusLoss.toggle()
         case .touchControls: settings.touchControls.toggle()
+        case .touchWithController: settings.touchWithController.toggle()
         case .externalDisplay: settings.externalDisplay.toggle()
         case .absoluteMouse: settings.absoluteMouse.toggle()
         case .swapMouseButtons: settings.swapMouseButtons.toggle()

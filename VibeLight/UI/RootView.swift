@@ -10,6 +10,12 @@ struct RootView: View {
     /// screen (Stage Manager, launched from the TV). Safe-by-default — see
     /// `ExternalScenePlacement`. Scene-scoped state, not a singleton.
     @State private var placement = ExternalScenePlacement()
+
+    /// Equatable flag the stream overlay's enter/exit animation binds to.
+    private var isStreamingPhase: Bool {
+        if case .streaming = state.session.phase { return true }
+        return false
+    }
     #endif
 
     var body: some View {
@@ -88,8 +94,20 @@ struct RootView: View {
                         }
                     }
                     .overlay {
-                        // Hold Start+Select+L1+R1 → leave-stream progress ring.
+                        // While the leave chord is held the stream sinks toward
+                        // black (scrim = ring progress), and it STAYS black at
+                        // fire (the engine pins progress to 1 through teardown)
+                        // so leaving is a fade — not a jump cut to the launcher.
                         if let p = state.session.streamQuitProgress {
+                            Color.black.opacity(p)
+                                .ignoresSafeArea()
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .overlay {
+                        // Hold Start+Select+L1+R1 → leave-stream progress ring
+                        // (hidden once the hold completes and the fade takes over).
+                        if let p = state.session.streamQuitProgress, p < 1 {
                             HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
                                 .transition(.opacity)
                         }
@@ -97,6 +115,10 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        // Bound to the streaming flag so the overlay's insertion/removal
+        // actually animates (the .transition above never ran without it) —
+        // the launcher now fades back in when the stream ends.
+        .animation(.easeInOut(duration: 0.45), value: isStreamingPhase)
         // Accidental case: the app's OWN window is on an external screen (Stage
         // Manager extended display, launched from the TV). Guide the user back to
         // the iPad. Last overlay → wins the z-order; safe-by-default so it can

@@ -318,16 +318,43 @@ static void ArCleanup(void);
     }
 }
 
-- (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
-                            capabilities:(uint16_t)capabilities {
+- (void)sendControllerArrivalForNumber:(uint8_t)controllerNumber
+                            activeMask:(uint16_t)activeMask
+                                  type:(uint8_t)type
+                      supportedButtons:(uint32_t)supportedButtons
+                          capabilities:(uint16_t)capabilities {
     if (sActive != self) return;
     // Falls back to a plain LiSendMultiControllerEvent on hosts without
     // arrival support, per Limelight.h.
-    LiSendControllerArrivalEvent(0, 0x1, LI_CTYPE_UNKNOWN, supportedButtons, capabilities);
+    LiSendControllerArrivalEvent(controllerNumber, activeMask, type,
+                                 supportedButtons, capabilities);
+}
+
+- (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
+                            capabilities:(uint16_t)capabilities {
+    [self sendControllerArrivalForNumber:0 activeMask:0x1 type:LI_CTYPE_UNKNOWN
+                        supportedButtons:supportedButtons capabilities:capabilities];
 }
 
 + (void)resumeAudio {
     if (sAudioUnit) AudioOutputUnitStart(sAudioUnit);
+}
+
+- (void)sendControllerNumber:(uint8_t)controllerNumber
+                  activeMask:(uint16_t)activeMask
+                 buttonFlags:(int)buttonFlags
+                 leftTrigger:(uint8_t)leftTrigger
+                rightTrigger:(uint8_t)rightTrigger
+                  leftStickX:(int16_t)leftStickX
+                  leftStickY:(int16_t)leftStickY
+                 rightStickX:(int16_t)rightStickX
+                 rightStickY:(int16_t)rightStickY {
+    if (sActive != self) return;
+    // Returns an error before the input stream is up — safe to ignore; the
+    // next snapshot after connect goes through.
+    LiSendMultiControllerEvent(controllerNumber, activeMask, buttonFlags,
+                               leftTrigger, rightTrigger,
+                               leftStickX, leftStickY, rightStickX, rightStickY);
 }
 
 - (void)sendControllerButtonFlags:(int)buttonFlags
@@ -337,11 +364,10 @@ static void ArCleanup(void);
                        leftStickY:(int16_t)leftStickY
                       rightStickX:(int16_t)rightStickX
                       rightStickY:(int16_t)rightStickY {
-    if (sActive != self) return;
-    // Player 1, single-pad mask. Returns an error before the input stream is
-    // up — safe to ignore; the next snapshot after connect goes through.
-    LiSendMultiControllerEvent(0, 0x1, buttonFlags, leftTrigger, rightTrigger,
-                               leftStickX, leftStickY, rightStickX, rightStickY);
+    [self sendControllerNumber:0 activeMask:0x1 buttonFlags:buttonFlags
+                   leftTrigger:leftTrigger rightTrigger:rightTrigger
+                    leftStickX:leftStickX leftStickY:leftStickY
+                   rightStickX:rightStickX rightStickY:rightStickY];
 }
 
 - (void)sendKeyboardEvent:(int16_t)keyCode down:(BOOL)down modifiers:(uint8_t)modifiers {
