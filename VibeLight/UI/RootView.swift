@@ -247,7 +247,16 @@ struct ExternalDisplayContent: View {
 /// status panel. While streaming it's also a trackpad (touches pass through);
 /// while idle it just says "use your controller".
 private struct ExternalDisplayPlaceholder: View {
+    @Environment(AppState.self) private var state
     var streaming = true
+
+    /// Whether companion touches actually reach the host: the phantom-cursor
+    /// gate suppresses touch while a gamepad is connected (unless the user
+    /// re-enabled it) — the on-screen copy must not promise a dead trackpad.
+    private var trackpadLive: Bool {
+        state.settings.touchWithController ||
+            !state.controller.connectedControllers.contains { $0.extendedGamepad != nil }
+    }
     /// True after ~30 s idle while streaming: the companion fades to PURE black
     /// (only the lit glow + text fade — the base black stays opaque so it still
     /// hides the video underneath) so it isn't a glowing rectangle in a dark
@@ -293,8 +302,11 @@ private struct ExternalDisplayPlaceholder: View {
                                    : "VibeLight is on \(ExternalDisplay.shared.name)")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.textPrimary)
-                    Text(streaming ? "This screen is a trackpad — drag to move the cursor."
-                                   : "Use your controller to navigate on the big screen.")
+                    Text(streaming
+                         ? (trackpadLive
+                            ? "This screen is a trackpad — drag to move the cursor."
+                            : "Touch is off while a controller is connected — Settings ▸ Input ▸ Touch With Controller.")
+                         : "Use your controller to navigate on the big screen.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                     if let geometry = ExternalDisplay.shared.geometrySummary {

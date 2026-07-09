@@ -29,11 +29,12 @@ struct HostMenuCard: View {
         .onChange(of: ipFieldFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }
-        // Moving the app's own focus anywhere but the add row re-arms the gate
-        // and dismisses the keyboard — D-padding through computers can never
-        // leave the field focused.
+        // Moving DIRECTED focus (D-pad/keyboard) off the add row re-arms the
+        // gate and dismisses the keyboard. Pointer-mode focus is exempt: a
+        // mouse merely hovering a host row mid-typing must not kill the field.
         .onChange(of: state.focus.focusedItemID) { _, id in
-            if id != "hostmenu:add", ipFieldActive || ipFieldFocused {
+            if state.inputMode == .directed, id != "hostmenu:add",
+               ipFieldActive || ipFieldFocused {
                 ipFieldFocused = false
                 ipFieldActive = false
             }

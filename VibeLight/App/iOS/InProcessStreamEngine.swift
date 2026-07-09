@@ -75,6 +75,7 @@ final class InProcessStreamEngine: StreamEngine {
         connectedOnce = false
         remoteQuitRequested = false
         streamQuitProgress = nil   // never start a new stream pre-blacked (ON-7 pin)
+        activeTouchIDs.removeAll()
         showPerfOverlay = settings.performanceOverlay
         touchControlsEnabled = settings.touchControls
         touchWithControllerEnabled = settings.touchWithController
@@ -195,16 +196,32 @@ final class InProcessStreamEngine: StreamEngine {
     /// Forwards a touch from the stream view. `location` is in view coordinates;
     /// the engine maps it into the aspect-fit video rect (mirroring
     /// `.resizeAspect` letterboxing) and normalizes to 0…1 for the host.
+    /// Pointer ids whose .down was forwarded to the host — their .up/.cancel
+    /// must ALWAYS be delivered (gating a release strands a pressed left
+    /// button / touch contact in the game).
+    @ObservationIgnored private var activeTouchIDs: Set<UInt32> = []
+
     func sendTouch(_ phase: MoonlightTouchPhase, pointerId: UInt32,
                    location: CGPoint, viewSize: CGSize) {
         guard touchControlsEnabled, let session else { return }
         // Controller-only play: a stray palm/grip touch used to warp the host
         // cursor to that spot AND left-click (absolute touch → mouse fallback)
         // — the "phantom cursor mid-game" bug. While an extended gamepad is
-        // connected, touch stays quiet unless the user opts back in.
-        if !touchWithControllerEnabled,
-           controllerSource?.connectedControllers.contains(where: { $0.extendedGamepad != nil }) == true {
-            return
+        // connected, NEW touches stay quiet unless the user opts back in;
+        // touches already in flight still deliver their release.
+        let gated = !touchWithControllerEnabled &&
+            controllerSource?.connectedControllers.contains(where: { $0.extendedGamepad != nil }) == true
+        switch phase {
+        case .down:
+            if gated { return }
+            activeTouchIDs.insert(pointerId)
+        case .move:
+            if gated && !activeTouchIDs.contains(pointerId) { return }
+        case .up, .cancel:
+            if gated && !activeTouchIDs.contains(pointerId) { return }
+            activeTouchIDs.remove(pointerId)
+        @unknown default:
+            break
         }
         let vw = CGFloat(max(session.videoWidth(), 1))
         let vh = CGFloat(max(session.videoHeight(), 1))
@@ -392,6 +409,10 @@ final class InProcessStreamEngine: StreamEngine {
     /// renders `HoldProgressRing` from this.
     private(set) var streamQuitProgress: Double?
     @ObservationIgnored private var quitHoldTask: Task<Void, Never>?
+    /// The pad holding the leave chord — only ITS deviating input aborts the
+    /// hold. Without this, player 2's ordinary inputs would cancel player 1's
+    /// hold every frame and the chord could never complete in 2-player play.
+    @ObservationIgnored private weak var quitHoldPad: GCExtendedGamepad?
 
     /// Drives the ~1s leave-stream hold: publishes ring progress after a short
     /// grace (so a quick brush never flashes it), then leaves when it completes.
@@ -429,8 +450,15 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     private func cancelQuitHold() {
+        // No-op once the hold has COMPLETED (the completion nils the task
+        // before pinning progress to 1) — otherwise disconnect()'s teardown
+        // path would wipe the fade-to-black pin in the same MainActor turn
+        // and the exit would jump-cut again. Genuine mid-hold aborts still
+        // clear the ring.
+        guard quitHoldTask != nil else { return }
         quitHoldTask?.cancel()
         quitHoldTask = nil
+        quitHoldPad = nil
         if streamQuitProgress != nil { streamQuitProgress = nil }
     }
 
@@ -479,10 +507,13 @@ final class InProcessStreamEngine: StreamEngine {
         // to the game). The game keeps running on the PC.
         let quitCombo: Int32 = 0x0010 | 0x0020 | 0x0100 | 0x0200   // START|BACK|LB|RB
         if flags == quitCombo {
+            quitHoldPad = pad
             startQuitHold()
             return   // don't forward the combo to the game while it's held
         }
-        cancelQuitHold()   // any other input aborts a pending hold
+        // Only the HOLDER's deviating input aborts the hold — another player's
+        // ordinary inputs must not reset the ring.
+        if pad === quitHoldPad { cancelQuitHold() }
 
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
         session.sendControllerNumber(

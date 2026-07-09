@@ -717,13 +717,17 @@ final class AppState {
     /// on also /cancel the remote game. Runs inside a UIKit background task so
     /// the HTTPS round-trip has time to land before suspension.
     func handleAppDidEnterBackground() {
-        // Same predicate as the macOS app-quit path: anything the host would
-        // keep doing after we're gone (live stream OR a game still running
-        // after a keep-playing disconnect) gets the quit-on-exit treatment.
-        // The old .streaming/.launching-only guard missed the .ending and
-        // idle-but-host-busy states, so a swipe-kill after disconnecting left
-        // the game running on the PC.
-        guard hasActiveRemoteSession else { return }
+        // DELIBERATELY narrow: only a stream THIS device is running right now.
+        // Backgrounding is app-switching, not quitting — a broader predicate
+        // (hasActiveRemoteSession) would /cancel games this device merely
+        // *sees* running: another client's live session, or a game the user
+        // explicitly kept playing via disconnect-keep-playing (invariant 6).
+        let live: Bool
+        switch session.phase {
+        case .streaming, .launching: live = true
+        default: live = false
+        }
+        guard live else { return }
         let taskID = UIApplication.shared.beginBackgroundTask()
         Task {
             // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
@@ -1711,7 +1715,13 @@ final class AppState {
         // Dismiss the card on the SAME press: the /cancel round-trip (~1 s)
         // used to hold it open, which read as "the button didn't work" and
         // invited a double-press that resumed the stream instead.
-        if case .sessionEnded = overlay { dismissOverlay() }
+        if case .sessionEnded = overlay {
+            dismissOverlay()
+            // Park focus on the host chip — the section-restore would land on
+            // Restart PC, where the same impatient mash walks straight into a
+            // PC reboot (select → confirm → yes). The chip just opens a menu.
+            focus.focus(itemID: "header:host")
+        }
         Task {
             await session.quitCompletely(host: host)
             if case .failed = session.phase {
