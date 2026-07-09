@@ -1025,8 +1025,17 @@ final class AppState {
 
     func wakeHost(_ host: StreamHost) {
         guard let mac = host.macAddress else { return }
-        let addresses = host.candidateAddresses.map(\.host)
-        try? WakeOnLAN.wake(mac: mac, unicastAddresses: addresses)
+        let targets = host.candidateAddresses
+        // Burst off the main thread: hostname resolution can block, and Wi-Fi
+        // drops broadcast UDP often enough that one packet is a coin flip —
+        // three full bursts 300 ms apart is cheap insurance (same reasoning as
+        // moonlight-qt re-waking on every seek attempt).
+        Task.detached(priority: .utility) {
+            for attempt in 0..<3 {
+                if attempt > 0 { try? await Task.sleep(for: .milliseconds(300)) }
+                try? WakeOnLAN.wake(mac: mac, targets: targets)
+            }
+        }
     }
 
     // MARK: - Focus content

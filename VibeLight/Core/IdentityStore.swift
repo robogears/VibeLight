@@ -28,8 +28,15 @@ enum IdentityStore {
            !moonlightIdentity.privateKeyPEM.isEmpty {
             return moonlightIdentity
         }
-        if let existing = loadOwn() { return existing }
-        return generateAndPersist() ?? ClientIdentity(
+        if let existing = loadOwn() {
+            syncHelperIdentity(existing)
+            return existing
+        }
+        if let generated = generateAndPersist() {
+            syncHelperIdentity(generated)
+            return generated
+        }
+        return ClientIdentity(
             certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: uniqueID())
         #endif
     }
@@ -59,6 +66,23 @@ enum IdentityStore {
     }
 
     #if os(macOS)
+    /// The stream helper (our moonlight-qt fork) deliberately reads its client
+    /// identity from Moonlight's preferences domain — that reuse is the whole
+    /// zero-setup story for existing Moonlight users. But on a Mac that never
+    /// had Moonlight, the domain is empty: VibeLight pairs with its OWN
+    /// generated cert while the helper mints a different one on first stream,
+    /// so the host answers "not paired" and streaming dead-ends (the standalone
+    /// pairing bug). Fix: whenever VibeLight runs on its own identity, mirror
+    /// the cert/key into the Moonlight domain so launcher + helper present one
+    /// identity. A real Moonlight install later reads this same plist, so
+    /// pairings keep working. Never overwrites an existing identity.
+    private static func syncHelperIdentity(_ identity: ClientIdentity) {
+        guard let defaults = UserDefaults(suiteName: "com.moonlight-stream.Moonlight") else { return }
+        if let cert = defaults.data(forKey: "certificate"), !cert.isEmpty { return }
+        defaults.set(identity.certificatePEM, forKey: "certificate")
+        defaults.set(identity.privateKeyPEM, forKey: "key")
+    }
+
     private static func loadOwn() -> ClientIdentity? {
         let fm = FileManager.default
         guard let cert = try? Data(contentsOf: certURL), !cert.isEmpty,
