@@ -337,7 +337,14 @@ static void ArCleanup(void);
 }
 
 + (void)resumeAudio {
-    if (sAudioUnit) AudioOutputUnitStart(sAudioUnit);
+    // Called from the AVAudioSession interruption handler on the main thread.
+    // sAudioUnit is disposed by ArCleanup inside LiStopConnection, which `stop`
+    // runs on LifecycleQueue — hop there so we can never AudioOutputUnitStart a
+    // unit a concurrent teardown is mid-dispose on, and gate on a live session
+    // (nothing to resume once the stream is gone).
+    dispatch_async(LifecycleQueue(), ^{
+        if (sActive && sAudioUnit) AudioOutputUnitStart(sAudioUnit);
+    });
 }
 
 - (void)sendControllerNumber:(uint8_t)controllerNumber
@@ -581,7 +588,11 @@ static int startCodeLen(const uint8_t *p, int len) {
 static int  DrSetup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
     MoonlightSession *s = sActive;
     if (s) { s->_videoFormat = videoFormat; s->_videoWidth = width; s->_videoHeight = height; }
-    NSLog(@"[VibeLight] video decode setup: format=0x%x %dx%d@%d", videoFormat, width, height, redrawRate);
+    // Pool-less video thread: NSLog autoreleases an NSString with no pool to
+    // drain it. One-shot per connect, but wrap it anyway (see DrSubmit).
+    @autoreleasepool {
+        NSLog(@"[VibeLight] video decode setup: format=0x%x %dx%d@%d", videoFormat, width, height, redrawRate);
+    }
     return 0;
 }
 static void DrStart(void) {}
@@ -640,6 +651,10 @@ static OSStatus ArRender(void *inRefCon, AudioUnitRenderActionFlags *ioActionFla
 }
 
 static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION opusConfig, void *context, int arFlags) {
+    // Runs on moonlight's pool-less audio setup thread; the NSLogs below
+    // autorelease NSStrings with no pool to drain them. One-shot per connect —
+    // wrap the whole body so nothing leaks (mirrors DrSubmit's per-frame pool).
+    @autoreleasepool {
     sOpusCfg = *opusConfig;
     int err = 0;
     sOpusDecoder = opus_multistream_decoder_create(opusConfig->sampleRate, opusConfig->channelCount,
@@ -690,6 +705,7 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
     NSLog(@"[VibeLight] audio: %d Hz, %d ch, %d samples/frame",
           opusConfig->sampleRate, opusConfig->channelCount, opusConfig->samplesPerFrame);
     return 0;
+    }  // @autoreleasepool
 }
 
 static void ArStart(void) { if (sAudioUnit) AudioOutputUnitStart(sAudioUnit); }
