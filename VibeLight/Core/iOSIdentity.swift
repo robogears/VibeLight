@@ -130,7 +130,10 @@ enum IOSKeychainIdentity {
             let name = try DistinguishedName { CommonName("NVIDIA GameStream Client") }
             let now = Date()
             var serial = [UInt8](repeating: 0, count: 16)
-            _ = SecRandomCopyBytes(kSecRandomDefault, serial.count, &serial)
+            // Fail cert generation on an RNG failure rather than emit a fixed
+            // near-zero serial — matches GameStreamCrypto.randomBytes's precondition.
+            // (audit QUA-cert-serial-rng-status-ignored)
+            guard SecRandomCopyBytes(kSecRandomDefault, serial.count, &serial) == errSecSuccess else { return nil }
             serial[0] = (serial[0] & 0x7f) | 0x01   // positive, non-zero leading byte
             let cert = try Certificate(
                 version: .v3,

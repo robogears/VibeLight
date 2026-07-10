@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import VibeLight
 
 /// The version-compare and release-parsing logic gate whether we download and
@@ -85,5 +86,60 @@ final class UpdateServiceTests: XCTestCase {
         ]}
         """.data(using: .utf8)!
         XCTAssertThrowsError(try UpdateService.parseRelease(json))
+    }
+
+    func testParseRejectsNonArm64Zip() {
+        // A ".zip" that isn't the "-arm64.zip" asset must NOT be accepted — there
+        // is no generic-zip fallback (audit QOL-any-zip-arch-fallback).
+        let json = """
+        {"tag_name": "v0.1.2", "assets": [
+          {"name": "VibeLight-0.1.2-x86_64.zip", "browser_download_url": "https://github.com/robogears/VibeLight/x86.zip", "size": 1}
+        ]}
+        """.data(using: .utf8)!
+        XCTAssertThrowsError(try UpdateService.parseRelease(json))
+    }
+
+    // MARK: Checksum sidecar (the last integrity gate before self-install)
+
+    func testSidecarHashExtraction() {
+        let h = String(repeating: "a", count: 64)
+        // `shasum`-style "<hash>  <file>", bare hash, and uppercase all yield the hash.
+        XCTAssertEqual(UpdateService.sidecarExpectedHash(from: "\(h)  VibeLight-0.1.2-arm64.zip\n"), h)
+        XCTAssertEqual(UpdateService.sidecarExpectedHash(from: h), h)
+        XCTAssertEqual(UpdateService.sidecarExpectedHash(from: h.uppercased()), h)
+    }
+
+    func testSidecarHashRejectsMalformed() {
+        XCTAssertNil(UpdateService.sidecarExpectedHash(from: "not a hash"))
+        XCTAssertNil(UpdateService.sidecarExpectedHash(from: String(repeating: "a", count: 63))) // too short
+        XCTAssertNil(UpdateService.sidecarExpectedHash(from: String(repeating: "z", count: 64))) // non-hex
+        XCTAssertNil(UpdateService.sidecarExpectedHash(from: ""))
+    }
+
+    func testSha256HexAgainstKnownVectors() throws {
+        let fm = FileManager.default
+        func hash(of bytes: Data) throws -> String {
+            let tmp = fm.temporaryDirectory.appendingPathComponent("vl-test-\(UUID().uuidString).bin")
+            try bytes.write(to: tmp)
+            defer { try? fm.removeItem(at: tmp) }
+            return try UpdateService.sha256Hex(ofFileAt: tmp)
+        }
+        // Standard NIST SHA-256 test vectors.
+        XCTAssertEqual(try hash(of: Data("abc".utf8)),
+                       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        XCTAssertEqual(try hash(of: Data()),
+                       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    }
+
+    func testSha256HexHandlesMultiChunkFile() throws {
+        // Larger than the 1 MiB streaming chunk, to exercise the read loop.
+        let fm = FileManager.default
+        let big = Data(repeating: 0x5A, count: 3_000_000)
+        let tmp = fm.temporaryDirectory.appendingPathComponent("vl-test-\(UUID().uuidString).bin")
+        try big.write(to: tmp)
+        defer { try? fm.removeItem(at: tmp) }
+        // Cross-check against CryptoKit over the whole buffer.
+        let expected = SHA256.hash(data: big).map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(try UpdateService.sha256Hex(ofFileAt: tmp), expected)
     }
 }

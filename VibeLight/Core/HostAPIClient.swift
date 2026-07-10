@@ -363,6 +363,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private let pinnedCertDER: Data?
         private let hostLabel: String
         private let logger: Logger
+        /// Trust-on-first-use record for the UNPAIRED path only. Written/read on
+        /// the URLSession delegate's serial queue (challenges are delivered
+        /// serially), so a plain var is safe under @unchecked Sendable.
+        private var firstSeenLeafDER: Data?
 
         init(identity: SecIdentity, pinnedCertDER: Data?, hostLabel: String, logger: Logger) {
             self.identity = identity
@@ -410,10 +414,20 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                     return
                 }
                 guard let pinnedCertDER else {
-                    // No pinned cert stored (host saved but never paired).
-                    // Accept the self-signed cert so the XML 401 can surface
-                    // and tell the user to pair — but leave a trace.
-                    logger.notice("No pinned certificate for \(self.hostLabel, privacy: .public); accepting presented TLS certificate unverified.")
+                    // Host saved but never paired: accept the self-signed cert so
+                    // the XML 401 can surface and prompt pairing. We deliberately
+                    // do NOT hard-pin here (a legitimate cert rotation before
+                    // pairing must still work), but we trust-on-first-use record
+                    // the leaf and WARN if it later changes — making a silent swap
+                    // on the unpaired path observable instead of invisible.
+                    // (audit NET-unpaired-host-accepts-any-cert)
+                    let leafDER = SecCertificateCopyData(leaf) as Data
+                    if let seen = firstSeenLeafDER, seen != leafDER {
+                        logger.warning("TLS certificate for \(self.hostLabel, privacy: .public) CHANGED since first contact while still unpaired — possible cert rotation or a different machine on this address. Accepting to allow pairing.")
+                    } else if firstSeenLeafDER == nil {
+                        firstSeenLeafDER = leafDER
+                        logger.notice("No pinned certificate for \(self.hostLabel, privacy: .public); recording presented cert (trust-on-first-use) and accepting so pairing can proceed.")
+                    }
                     completionHandler(.useCredential, URLCredential(trust: trust))
                     return
                 }
