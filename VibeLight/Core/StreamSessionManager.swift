@@ -424,6 +424,17 @@ final class StreamSessionManager: StreamEngine {
         // Moonlight ignores the var, so this is safe even on the fallback path.
         var environment = ProcessInfo.processInfo.environment
         environment["VIBELIGHT_HEADLESS"] = "1"
+        // Strip Metal API Validation (and friends) from the CHILD's environment.
+        // Xcode's Run action injects MTL_DEBUG_LAYER and the helper inherits it;
+        // in the helper's HDR render path (RGBA16Unorm via libplacebo/MoltenVK)
+        // that validation layer turns a benign mis-aligned texture stride into a
+        // FATAL `_validateReplaceRegion` assertion — so an HDR stream that works
+        // in the release build crashes ~1 s in when the app is launched from
+        // Xcode. Scrubbing these makes the helper run as it would in production.
+        for key in ["MTL_DEBUG_LAYER", "MTL_DEBUG_LAYER_WARNING_MODE", "MTL_DEBUG_LAYER_ERROR_MODE",
+                    "MTL_SHADER_VALIDATION", "METAL_DEVICE_WRAPPER_TYPE", "MTL_HUD_ENABLED"] {
+            environment.removeValue(forKey: key)
+        }
         process.environment = environment
 
         // stdout carries the helper's `@VL` status protocol — the authoritative
@@ -671,7 +682,10 @@ final class StreamSessionManager: StreamEngine {
     private func runCLIQuitFallback(host: StreamHost) async -> Bool {
         let process = Process()
         process.executableURL = moonlightBinary
-        process.arguments = ["quit", host.id]
+        // `--` terminates option parsing so a host id starting with '-' can't be
+        // read as a flag by the helper's QCommandLineParser — mirrors the
+        // hardening on streamArguments.
+        process.arguments = ["quit", "--", host.id]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

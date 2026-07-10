@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 
@@ -29,6 +30,7 @@ final class UpdateService {
         var releaseURL: URL
         var assetURL: URL
         var assetSize: Int64
+        var sha256URL: URL?       // published "<asset>.sha256" sidecar, if any
     }
 
     enum Phase: Equatable {
@@ -49,6 +51,15 @@ final class UpdateService {
 
     nonisolated private static let owner = "robogears"
     nonisolated private static let repo = "VibeLight"
+
+    /// Shared session for the updater's small control-plane fetches (the release
+    /// JSON and the `.sha256` sidecar). `URLSession.shared` follows redirects
+    /// blind; this one refuses any hop that leaves GitHub, matching the payload
+    /// Downloader's per-hop re-validation so the class doc's "re-checked on every
+    /// redirect" claim holds everywhere. (audit NET-checksum-fetch-no-redirect-revalidation)
+    nonisolated private static let githubSession: URLSession = {
+        URLSession(configuration: .ephemeral, delegate: GitHubRedirectGuard(), delegateQueue: nil)
+    }()
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -129,6 +140,7 @@ final class UpdateService {
                 if case .downloading = self?.phase { self?.phase = .downloading(fraction) }
             }
             phase = .installing  // "verifying"
+            try await Self.verifyChecksum(zipURL: zipURL, sha256URL: release.sha256URL)
             stagedApp = try Self.unpackAndValidate(zipURL: zipURL, expectedVersion: release.version)
             phase = .readyToInstall
         } catch {
@@ -162,7 +174,7 @@ final class UpdateService {
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("VibeLight-Updater", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 15
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await githubSession.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw UpdateError.network }
         if http.statusCode == 404 { return nil }  // no published (non-draft) release yet
         guard http.statusCode == 200 else { throw UpdateError.http(http.statusCode) }
@@ -176,9 +188,11 @@ final class UpdateService {
               let assets = obj["assets"] as? [[String: Any]] else {
             throw UpdateError.malformed
         }
-        // The artifact-name contract: prefer the arm64 zip, then any zip.
+        // Require the arm64 asset BY NAME — VibeLight is Apple-Silicon-only and the
+        // ship process always publishes "…-arm64.zip". A generic ".zip" fallback
+        // could select a wrong-arch or mis-named (but TLS-valid) asset that still
+        // passes identity/version/codesign checks. (audit QOL-any-zip-arch-fallback)
         let asset = assets.first { ($0["name"] as? String)?.contains("-arm64.zip") == true }
-            ?? assets.first { ($0["name"] as? String)?.hasSuffix(".zip") == true }
         guard let asset,
               let urlString = asset["browser_download_url"] as? String,
               let assetURL = validatedAssetURL(urlString) else {
@@ -187,12 +201,20 @@ final class UpdateService {
         let size = (asset["size"] as? Int64) ?? (asset["size"] as? Int).map(Int64.init) ?? 0
         let releaseURL = (obj["html_url"] as? String).flatMap(URL.init)
             ?? URL(string: "https://github.com/\(owner)/\(repo)/releases")!
+        // Match the "<asset>.sha256" sidecar the ship process publishes next to
+        // the zip (asset-name contract). Optional: older releases predate it.
+        let sha256URL: URL? = (asset["name"] as? String).flatMap { name in
+            assets.first { ($0["name"] as? String) == name + ".sha256" }
+                .flatMap { $0["browser_download_url"] as? String }
+                .flatMap { validatedAssetURL($0) }
+        }
         return Release(
             version: normalize(tag),
             notes: (obj["body"] as? String) ?? "",
             releaseURL: releaseURL,
             assetURL: assetURL,
-            assetSize: size
+            assetSize: size,
+            sha256URL: sha256URL
         )
     }
 
@@ -225,6 +247,67 @@ final class UpdateService {
             if x != y { return x > y }
         }
         return false
+    }
+
+    // MARK: - Checksum verification
+
+    /// Verifies the downloaded zip against its published `.sha256` sidecar before
+    /// we trust it enough to unpack. This is an INTEGRITY check (catches a
+    /// corrupted or truncated download) layered on the TLS-to-GitHub authenticity
+    /// boundary — NOT a replacement for it. A missing or unreadable sidecar warns
+    /// and proceeds (older releases predate the sidecar contract; the zip already
+    /// arrived over pinned TLS) — the house "warn, don't block" pattern. Only a
+    /// definitive hash MISMATCH hard-fails.
+    nonisolated static func verifyChecksum(zipURL: URL, sha256URL: URL?) async throws {
+        guard let sha256URL else {
+            NSLog("[VibeLight] update: no .sha256 sidecar published; skipping checksum verification")
+            return
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await githubSession.data(from: sha256URL)
+        } catch {
+            // A network throw fetching the tiny sidecar is an UNREADABLE sidecar,
+            // not a bad download — warn and proceed rather than discard a multi-MB
+            // zip that already arrived over pinned TLS. Only a definitive hash
+            // MISMATCH hard-fails. (review: verifyChecksum throw-hardfail)
+            NSLog("[VibeLight] update: .sha256 sidecar fetch failed (\(error.localizedDescription)); skipping checksum verification")
+            return
+        }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let text = String(data: data, encoding: .utf8),
+              let expected = sidecarExpectedHash(from: text) else {
+            NSLog("[VibeLight] update: unreadable .sha256 sidecar; skipping checksum verification")
+            return
+        }
+        let actual = try sha256Hex(ofFileAt: zipURL)
+        guard actual == expected else {
+            throw UpdateError.badPackage("The download's checksum didn't match the published value.")
+        }
+    }
+
+    /// Pulls the 64-char lowercase hex digest out of a `shasum`-style sidecar
+    /// (`<hash>  <filename>` or a bare hash). Pure + testable — the security-
+    /// critical parse that decides whether the download is trusted.
+    nonisolated static func sidecarExpectedHash(from text: String) -> String? {
+        text.lowercased()
+            .split(whereSeparator: { !$0.isHexDigit })
+            .first(where: { $0.count == 64 })
+            .map(String.init)
+    }
+
+    /// Streaming SHA-256 of a file (the update zip is tens of MB — never slurp it
+    /// whole into memory just to hash it). Internal (not private) so the checksum
+    /// path can be unit-tested against a known-hash fixture.
+    nonisolated static func sha256Hex(ofFileAt url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Unpack + validate
@@ -368,6 +451,22 @@ enum UpdateError: Error {
         case .noAsset: "The latest release has no macOS download."
         case .badPackage(let why): "The update couldn't be verified: \(why)"
         case .tool(let why): "Update failed: \(why)"
+        }
+    }
+}
+
+/// Refuses any redirect hop that leaves GitHub, for the updater's small
+/// control-plane fetches (release JSON + `.sha256` sidecar). Stateless.
+private final class GitHubRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        if let host = request.url?.host?.lowercased(),
+           host == "github.com" || host == "api.github.com"
+             || host.hasSuffix(".github.com") || host.hasSuffix(".githubusercontent.com") {
+            completionHandler(request)
+        } else {
+            completionHandler(nil)   // cancel — refuse an off-GitHub redirect
         }
     }
 }

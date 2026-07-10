@@ -56,7 +56,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             do {
                 let request = try makeRequest(
                     address: candidate.host, port: candidate.port - httpsPortOffset, path: "/serverinfo")
-                data = try await session.data(for: request).0
+                data = try await boundedData(session, request).0
             } catch let error as URLError {
                 // Task cancellation surfaces as URLError.cancelled too (and so
                 // does our own pin-mismatch rejection) — only genuine Swift
@@ -117,7 +117,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await boundedData(session, request)
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
@@ -190,14 +190,21 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         var request = try makeRequest(
             address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: items)
         // LiGetLaunchUrlQueryParameters() is a raw pre-formed query fragment.
-        if !extraLaunchParams.isEmpty, let url = request.url {
-            let joiner = url.absoluteString.contains("?") ? "&" : "?"
-            request.url = URL(string: url.absoluteString + joiner + extraLaunchParams)
+        // Merge it into the URL's percent-encoded query via URLComponents (same
+        // encoding path as every other query item) rather than concatenating
+        // onto the absolute string — string surgery + URL(string:) would null
+        // the request URL on any parse hiccup. On failure keep the original URL.
+        if !extraLaunchParams.isEmpty, let url = request.url,
+           var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            let existing = comps.percentEncodedQuery ?? ""
+            comps.percentEncodedQuery = existing.isEmpty ? extraLaunchParams
+                                                         : existing + "&" + extraLaunchParams
+            if let merged = comps.url { request.url = merged }
         }
         let session = try session(for: host)
         let data: Data
         do {
-            data = try await session.data(for: request).0
+            data = try await boundedData(session, request).0
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
@@ -218,6 +225,28 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             return match.port - httpsPortOffset
         }
         return 47989 - httpsPortOffset
+    }
+
+    /// Hard byte ceiling for a host response. A MITM'd or compromised host
+    /// could otherwise stream unbounded bytes into memory (and the box-art path
+    /// writes them to disk) — the 5 s timeout is per-chunk, so a slow trickle
+    /// never trips it. Mirrors the updater's byteCap. XML replies are a few KB
+    /// and box art well under a megabyte; 16 MB is far above any legit response.
+    private static let responseByteCap = 16 * 1024 * 1024
+
+    /// Byte-capped replacement for `session.data(for:)`. Reads in ONE buffered
+    /// pass (fast — a per-byte `bytes(for:)` drain was ~an order of magnitude
+    /// slower on the box-art path) and rejects an over-cap response two ways: an
+    /// honestly-oversized declared Content-Length, and the delivered byte count.
+    /// The per-request timeout bounds a lying/omitted-length trickle, so we trade
+    /// the streaming mid-transfer abort for the buffered-read speed — a fine deal
+    /// when XML replies are a few KB and box art is well under a MB (cap 16 MB).
+    private func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
+        let (data, response) = try await session.data(for: request)
+        if response.expectedContentLength > Int64(Self.responseByteCap) || data.count > Self.responseByteCap {
+            throw HostAPIError.malformedResponse("host response too large (\(data.count) bytes)")
+        }
+        return (data, response)
     }
 
     private func makeRequest(
@@ -259,7 +288,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: extraQuery)
         let data: Data
         do {
-            data = try await session.data(for: request).0
+            data = try await boundedData(session, request).0
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
@@ -328,6 +357,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private let pinnedCertDER: Data?
         private let hostLabel: String
         private let logger: Logger
+        /// Trust-on-first-use record for the UNPAIRED path only. Written/read on
+        /// the URLSession delegate's serial queue (challenges are delivered
+        /// serially), so a plain var is safe under @unchecked Sendable.
+        private var firstSeenLeafDER: Data?
 
         init(identity: SecIdentity, pinnedCertDER: Data?, hostLabel: String, logger: Logger) {
             self.identity = identity
@@ -375,10 +408,20 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                     return
                 }
                 guard let pinnedCertDER else {
-                    // No pinned cert stored (host saved but never paired).
-                    // Accept the self-signed cert so the XML 401 can surface
-                    // and tell the user to pair — but leave a trace.
-                    logger.notice("No pinned certificate for \(self.hostLabel, privacy: .public); accepting presented TLS certificate unverified.")
+                    // Host saved but never paired: accept the self-signed cert so
+                    // the XML 401 can surface and prompt pairing. We deliberately
+                    // do NOT hard-pin here (a legitimate cert rotation before
+                    // pairing must still work), but we trust-on-first-use record
+                    // the leaf and WARN if it later changes — making a silent swap
+                    // on the unpaired path observable instead of invisible.
+                    // (audit NET-unpaired-host-accepts-any-cert)
+                    let leafDER = SecCertificateCopyData(leaf) as Data
+                    if let seen = firstSeenLeafDER, seen != leafDER {
+                        logger.warning("TLS certificate for \(self.hostLabel, privacy: .public) CHANGED since first contact while still unpaired — possible cert rotation or a different machine on this address. Accepting to allow pairing.")
+                    } else if firstSeenLeafDER == nil {
+                        firstSeenLeafDER = leafDER
+                        logger.notice("No pinned certificate for \(self.hostLabel, privacy: .public); recording presented cert (trust-on-first-use) and accepting so pairing can proceed.")
+                    }
                     completionHandler(.useCredential, URLCredential(trust: trust))
                     return
                 }

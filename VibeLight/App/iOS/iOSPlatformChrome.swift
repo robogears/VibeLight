@@ -13,9 +13,13 @@ final class iOSPlatformChrome: PlatformChrome {
     /// in-process streaming lands. In Phase 1 nothing sets it true.
     private(set) var isStreaming = false
 
-    func preventSleep(_ on: Bool) {
-        UIApplication.shared.isIdleTimerDisabled = on
-    }
+    /// Intentionally a no-op. The idle timer has exactly ONE owner on iOS:
+    /// `AppState.refreshKeepAwake()`, which sets `isIdleTimerDisabled` from the
+    /// user's Keep-Awake setting AND the live stream/pairing state on every phase
+    /// change. A second writer here (the old `preventSleep(true)` on stream start)
+    /// forced the display awake even when the user had turned Keep-Awake off, and
+    /// raced refreshKeepAwake on teardown. Leave the timer to that single owner.
+    func preventSleep(_ on: Bool) {}
 
     /// No system cursor to hide on touch iOS (iPadOS trackpad pointer is managed
     /// by the OS itself).
@@ -23,12 +27,10 @@ final class iOSPlatformChrome: PlatformChrome {
 
     func beginStreamPresentation(helperPID: pid_t?) {
         isStreaming = true
-        preventSleep(true)
     }
 
     func endStreamPresentation() {
         isStreaming = false
-        preventSleep(false)
     }
 
     func endStreamPresentationIfActive() {

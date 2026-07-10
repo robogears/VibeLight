@@ -15,6 +15,9 @@ struct AppBackground: View {
         case .parallaxDeep:   ParallaxDeepBackground()
         case .constellation:  ConstellationBackground()
         case .diagonal:       DiagonalStripesBackground()
+        case .gaslight:        GaslightBackground()
+        case .searchlightCity: SearchlightCityBackground()
+        case .swingingBulb:    SwingingBulbBackground()
         }
     }
 }
@@ -285,6 +288,277 @@ struct ConstellationBackground: View {
     }
 
     private static func frac(_ v: Double) -> Double { v - v.rounded(.down) }
+}
+
+// MARK: - The noir set
+
+/// "Gaslight" — film-noir street corner: a lone streetlamp flickering warm
+/// light over drizzle, a blocky skyline silhouette, a wet-street sheen. The
+/// only motion is the gaslight's breathing flicker and the rain inside the
+/// cone — monochrome silver-on-black with the bulb as the single warm hue.
+struct GaslightBackground: View {
+    private let skyTop    = Color(red: 0.020, green: 0.024, blue: 0.043)  // #05060b
+    private let skyBottom = Color(red: 0.035, green: 0.043, blue: 0.071)  // #090b12
+    private let building  = Color(red: 0.024, green: 0.031, blue: 0.063)  // #060810
+    private let warm      = Color(red: 0.839, green: 0.808, blue: 0.698)  // #d6ceb2
+    private let rainCol   = Color(red: 0.667, green: 0.714, blue: 0.816)  // #aab6d0
+
+    private struct Drop { let x: CGFloat; let z: CGFloat; let phase: CGFloat }
+    private let drops: [Drop]
+
+    init() {
+        var made: [Drop] = []
+        for i in 0..<70 {
+            // Cluster most drops around the lamp cone (x ≈ 0.28) — rain reads
+            // where the light is; a few strays elsewhere keep it honest.
+            let spread = Self.frac(Double(i) * 0.61803398875)
+            let nearLamp = i % 4 != 0
+            let x = nearLamp ? 0.28 + CGFloat(spread - 0.5) * 0.30
+                             : CGFloat(spread)
+            made.append(Drop(x: min(max(x, 0.02), 0.98),
+                             z: CGFloat(0.5 + Self.frac(Double(i) * 0.41421356237) * 0.5),
+                             phase: CGFloat(Self.frac(Double(i) * 0.75487766624))))
+        }
+        drops = made
+    }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            // Gaslight breathing: layered incommensurate sines, occasionally
+            // dipping — never strobing (WCAG: stay far under 3 flashes/sec).
+            let flicker = 0.86 + 0.09 * sin(t * 0.9) + 0.05 * sin(t * 2.3 + 1.7)
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                let lampX = w * 0.28
+                ZStack {
+                    LinearGradient(colors: [skyTop, skyBottom], startPoint: .top, endPoint: .bottom)
+
+                    // Skyline silhouette, right half.
+                    SkylinePath(bases: [0.55, 0.30, 0.72, 0.18, 0.48, 0.62, 0.26, 0.52])
+                        .fill(building)
+                        .frame(width: w * 0.52, height: h * 0.36)
+                        .position(x: w * 0.74, y: h * 0.70)
+
+                    // Light cone (trapezoid) + post + bulb.
+                    ConeShape()
+                        .fill(LinearGradient(colors: [warm.opacity(0.16 * flicker),
+                                                      warm.opacity(0.02), .clear],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(width: w * 0.30, height: h * 0.72)
+                        .position(x: lampX, y: h * 0.52)
+                    Rectangle().fill(Color(red: 0.05, green: 0.06, blue: 0.09))
+                        .frame(width: 3, height: h * 0.76)
+                        .position(x: lampX, y: h * 0.54)
+                    Circle().fill(warm)
+                        .frame(width: 7, height: 7)
+                        .position(x: lampX, y: h * 0.165)
+                        .shadow(color: warm.opacity(0.55 * flicker), radius: 12)
+
+                    // Drizzle — heavier and brighter inside the cone.
+                    Canvas { ctx, size in
+                        guard size.width > 0, size.height > 0 else { return }
+                        let fall = size.height * 0.55
+                        var path = Path()
+                        var conePath = Path()
+                        for drop in drops {
+                            let speed = 0.9 + Double(drop.z) * 0.9      // screens/sec-ish
+                            let prog = CGFloat((t * speed + Double(drop.phase))
+                                .truncatingRemainder(dividingBy: 1))
+                            let x = drop.x * size.width + prog * 8
+                            let y = size.height * 0.12 + prog * fall
+                            let len = 8 + drop.z * 10
+                            let inCone = abs(x - size.width * 0.28) < size.width * 0.11
+                            var seg = Path()
+                            seg.move(to: CGPoint(x: x, y: y))
+                            seg.addLine(to: CGPoint(x: x - 1.5, y: y - len))
+                            if inCone { conePath.addPath(seg) } else { path.addPath(seg) }
+                        }
+                        ctx.stroke(path, with: .color(rainCol.opacity(0.10)), lineWidth: 1)
+                        ctx.stroke(conePath, with: .color(rainCol.opacity(0.26 * flicker)), lineWidth: 1)
+                    }
+
+                    // Wet-street sheen + vignette.
+                    LinearGradient(colors: [rainCol.opacity(0.05), .clear],
+                                   startPoint: .bottom, endPoint: .top)
+                        .frame(height: h * 0.18)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                    RadialGradient(colors: [.clear, Color.black.opacity(0.6)],
+                                   center: .center,
+                                   startRadius: min(w, h) * 0.3, endRadius: max(w, h) * 0.75)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private static func frac(_ v: Double) -> Double { v - v.rounded(.down) }
+}
+
+/// "Searchlight City" — two slow searchlight beams crossing over a blacked-out
+/// skyline, a few window lights barely holding on. Beams rotate ±8–9° on long
+/// incommensurate periods; everything else is static geometry.
+struct SearchlightCityBackground: View {
+    private let skyTop   = Color(red: 0.016, green: 0.020, blue: 0.039)  // #04050a
+    private let skyLow   = Color(red: 0.031, green: 0.039, blue: 0.067)  // #080a11
+    private let building = Color(red: 0.016, green: 0.024, blue: 0.047)  // #04060c
+    private let beamCol  = Color(red: 0.769, green: 0.816, blue: 0.910)  // #c4d0e8
+    private let warm     = Color(red: 0.839, green: 0.808, blue: 0.698)  // #d6ceb2
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let a1 = -21.5 + 8.5 * sin(t * 2 * .pi / 36)    // −30°…−13°
+            let a2 = -158  - 8.0 * sin(t * 2 * .pi / 47)    // −150°…−166°
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                ZStack {
+                    LinearGradient(colors: [skyTop, skyLow], startPoint: .top, endPoint: .bottom)
+
+                    beam(width: w, angle: a1, phase: t)
+                        .position(x: w * 0.30, y: h * 0.84)
+                    beam(width: w, angle: a2, phase: t + 11)
+                        .position(x: w * 0.68, y: h * 0.84)
+
+                    SkylinePath(bases: [0.50, 0.20, 0.65, 0.10, 0.55, 0.32, 0.70, 0.16,
+                                        0.44, 0.60, 0.24, 0.52])
+                        .fill(building)
+                        .frame(width: w, height: h * 0.22)
+                        .position(x: w / 2, y: h * 0.89)
+
+                    // Three window lights breathing on slow, offset periods.
+                    ForEach(0..<3, id: \.self) { i in
+                        windowLight(index: i, t: t, w: w, h: h)
+                    }
+
+                    RadialGradient(colors: [.clear, Color.black.opacity(0.55)],
+                                   center: .center,
+                                   startRadius: min(w, h) * 0.32, endRadius: max(w, h) * 0.72)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    /// One breathing window light. Split out (with explicit types) — inlining
+    /// this arithmetic in the ForEach blows the iOS type-checker's budget.
+    private func windowLight(index: Int, t: Double, w: CGFloat, h: CGFloat) -> some View {
+        let xs: [CGFloat] = [0.20, 0.52, 0.81]
+        let periods: [Double] = [9.0, 13.0, 11.0]
+        let phase: Double = t * 2 * .pi / periods[index] + Double(index) * 2.1
+        let alpha: Double = 0.25 + 0.28 * (0.5 + 0.5 * sin(phase))
+        return Circle().fill(warm)
+            .frame(width: 3, height: 3)
+            .position(x: w * xs[index], y: h * 0.90)
+            .opacity(alpha)
+    }
+
+    /// One beam: a long gradient bar rotated around its base end.
+    private func beam(width: CGFloat, angle: Double, phase: Double) -> some View {
+        LinearGradient(colors: [beamCol.opacity(0.14), beamCol.opacity(0.04), .clear],
+                       startPoint: .leading, endPoint: .trailing)
+            .frame(width: width * 1.8, height: 26)
+            .offset(x: width * 0.9)   // rotate around the LEFT end (the searchlight)
+            .rotationEffect(.degrees(angle))
+            .blendMode(.plusLighter)
+    }
+}
+
+/// "Swinging Bulb" — the interrogation-room icon: a bare bulb on a cord swaying
+/// gently, its light pool shifting in counter-phase across the dark, one moth
+/// circling. The pendulum is a single sine; everything scales with it.
+struct SwingingBulbBackground: View {
+    private let base = Color(red: 0.016, green: 0.020, blue: 0.035)      // #040509
+    private let warm = Color(red: 0.910, green: 0.863, blue: 0.722)      // #e8dcb8
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let swing = sin(t * 2 * .pi / 5.6)               // −1…1, 5.6 s period
+            let angle = swing * 8.5                          // degrees
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                let cordLen = h * 0.30
+                let rad = angle * .pi / 180
+                let bulbX = w / 2 + CGFloat(sin(rad)) * cordLen
+                let bulbY = h * -0.02 + CGFloat(cos(rad)) * cordLen
+                ZStack {
+                    base
+
+                    // Light pool sweeps opposite the bulb, slightly delayed feel.
+                    RadialGradient(colors: [warm.opacity(0.12), warm.opacity(0.035), .clear],
+                                   center: .center,
+                                   startRadius: 0, endRadius: min(w, h) * 0.75)
+                        .frame(width: w * 1.6, height: h * 1.6)
+                        .position(x: w / 2 - CGFloat(swing) * w * 0.06, y: h * 0.62)
+
+                    // Cord + bulb.
+                    Path { p in
+                        p.move(to: CGPoint(x: w / 2, y: h * -0.02))
+                        p.addLine(to: CGPoint(x: bulbX, y: bulbY))
+                    }
+                    .stroke(Color(red: 0.10, green: 0.11, blue: 0.15), lineWidth: 2)
+                    Circle()
+                        .fill(RadialGradient(colors: [warm, warm.opacity(0.55),
+                                                      Color(red: 0.23, green: 0.22, blue: 0.19)],
+                                             center: UnitPoint(x: 0.5, y: 0.38),
+                                             startRadius: 0, endRadius: 9))
+                        .frame(width: 15, height: 15)
+                        .position(x: bulbX, y: bulbY)
+                        .shadow(color: warm.opacity(0.4), radius: 16)
+
+                    // One moth: a slow orbit around the bulb + a faster bob.
+                    let mothA = t * 2 * .pi / 7
+                    let mothR = min(w, h) * 0.055
+                    Circle().fill(warm.opacity(0.55))
+                        .frame(width: 3.5, height: 3.5)
+                        .position(x: bulbX + CGFloat(cos(mothA)) * mothR,
+                                  y: bulbY + 14 + CGFloat(sin(mothA)) * mothR * 0.6
+                                     + CGFloat(sin(t * 2 * .pi / 1.9)) * 7)
+
+                    RadialGradient(colors: [.clear, Color.black.opacity(0.65)],
+                                   center: UnitPoint(x: 0.5, y: 0.4),
+                                   startRadius: min(w, h) * 0.3, endRadius: max(w, h) * 0.8)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// Blocky noir skyline: rectangles of varying height from a normalized base
+/// list. Deterministic; built once per body evaluation (cheap — a dozen rects).
+private struct SkylinePath: Shape {
+    let bases: [CGFloat]   // 0…1 heights, one per building
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        guard !bases.isEmpty else { return p }
+        let bw = rect.width / CGFloat(bases.count)
+        p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        for (i, b) in bases.enumerated() {
+            let x = rect.minX + CGFloat(i) * bw
+            let top = rect.maxY - rect.height * b
+            p.addLine(to: CGPoint(x: x, y: top))
+            p.addLine(to: CGPoint(x: x + bw, y: top))
+        }
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Streetlamp light cone: a narrow-topped trapezoid.
+private struct ConeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX - rect.width * 0.05, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.midX + rect.width * 0.05, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
 }
 
 /// A selectable theme preview card — a live thumbnail of the real background +

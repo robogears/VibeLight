@@ -149,18 +149,9 @@ private struct HostRow: View {
                     .foregroundStyle(isFocused ? .white.opacity(0.8) : Theme.textSecondary)
             }
             Spacer()
-            // Wake-on-LAN for an asleep computer that stored a MAC.
-            if host.macAddress != nil && !(isSelected && state.hostOnline) {
-                Button {
-                    state.wakeHost(host)
-                } label: {
-                    Image(systemName: "power")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(isFocused ? .white : Theme.accent)
-                }
-                .buttonStyle(.plain)
-                .help("Wake this computer")
-            }
+            // Wake-on-LAN moved to the home header (the power button left of
+            // Restart) so it's one tap with a visible "waking…" state. Select a
+            // computer here, then wake it from the header.
             if isSelected {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(isFocused ? .white : Theme.accent)

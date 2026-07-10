@@ -10,7 +10,14 @@ enum GameStreamCrypto {
 
     static func randomBytes(_ count: Int) -> Data {
         var data = Data(count: count)
-        _ = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+        let status = data.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!)
+        }
+        // This RNG feeds security-critical material (pairing salt, client
+        // challenge/secret, PIN, iOS cert serial). A random-source failure is
+        // unrecoverable — fail loudly rather than silently return zeros, which
+        // would hand out predictable "random" bytes.
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed (\(status))")
         return data
     }
 

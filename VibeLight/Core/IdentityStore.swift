@@ -95,6 +95,12 @@ enum IdentityStore {
     private static func generateAndPersist() -> ClientIdentity? {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Pre-create the key file 0600 so openssl truncate-writes into it
+        // (O_CREAT only applies perms on *creation*) instead of creating it
+        // under the umask (0644) — closes the window where the RSA private key
+        // was group/other-readable before the post-hoc chmod below.
+        try? fm.removeItem(at: keyURL)
+        fm.createFile(atPath: keyURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")

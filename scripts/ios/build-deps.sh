@@ -16,8 +16,17 @@ WORK="$ROOT/ThirdParty/ios/.build"
 mkdir -p "$OUT" "$WORK"
 
 IOS_MIN=17.0
+# Pin BOTH a human-readable tag AND the exact commit that tag pointed to when
+# this script was written. A git tag is mutable — an attacker (or a compromised
+# upstream) can force-push it to a hostile commit — so we clone by tag for speed
+# but then REFUSE to build unless the checked-out commit matches the SHA below.
+# To bump a dependency: change the tag, then regenerate the SHA with
+#   git ls-remote https://github.com/<repo> refs/tags/<tag>^{}
+# (the `^{}` peels the annotated tag to the commit `git rev-parse HEAD` reports).
 MBEDTLS_TAG=v3.6.2
+MBEDTLS_SHA=107ea89daaefb9867ea9121002fbbdf926780e98
 OPUS_TAG=v1.5.2
+OPUS_SHA=ddbe48383984d56acd9e1ab6a090c54ca6b735a6
 
 command -v cmake >/dev/null || { echo "cmake missing: brew install cmake"; exit 1; }
 
@@ -39,9 +48,9 @@ else
   echo "⚠️  fork not at $FORK — MoonlightCore source not vendored (edit \$FORK)"
 fi
 
-# build_lib <name> <giturl> <tag> <cmake-extra-args...> -- <lib-relpath> <headers-src> <cmake-target>
+# build_lib <name> <giturl> <tag> <sha> <cmake-extra-args...> -- <lib-relpath> <headers-src> <cmake-target>
 build_lib() {
-  local name="$1" url="$2" tag="$3"; shift 3
+  local name="$1" url="$2" tag="$3" sha="$4"; shift 4
   local extra=(); while [[ "$1" != "--" ]]; do extra+=("$1"); shift; done; shift
   local librel="$1" headers="$2" target="$3"
   if [[ -d "$OUT/$name.xcframework" ]]; then echo "✓ $name.xcframework exists — skipping"; return; fi
@@ -49,6 +58,14 @@ build_lib() {
   local src="$WORK/$name"
   # --recurse-submodules: mbedTLS pulls its `framework` submodule its CMake needs.
   [[ -d "$src" ]] || git clone --depth 1 -b "$tag" --recurse-submodules "$url" "$src"
+  # Supply-chain guard: verify the tag still points at the commit we pinned.
+  local got; got="$(git -C "$src" rev-parse HEAD)"
+  if [[ "$got" != "$sha" ]]; then
+    echo "✖ $name: $tag resolved to $got but expected $sha." >&2
+    echo "  The tag may have been moved. Delete $src, verify the new commit is" >&2
+    echo "  legitimate, then update the *_SHA pin at the top of this script." >&2
+    exit 1
+  fi
 
   local slices=()
   for sdk in iphoneos iphonesimulator; do
@@ -76,12 +93,12 @@ build_lib() {
 
 # Only mbedcrypto is needed (AES/CTR-DRBG/MD for the encrypted streams); the TLS
 # and x509 layers don't build cleanly for iOS and common-c never uses them.
-build_lib mbedcrypto https://github.com/Mbed-TLS/mbedtls "$MBEDTLS_TAG" \
+build_lib mbedcrypto https://github.com/Mbed-TLS/mbedtls "$MBEDTLS_TAG" "$MBEDTLS_SHA" \
   -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
   -DUSE_STATIC_MBEDTLS_LIBRARY=ON -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
   -- library/libmbedcrypto.a include mbedcrypto
 
-build_lib opus https://github.com/xiph/opus "$OPUS_TAG" \
+build_lib opus https://github.com/xiph/opus "$OPUS_TAG" "$OPUS_SHA" \
   -DOPUS_BUILD_SHARED_LIBRARY=OFF -DOPUS_BUILD_TESTING=OFF -DOPUS_BUILD_PROGRAMS=OFF \
   -- libopus.a include opus
 

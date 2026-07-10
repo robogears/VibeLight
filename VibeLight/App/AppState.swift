@@ -125,6 +125,15 @@ final class AppState {
         var mac: Data?
     }
 
+    /// Decodes one element as `T?`: a bad or schema-incompatible element becomes
+    /// nil instead of making the whole array/dictionary decode throw — so one
+    /// corrupt saved record can't silently wipe every saved host/preset (and its
+    /// pinned pairing cert). (audit DAT-decode-failure-wipes-hosts)
+    private struct FailableDecodable<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: any Decoder) throws { value = try? T(from: decoder) }
+    }
+
     /// Live pairing state for the computer manager.
     struct PairingState: Equatable, Sendable {
         var hostID: String
@@ -177,6 +186,12 @@ final class AppState {
         hosts.first { $0.id == selectedHostID }
     }
     var hostOnline: Bool { serverInfo != nil }
+
+    /// The selected computer can be woken: it's asleep (not online) and we have a
+    /// MAC for the magic packet. SINGLE source of truth for the home-header wake
+    /// button — HomeView's render gate AND rebuildFocus's `header:power` id both
+    /// read this, so the focus invariant (id emitted iff view drawn) can't drift.
+    var canWakeSelectedHost: Bool { !hostOnline && selectedHost?.macAddress != nil }
 
     // MARK: UI state
 
@@ -322,8 +337,8 @@ final class AppState {
             UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
         }
         if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey),
-           let decoded = try? JSONDecoder().decode([String: MoonDeckConfig].self, from: data) {
-            moonDeckConfigs = decoded
+           let decoded = try? JSONDecoder().decode([String: FailableDecodable<MoonDeckConfig>].self, from: data) {
+            moonDeckConfigs = decoded.compactMapValues(\.value)   // drop only unreadable entries
         }
 
         wireCallbacks()
@@ -338,9 +353,11 @@ final class AppState {
     private static func loadPresets() -> [StreamPreset?] {
         let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
         guard let data = UserDefaults.standard.data(forKey: presetsKey),
-              let arr = try? JSONDecoder().decode([StreamPreset?].self, from: data) else { return empty }
-        // Normalize to exactly the slot count (tolerate an older/shorter blob).
-        var slots = Array(arr.prefix(presetSlotCount))
+              let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data) else { return empty }
+        // A bad or incompatible slot decodes to nil (an empty slot) — preserving
+        // slot positions — instead of dropping EVERY preset when one entry can't
+        // be read. Normalize to exactly the slot count.
+        var slots: [StreamPreset?] = arr.prefix(presetSlotCount).map(\.value)
         while slots.count < presetSlotCount { slots.append(nil) }
         return slots
     }
@@ -536,7 +553,7 @@ final class AppState {
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
-                if overlay == nil, screen == .home { presentOverlay(.relocate) }
+                if overlay == nil, screen == .home, !isOnboarding { presentOverlay(.relocate) }
             }
         } else {
             checkForUpdatesOnLaunch()
@@ -566,7 +583,7 @@ final class AppState {
             try? await Task.sleep(for: .seconds(2))
             guard let self else { return }
             await updateService.check(silent: true)
-            if updateService.phase == .available, overlay == nil, screen == .home {
+            if updateService.phase == .available, overlay == nil, screen == .home, !isOnboarding {
                 presentOverlay(.update)
             }
         }
@@ -605,9 +622,12 @@ final class AppState {
     private static let addedHostsKey = "vibelight.addedHosts"
 
     private static func loadAddedHosts() -> [AddedHost] {
+        // Lossy: decode entries one-by-one and keep the good ones, so a single
+        // corrupt or schema-incompatible record can't drop the whole list — each
+        // AddedHost carries a pinned pairing cert whose loss forces re-pairing.
         guard let data = UserDefaults.standard.data(forKey: addedHostsKey),
-              let arr = try? JSONDecoder().decode([AddedHost].self, from: data) else { return [] }
-        return arr
+              let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else { return [] }
+        return arr.compactMap(\.value)
     }
 
     private func persistAddedHosts() {
@@ -712,6 +732,17 @@ final class AppState {
     }
 
     #if os(iOS)
+    private var bgQuitTaskID: UIBackgroundTaskIdentifier = .invalid
+
+    /// Ends the quit-on-background assertion exactly once. Safe to call from both
+    /// the completion path and the expiration handler (idempotent via `.invalid`).
+    private func endBGQuitTask() {
+        if bgQuitTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(bgQuitTaskID)
+            bgQuitTaskID = .invalid
+        }
+    }
+
     /// iOS "Quit Game on App Exit": backgrounding suspends our sockets, so the
     /// stream can't survive anyway — tear down locally, and when the setting is
     /// on also /cancel the remote game. Runs inside a UIKit background task so
@@ -728,13 +759,24 @@ final class AppState {
         default: live = false
         }
         guard live else { return }
-        let taskID = UIApplication.shared.beginBackgroundTask()
+        // One quit-on-background episode at a time: if a prior assertion's Task is
+        // still in flight (rapid foreground→background toggle), let it finish
+        // rather than begin a second and cross-end them — ending id=2 from Task_A
+        // could cut off Task_B's /cancel mid-round-trip. The in-flight Task's own
+        // disconnect() already covers the teardown. (review: bgQuitTaskID race)
+        guard bgQuitTaskID == .invalid else { return }
+        // An expiration handler is mandatory: if the task outlives iOS's grace
+        // window with no handler, the app is force-terminated. Here we just end
+        // the assertion cleanly — the /cancel is best-effort, staying alive isn't.
+        bgQuitTaskID = UIApplication.shared.beginBackgroundTask(withName: "vibelight.quit-on-background") { [weak self] in
+            self?.endBGQuitTask()
+        }
         Task {
             // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
             // terminate — the /cancel is best-effort, staying alive is not.
             await stopStreamForAppExit(budget: .milliseconds(2500))
             session.disconnect()           // always: never strand a dead .streaming UI
-            UIApplication.shared.endBackgroundTask(taskID)
+            endBGQuitTask()
         }
     }
     #endif
@@ -877,6 +919,11 @@ final class AppState {
                 // shows it going offline rather than a stale "online".
                 serverInfo = nil
                 hostError = "Restarting \(host.name)…"
+                // hostOnline just flipped false AFTER dismissOverlay()'s
+                // rebuildFocus already ran — rebuild again so the now-visible
+                // wake button's header:power id becomes focusable immediately
+                // instead of only on the next refresh. (review: restart focus gap)
+                rebuildFocus()
             } catch {
                 moonDeckRestarting = false
                 guard inRestartFlow(for: hostID) else { return }
@@ -983,15 +1030,24 @@ final class AppState {
         defer { isRefreshing = false }
         do {
             let (info, address) = try await api.serverInfo(for: host)
+            // The user can switch hosts (or a stream can start) during the
+            // await; don't clobber the new selection's state with this stale
+            // response — the same guard runs again after the applist await.
+            guard selectedHost?.id == host.id, session.phase == .idle else { return }
             serverInfo = info
             hostAddress = address
             hostError = nil
+            if wakingHostID == host.id {   // it woke up — drop the transient state
+                wakingHostID = nil
+                wakeClearTask?.cancel()
+            }
             // A freshly-added host reports its real name here — and its MAC,
             // which is what makes Wake-on-LAN possible for in-app-paired hosts.
             if isAddedHost(host), let ip = host.manualAddress {
                 upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
+            guard selectedHost?.id == host.id, session.phase == .idle else { return }
             apps = displayApps(from: fresh)
         } catch let error as HostAPIError {
             serverInfo = nil
@@ -1032,8 +1088,28 @@ final class AppState {
         Task { await refreshSelectedHost() }
     }
 
+    /// The computer we last fired a Wake-on-LAN burst at, held until it comes
+    /// online or the wait lapses. Drives the home-header power button's
+    /// "waking…" pulse so the wake reads as *working* instead of doing nothing
+    /// visible for the ~30–60 s a PC takes to boot.
+    private(set) var wakingHostID: String?
+    @ObservationIgnored private var wakeClearTask: Task<Void, Never>?
+
+    /// Home-header power button action: wake the selected computer over the
+    /// network (WoL) and show a transient waking state. No-op if it's already
+    /// online or has no stored MAC. There is deliberately no remote power-OFF —
+    /// neither GameStream nor MoonDeckBuddy exposes shutdown/sleep; "power" here
+    /// means turn ON, and Restart covers reboot.
     func wakeSelectedHost() {
-        if let host = selectedHost { wakeHost(host) }
+        guard let host = selectedHost, host.macAddress != nil, !hostOnline else { return }
+        wakeHost(host)
+        wakingHostID = host.id
+        wakeClearTask?.cancel()
+        wakeClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(90))
+            guard let self, self.wakingHostID == host.id else { return }
+            self.wakingHostID = nil
+        }
     }
 
     func wakeHost(_ host: StreamHost) {
@@ -1129,9 +1205,19 @@ final class AppState {
                 // with d-pad UP from the games. IDs only when the views render
                 // (host set) — never emit focusable IDs no view draws.
                 if selectedHost != nil {
+                    var headerIDs = ["header:restart", "header:host"]
+                    // The wake/power button sits LEFT of restart, but only when the
+                    // selected computer is wakeable — its only useful moment. Shares
+                    // canWakeSelectedHost with HomeView's render gate so the id is
+                    // emitted iff the view is drawn (focus invariant).
+                    if canWakeSelectedHost { headerIDs.insert("header:power", at: 0) }
+                    sections.append(FocusSection(id: "header", kind: .shelf, itemIDs: headerIDs))
+                } else {
+                    // Fresh install (no host): "Add Computer" is the only way in,
+                    // so make it controller/keyboard reachable instead of a
+                    // pointer-only dead-end. (audit QOL-controller-deadend-no-host)
                     sections.append(FocusSection(
-                        id: "header", kind: .shelf,
-                        itemIDs: ["header:restart", "header:host"]
+                        id: "header", kind: .shelf, itemIDs: ["header:addhost"]
                     ))
                 }
                 sections.append(FocusSection(
@@ -1386,8 +1472,10 @@ final class AppState {
         case .select:
             if let id = focus.focusedItemID, id.hasPrefix("host:") {
                 selectHost(String(id.dropFirst(5)))
-            } else if focus.focusedItemID == "header:host" {
+            } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
+            } else if focus.focusedItemID == "header:power" {
+                wakeSelectedHost()
             } else if focus.focusedItemID == "header:restart" {
                 requestRestartPC()
             } else if let app = focusedApp {
@@ -1739,9 +1827,23 @@ final class AppState {
     }
 
     /// A stream is active, or the host is still running a game — something the
-    /// host would keep doing after VibeLight closes.
+    /// host would keep doing after VibeLight closes. Used for UI ("host busy")
+    /// state, NOT for the quit-cleanup decision — see `isLocalStreamActive`.
     var hasActiveRemoteSession: Bool {
         session.phase != .idle || (serverInfo?.currentGameID ?? 0) != 0
+    }
+
+    /// THIS device owns a live (or in-progress) stream. Deliberately narrower
+    /// than `hasActiveRemoteSession`: it excludes the `currentGameID != 0` term,
+    /// because a running game on the host may belong to another client, or be
+    /// one we intentionally left running on disconnect — quitting VibeLight must
+    /// not `/cancel` a game we aren't streaming. This is the gate for quit-time
+    /// cleanup, matching the iOS background path (see handleAppDidEnterBackground).
+    var isLocalStreamActive: Bool {
+        switch session.phase {
+        case .idle, .failed: return false
+        default: return true
+        }
     }
 
     /// Called by the app delegate when VibeLight is quitting. With "Quit Game on
@@ -1753,7 +1855,7 @@ final class AppState {
     /// termination watchdog (0x8BADF00D SIGKILL otherwise — seen on-device as
     /// "random crashes" every time the app was exited while the host was slow).
     func stopStreamForAppExit(budget: Duration = .seconds(7)) async {
-        guard settings.stopStreamOnExit, let host = selectedHost, hasActiveRemoteSession else { return }
+        guard settings.stopStreamOnExit, let host = selectedHost, isLocalStreamActive else { return }
         let work = Task { await session.quitCompletely(host: host) }
         let watchdog = Task { try? await Task.sleep(for: budget); work.cancel() }
         await work.value
@@ -1826,7 +1928,12 @@ final class AppState {
             switch self {
             case .video:
                 #if os(iOS)
-                [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444, .externalDisplay]
+                // Codec / HDR / Video Decoder / YUV 4:4:4 are hidden on iOS: the
+                // in-process engine forces H.264 SDR, so those rows adjusted a
+                // value that never took effect (audit QUA-ios-inert-settings).
+                // Re-add each when its decode path ships — HEVC/HDR/frame-pacing
+                // are on the roadmap (see InProcessStreamEngine + STREAMING-STATUS).
+                [.resolution, .fps, .bitrate, .externalDisplay]
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
@@ -1838,7 +1945,15 @@ final class AppState {
                 [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #endif
             case .about: [.appVersion, .checkUpdates, .restartSetup]
-            case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+            case .advanced:
+                #if os(iOS)
+                // V-Sync and Frame Pacing are macOS stream-helper (moonlight-qt)
+                // flags with no effect on the iOS in-process engine — hidden so
+                // they don't read as working toggles (audit QUA-ios-inert-settings).
+                [.gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                #else
+                [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                #endif
             case .themes: [.background]
             }
         }

@@ -88,23 +88,18 @@ private struct HeaderBar: View {
 
             if let host = state.selectedHost {
                 HStack(spacing: 12) {
+                    // Wake/power sits left of restart, only while the computer is
+                    // wakeable. Shares canWakeSelectedHost with rebuildFocus so the
+                    // header:power focus id is emitted iff this view is drawn.
+                    if state.canWakeSelectedHost {
+                        WakePCButton()
+                    }
                     RestartPCButton()
                     HostChip(host: host)
                 }
             } else {
                 // Fresh user, no computers yet — the way in to add one.
-                Button { state.openHostMenu() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Computer")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(Theme.accent, in: Capsule())
-                }
-                .buttonStyle(.plain)
+                AddComputerButton()
             }
 
             TimelineView(.everyMinute) { context in
@@ -114,6 +109,30 @@ private struct HeaderBar: View {
                     .monospacedDigit()
             }
         }
+    }
+}
+
+/// The "Add Computer" affordance shown before any host exists. Focusable by
+/// controller/keyboard (id "header:addhost") so first-run isn't pointer-only.
+private struct AddComputerButton: View {
+    @Environment(AppState.self) private var state
+    private var isFocused: Bool { state.focus.focusedItemID == "header:addhost" }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus.circle.fill")
+            Text("Add Computer")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(Theme.accent, in: Capsule())
+        .overlay { Capsule().strokeBorder(.white, lineWidth: isFocused ? 2 : 0) }
+        .scaleEffect(isFocused ? 1.03 : 1.0)
+        .contentShape(Capsule())
+        .onTapGesture { state.openHostMenu() }
+        .animation(Theme.focusSpring, value: isFocused)
     }
 }
 
@@ -162,6 +181,40 @@ private struct HostChip: View {
         .contentShape(Capsule())
         .onHover { hovering = $0 }
         .onTapGesture { state.openHostMenu() }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Theme.focusSpring, value: isFocused)
+    }
+}
+
+/// Header button, LEFT of restart: wake the selected computer over the network
+/// (Wake-on-LAN). Shown only while the computer is asleep and has a stored MAC —
+/// the one time a power-on is useful. Pulses while a wake is in flight so it
+/// reads as working during the ~30–60 s the PC takes to boot. (There is no
+/// remote power-OFF; see AppState.wakeSelectedHost.)
+private struct WakePCButton: View {
+    @Environment(AppState.self) private var state
+    @State private var hovering = false
+
+    private var isFocused: Bool { state.focus.focusedItemID == "header:power" }
+    private var waking: Bool { state.wakingHostID != nil && state.wakingHostID == state.selectedHost?.id }
+
+    var body: some View {
+        Button { state.wakeSelectedHost() } label: {
+            Image(systemName: "power")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(waking ? Theme.accent
+                                 : (hovering || isFocused ? Theme.textPrimary : Theme.textSecondary))
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
+                .symbolEffect(.pulse, options: .repeating, isActive: waking)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isFocused ? 1.06 : 1.0)
+        .onHover { hovering = $0 }
+        .help(waking ? "Waking…" : "Wake computer")
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(Theme.focusSpring, value: isFocused)
     }
