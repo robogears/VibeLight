@@ -113,13 +113,16 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
 /// host materializes a MATCHING virtual pad before the first input event locks
 /// the slot as a default X360 (`type` is a LI_CTYPE_* value: 0 unknown, 1 Xbox,
 /// 2 PlayStation, 3 Nintendo — with Sunshine/Apollo `gamepad=auto`, PlayStation
-/// becomes a virtual DS4). Must be this slot's FIRST controller packet. Falls
+/// becomes a virtual DS4). Must be this slot's FIRST controller packet.
+/// Returns 0 on success; NONZERO while the input stream isn't up yet — callers
+/// must retry until success and hold back controller events for the slot until
+/// then (a plain event that slips out first locks the slot as X360). Falls
 /// back to a plain controller event on hosts without arrival support.
-- (void)sendControllerArrivalForNumber:(uint8_t)controllerNumber
-                            activeMask:(uint16_t)activeMask
-                                  type:(uint8_t)type
-                      supportedButtons:(uint32_t)supportedButtons
-                          capabilities:(uint16_t)capabilities;
+- (int)sendControllerArrivalForNumber:(uint8_t)controllerNumber
+                           activeMask:(uint16_t)activeMask
+                                 type:(uint8_t)type
+                     supportedButtons:(uint32_t)supportedButtons
+                         capabilities:(uint16_t)capabilities;
 
 /// Announces a player-1 gamepad (legacy single-pad wrapper for the above).
 - (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons

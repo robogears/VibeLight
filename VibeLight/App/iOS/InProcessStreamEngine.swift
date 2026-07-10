@@ -276,8 +276,8 @@ final class InProcessStreamEngine: StreamEngine {
         announcedSlots.removeAll()
     }
 
-    /// The slot for this pad, allocating the lowest free one (and announcing
-    /// the pad to the host) on first sight. nil = four pads already active.
+    /// The slot for this pad, allocating the lowest free one (and attempting
+    /// its arrival announcement) on first sight. nil = four pads already active.
     private func slot(for pad: GCExtendedGamepad) -> UInt8? {
         guard let controller = pad.controller else { return nil }
         let key = ObjectIdentifier(controller)
@@ -285,7 +285,7 @@ final class InProcessStreamEngine: StreamEngine {
         for candidate: UInt8 in 0..<4 where slotMask & (1 << candidate) == 0 {
             padSlots[key] = candidate
             slotMask |= (1 << candidate)
-            announce(controller, slot: candidate)
+            ensureAnnounced(controller, slot: candidate)
             return candidate
         }
         return nil
@@ -297,9 +297,18 @@ final class InProcessStreamEngine: StreamEngine {
     /// games) instead of the default X360. Ordering is load-bearing: the
     /// arrival must be the slot's FIRST packet, or the host permanently
     /// allocates an X360 for the session the moment a plain event leaks out.
-    private func announce(_ controller: GCController, slot: UInt8) {
-        guard !announcedSlots.contains(slot), let session else { return }
-        announcedSlots.insert(slot)
+    ///
+    /// RETRIED until it actually lands: the arrival API returns nonzero while
+    /// the input stream is still handshaking, and our "streaming" flip fires
+    /// on first VIDEO packets — which can beat the input channel. The old
+    /// fire-and-forget dropped the announcement silently, and the first plain
+    /// controller event then locked the slot as X360 for the whole session
+    /// (seen on device as "my pads always show up as Xbox"). Mirrors
+    /// moonlight-ios: a slot's events are held back until its arrival lands.
+    @discardableResult
+    private func ensureAnnounced(_ controller: GCController, slot: UInt8) -> Bool {
+        if announcedSlots.contains(slot) { return true }
+        guard let session else { return false }
         let pad = controller.extendedGamepad
         var type = LiControllerType.unknown
         if pad is GCXboxGamepad {
@@ -318,9 +327,11 @@ final class InProcessStreamEngine: StreamEngine {
         // forwarded yet — advertising them would make the host expect events
         // we never send, and a virtual-DS4 touchpad that Steam maps to mouse
         // is exactly the phantom-cursor trap we're avoiding elsewhere.
-        session.sendControllerArrival(forNumber: slot, activeMask: slotMask,
-                                      type: type, supportedButtons: buttons,
-                                      capabilities: 0x01)
+        let ok = session.sendControllerArrival(forNumber: slot, activeMask: slotMask,
+                                               type: type, supportedButtons: buttons,
+                                               capabilities: 0x01) == 0
+        if ok { announcedSlots.insert(slot) }
+        return ok
     }
 
     /// A pad vanished: release its slot. The zeroed event with the bit cleared
@@ -465,6 +476,10 @@ final class InProcessStreamEngine: StreamEngine {
     private func forward(_ pad: GCExtendedGamepad) {
         guard let session else { return }
         guard let slot = slot(for: pad) else { return }   // 5th+ pad: no free slot
+        // Hold back events until the slot's arrival announcement has landed —
+        // a plain event slipping out first would lock the slot as X360.
+        guard let controller = pad.controller,
+              ensureAnnounced(controller, slot: slot) else { return }
         var flags: Int32 = 0
         if pad.buttonA.isPressed { flags |= 0x1000 }                      // A
         if pad.buttonB.isPressed { flags |= 0x2000 }                      // B
@@ -667,15 +682,25 @@ final class InProcessStreamEngine: StreamEngine {
             setStreamInput(active: true)
             setStatsHUD(active: true)
             armCompanionIdle()   // start the iPad companion's 30 s dim timer
-            // Announce every attached pad — with its REAL family — so the host
-            // materializes matching virtual controllers before first input
-            // (a DualSense shows up as a PlayStation pad, games list them in
-            // controller menus right away). Touch-only sessions announce
-            // nothing: a phantom gamepad would appear on the host otherwise.
+            onStreamDidStart?(nil)
+        }
+        // Announce every attached pad — with its REAL family — so the host
+        // materializes matching virtual controllers before first input
+        // (a DualSense shows up as a PlayStation pad, games list them in
+        // controller menus right away). Touch-only sessions announce nothing:
+        // a phantom gamepad would appear on the host otherwise. Runs on the
+        // video-start flip (may be too early for the input stream — that's
+        // fine, ensureAnnounced retries) AND on .connected (connectionStarted:
+        // every stream including input is up, so announcements land for sure).
+        if connectedOnce {
             for controller in GCController.controllers() {
                 if let pad = controller.extendedGamepad { _ = slot(for: pad) }
             }
-            onStreamDidStart?(nil)
+            for (key, slot) in padSlots {
+                if let controller = GCController.controllers().first(where: { ObjectIdentifier($0) == key }) {
+                    ensureAnnounced(controller, slot: slot)
+                }
+            }
         }
     }
 

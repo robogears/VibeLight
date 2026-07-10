@@ -318,16 +318,16 @@ static void ArCleanup(void);
     }
 }
 
-- (void)sendControllerArrivalForNumber:(uint8_t)controllerNumber
-                            activeMask:(uint16_t)activeMask
-                                  type:(uint8_t)type
-                      supportedButtons:(uint32_t)supportedButtons
-                          capabilities:(uint16_t)capabilities {
-    if (sActive != self) return;
+- (int)sendControllerArrivalForNumber:(uint8_t)controllerNumber
+                           activeMask:(uint16_t)activeMask
+                                 type:(uint8_t)type
+                     supportedButtons:(uint32_t)supportedButtons
+                         capabilities:(uint16_t)capabilities {
+    if (sActive != self) return -1;
     // Falls back to a plain LiSendMultiControllerEvent on hosts without
-    // arrival support, per Limelight.h.
-    LiSendControllerArrivalEvent(controllerNumber, activeMask, type,
-                                 supportedButtons, capabilities);
+    // arrival support, per Limelight.h. Nonzero until the input stream is up.
+    return LiSendControllerArrivalEvent(controllerNumber, activeMask, type,
+                                        supportedButtons, capabilities);
 }
 
 - (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
