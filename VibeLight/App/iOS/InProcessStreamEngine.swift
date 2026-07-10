@@ -50,15 +50,35 @@ final class InProcessStreamEngine: StreamEngine {
         // nothing restarts it. Registered once for the engine's lifetime.
         NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
-        ) { note in
+        ) { [weak self] note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
-            do {
-                try AVAudioSession.sharedInstance().setActive(true)
-            } catch {
-                NSLog("[VibeLight] audio session reactivation after interruption failed: \(error.localizedDescription)")
+            // queue: .main guarantees main-thread delivery.
+            MainActor.assumeIsolated {
+                // Only fight for the audio session while a stream is actually
+                // live. An interruption that ENDS after the stream already
+                // stopped must not re-grab audio focus from whatever the user
+                // switched to (Music, a video, another game).
+                guard let self, self.session != nil else { return }
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true)
+                } catch {
+                    NSLog("[VibeLight] audio session reactivation after interruption failed: \(error.localizedDescription)")
+                }
+                MoonlightSession.resumeAudio()
             }
-            MoonlightSession.resumeAudio()
+        }
+    }
+
+    /// Release the audio session so other apps (Music, podcasts) resume — the
+    /// mirror of the `setActive(true)` on launch. `.notifyOthersOnDeactivation`
+    /// is what actually un-ducks the app we interrupted. Best-effort; called on
+    /// every teardown path.
+    private func deactivateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            NSLog("[VibeLight] audio session deactivate failed: \(error.localizedDescription)")
         }
     }
 
@@ -143,7 +163,13 @@ final class InProcessStreamEngine: StreamEngine {
                 codecModeSupport: Int32(info.serverCodecModeSupport),
                 width: Int32(effective.width), height: Int32(effective.height),
                 fps: Int32(effective.fps), bitrateKbps: Int32(effective.bitrateKbps),
-                enableHevc: false, enableHdr: false,   // H.264 for the first connect
+                // Hardcoded H.264 SDR: the iOS in-process decode path only
+                // handles H.264 today. HEVC/HDR are on the roadmap
+                // (docs/STREAMING-STATUS.md) and NOT wired to the
+                // AVSampleBufferDisplayLayer yet — `settings.hdr` is deliberately
+                // ignored here rather than promised to a decoder that can't honor
+                // it. Flip these only when the HEVC/HDR decode path ships.
+                enableHevc: false, enableHdr: false,
                 aesKey: key, aesIv: iv)
             session.delegate = proxy
             displayLayer.flush()
@@ -170,6 +196,7 @@ final class InProcessStreamEngine: StreamEngine {
         session?.stop()
         session = nil
         proxy = nil
+        deactivateAudioSession()
         // stop() interrupts the connection but its termination callback can no
         // longer reach us (session/proxy just released) — transition the phase
         // HERE or the UI stays stuck on a dead, frozen stream. (On-device bug:
@@ -653,6 +680,7 @@ final class InProcessStreamEngine: StreamEngine {
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
         session = nil
+        deactivateAudioSession()
         do {
             let (_, address) = try await api.serverInfo(for: host)
             try await api.cancel(for: host, at: address)
@@ -709,6 +737,7 @@ final class InProcessStreamEngine: StreamEngine {
         setStatsHUD(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
+        deactivateAudioSession()
         phase = .failed("Stream failed at stage \(stage.rawValue) (error \(error)). Make sure the host is awake and not busy.")
     }
 
@@ -723,6 +752,7 @@ final class InProcessStreamEngine: StreamEngine {
         session?.stop()
         session = nil
         proxy = nil
+        deactivateAudioSession()
         let cleanly = (error == 0) || remoteQuitRequested
         if let app = launchingApp { phase = .ending(app) } else { phase = .idle }
         onStreamDidEnd?(cleanly)

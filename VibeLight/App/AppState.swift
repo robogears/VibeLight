@@ -536,7 +536,7 @@ final class AppState {
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
-                if overlay == nil, screen == .home { presentOverlay(.relocate) }
+                if overlay == nil, screen == .home, !isOnboarding { presentOverlay(.relocate) }
             }
         } else {
             checkForUpdatesOnLaunch()
@@ -566,7 +566,7 @@ final class AppState {
             try? await Task.sleep(for: .seconds(2))
             guard let self else { return }
             await updateService.check(silent: true)
-            if updateService.phase == .available, overlay == nil, screen == .home {
+            if updateService.phase == .available, overlay == nil, screen == .home, !isOnboarding {
                 presentOverlay(.update)
             }
         }
@@ -712,6 +712,17 @@ final class AppState {
     }
 
     #if os(iOS)
+    private var bgQuitTaskID: UIBackgroundTaskIdentifier = .invalid
+
+    /// Ends the quit-on-background assertion exactly once. Safe to call from both
+    /// the completion path and the expiration handler (idempotent via `.invalid`).
+    private func endBGQuitTask() {
+        if bgQuitTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(bgQuitTaskID)
+            bgQuitTaskID = .invalid
+        }
+    }
+
     /// iOS "Quit Game on App Exit": backgrounding suspends our sockets, so the
     /// stream can't survive anyway — tear down locally, and when the setting is
     /// on also /cancel the remote game. Runs inside a UIKit background task so
@@ -728,13 +739,19 @@ final class AppState {
         default: live = false
         }
         guard live else { return }
-        let taskID = UIApplication.shared.beginBackgroundTask()
+        // An expiration handler is mandatory: if the task outlives iOS's grace
+        // window with no handler, the app is force-terminated. Here we just end
+        // the assertion cleanly — the /cancel is best-effort, staying alive isn't.
+        endBGQuitTask()   // never stack two assertions
+        bgQuitTaskID = UIApplication.shared.beginBackgroundTask(withName: "vibelight.quit-on-background") { [weak self] in
+            self?.endBGQuitTask()
+        }
         Task {
             // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
             // terminate — the /cancel is best-effort, staying alive is not.
             await stopStreamForAppExit(budget: .milliseconds(2500))
             session.disconnect()           // always: never strand a dead .streaming UI
-            UIApplication.shared.endBackgroundTask(taskID)
+            endBGQuitTask()
         }
     }
     #endif
@@ -983,6 +1000,10 @@ final class AppState {
         defer { isRefreshing = false }
         do {
             let (info, address) = try await api.serverInfo(for: host)
+            // The user can switch hosts (or a stream can start) during the
+            // await; don't clobber the new selection's state with this stale
+            // response — the same guard runs again after the applist await.
+            guard selectedHost?.id == host.id, session.phase == .idle else { return }
             serverInfo = info
             hostAddress = address
             hostError = nil
@@ -992,6 +1013,7 @@ final class AppState {
                 upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
+            guard selectedHost?.id == host.id, session.phase == .idle else { return }
             apps = displayApps(from: fresh)
         } catch let error as HostAPIError {
             serverInfo = nil
@@ -1739,9 +1761,23 @@ final class AppState {
     }
 
     /// A stream is active, or the host is still running a game — something the
-    /// host would keep doing after VibeLight closes.
+    /// host would keep doing after VibeLight closes. Used for UI ("host busy")
+    /// state, NOT for the quit-cleanup decision — see `isLocalStreamActive`.
     var hasActiveRemoteSession: Bool {
         session.phase != .idle || (serverInfo?.currentGameID ?? 0) != 0
+    }
+
+    /// THIS device owns a live (or in-progress) stream. Deliberately narrower
+    /// than `hasActiveRemoteSession`: it excludes the `currentGameID != 0` term,
+    /// because a running game on the host may belong to another client, or be
+    /// one we intentionally left running on disconnect — quitting VibeLight must
+    /// not `/cancel` a game we aren't streaming. This is the gate for quit-time
+    /// cleanup, matching the iOS background path (see handleAppDidEnterBackground).
+    var isLocalStreamActive: Bool {
+        switch session.phase {
+        case .idle, .failed: return false
+        default: return true
+        }
     }
 
     /// Called by the app delegate when VibeLight is quitting. With "Quit Game on
@@ -1753,7 +1789,7 @@ final class AppState {
     /// termination watchdog (0x8BADF00D SIGKILL otherwise — seen on-device as
     /// "random crashes" every time the app was exited while the host was slow).
     func stopStreamForAppExit(budget: Duration = .seconds(7)) async {
-        guard settings.stopStreamOnExit, let host = selectedHost, hasActiveRemoteSession else { return }
+        guard settings.stopStreamOnExit, let host = selectedHost, isLocalStreamActive else { return }
         let work = Task { await session.quitCompletely(host: host) }
         let watchdog = Task { try? await Task.sleep(for: budget); work.cancel() }
         await work.value
@@ -1826,7 +1862,12 @@ final class AppState {
             switch self {
             case .video:
                 #if os(iOS)
-                [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444, .externalDisplay]
+                // Codec / HDR / Video Decoder / YUV 4:4:4 are hidden on iOS: the
+                // in-process engine forces H.264 SDR, so those rows adjusted a
+                // value that never took effect (audit QUA-ios-inert-settings).
+                // Re-add each when its decode path ships — HEVC/HDR/frame-pacing
+                // are on the roadmap (see InProcessStreamEngine + STREAMING-STATUS).
+                [.resolution, .fps, .bitrate, .externalDisplay]
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
@@ -1838,7 +1879,15 @@ final class AppState {
                 [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #endif
             case .about: [.appVersion, .checkUpdates, .restartSetup]
-            case .advanced: [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+            case .advanced:
+                #if os(iOS)
+                // V-Sync and Frame Pacing are macOS stream-helper (moonlight-qt)
+                // flags with no effect on the iOS in-process engine — hidden so
+                // they don't read as working toggles (audit QUA-ios-inert-settings).
+                [.gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                #else
+                [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                #endif
             case .themes: [.background]
             }
         }

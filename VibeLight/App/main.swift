@@ -35,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// termination until it finishes (or its watchdog fires). Also covers logout/
     /// shutdown, where macOS honors terminateLater up to its own timeout.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let state, state.settings.stopStreamOnExit, state.hasActiveRemoteSession else {
+        // isLocalStreamActive (not hasActiveRemoteSession): only /cancel a game
+        // THIS device is actually streaming. A game the host reports running
+        // could be another client's, or one we left running on purpose — see the
+        // property doc. Mirrors the iOS background-exit narrowing.
+        guard let state, state.settings.stopStreamOnExit, state.isLocalStreamActive else {
             return .terminateNow
         }
         Task { @MainActor in
