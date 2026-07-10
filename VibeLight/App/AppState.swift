@@ -1021,6 +1021,10 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
+            if wakingHostID == host.id {   // it woke up — drop the transient state
+                wakingHostID = nil
+                wakeClearTask?.cancel()
+            }
             // A freshly-added host reports its real name here — and its MAC,
             // which is what makes Wake-on-LAN possible for in-app-paired hosts.
             if isAddedHost(host), let ip = host.manualAddress {
@@ -1068,8 +1072,28 @@ final class AppState {
         Task { await refreshSelectedHost() }
     }
 
+    /// The computer we last fired a Wake-on-LAN burst at, held until it comes
+    /// online or the wait lapses. Drives the home-header power button's
+    /// "waking…" pulse so the wake reads as *working* instead of doing nothing
+    /// visible for the ~30–60 s a PC takes to boot.
+    private(set) var wakingHostID: String?
+    @ObservationIgnored private var wakeClearTask: Task<Void, Never>?
+
+    /// Home-header power button action: wake the selected computer over the
+    /// network (WoL) and show a transient waking state. No-op if it's already
+    /// online or has no stored MAC. There is deliberately no remote power-OFF —
+    /// neither GameStream nor MoonDeckBuddy exposes shutdown/sleep; "power" here
+    /// means turn ON, and Restart covers reboot.
     func wakeSelectedHost() {
-        if let host = selectedHost { wakeHost(host) }
+        guard let host = selectedHost, host.macAddress != nil, !hostOnline else { return }
+        wakeHost(host)
+        wakingHostID = host.id
+        wakeClearTask?.cancel()
+        wakeClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(90))
+            guard let self, self.wakingHostID == host.id else { return }
+            self.wakingHostID = nil
+        }
     }
 
     func wakeHost(_ host: StreamHost) {
@@ -1164,11 +1188,15 @@ final class AppState {
                 // Header row above the shelf: restart PC + host chip, reachable
                 // with d-pad UP from the games. IDs only when the views render
                 // (host set) — never emit focusable IDs no view draws.
-                if selectedHost != nil {
-                    sections.append(FocusSection(
-                        id: "header", kind: .shelf,
-                        itemIDs: ["header:restart", "header:host"]
-                    ))
+                if let host = selectedHost {
+                    var headerIDs = ["header:restart", "header:host"]
+                    // The wake/power button sits LEFT of restart, but only when
+                    // the selected computer is asleep AND wakeable (stored MAC) —
+                    // its only useful moment. rebuildFocus() runs every refresh, so
+                    // this drops the moment the host comes online. (never emit a
+                    // focusable id whose view isn't drawn — HomeView gates identically)
+                    if !hostOnline, host.macAddress != nil { headerIDs.insert("header:power", at: 0) }
+                    sections.append(FocusSection(id: "header", kind: .shelf, itemIDs: headerIDs))
                 } else {
                     // Fresh install (no host): "Add Computer" is the only way in,
                     // so make it controller/keyboard reachable instead of a
@@ -1431,6 +1459,8 @@ final class AppState {
                 selectHost(String(id.dropFirst(5)))
             } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
+            } else if focus.focusedItemID == "header:power" {
+                wakeSelectedHost()
             } else if focus.focusedItemID == "header:restart" {
                 requestRestartPC()
             } else if let app = focusedApp {

@@ -88,6 +88,11 @@ private struct HeaderBar: View {
 
             if let host = state.selectedHost {
                 HStack(spacing: 12) {
+                    // Wake/power sits left of restart, only while the computer is
+                    // asleep and wakeable (must match AppState.rebuildFocus).
+                    if !state.hostOnline && host.macAddress != nil {
+                        WakePCButton()
+                    }
                     RestartPCButton()
                     HostChip(host: host)
                 }
@@ -183,6 +188,40 @@ private struct HostChip: View {
 /// Header button, left of the host chip: force-restart the selected PC via
 /// MoonDeckBuddy. First use walks the user through pairing; after that it's a
 /// one-tap confirm → reboot (no dialog on the PC).
+/// Header button, LEFT of restart: wake the selected computer over the network
+/// (Wake-on-LAN). Shown only while the computer is asleep and has a stored MAC —
+/// the one time a power-on is useful. Pulses while a wake is in flight so it
+/// reads as working during the ~30–60 s the PC takes to boot. (There is no
+/// remote power-OFF; see AppState.wakeSelectedHost.)
+private struct WakePCButton: View {
+    @Environment(AppState.self) private var state
+    @State private var hovering = false
+
+    private var isFocused: Bool { state.focus.focusedItemID == "header:power" }
+    private var waking: Bool { state.wakingHostID != nil && state.wakingHostID == state.selectedHost?.id }
+
+    var body: some View {
+        Button { state.wakeSelectedHost() } label: {
+            Image(systemName: "power")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(waking ? Theme.accent
+                                 : (hovering || isFocused ? Theme.textPrimary : Theme.textSecondary))
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
+                .symbolEffect(.pulse, options: .repeating, isActive: waking)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isFocused ? 1.06 : 1.0)
+        .onHover { hovering = $0 }
+        .help(waking ? "Waking…" : "Wake computer")
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Theme.focusSpring, value: isFocused)
+    }
+}
+
 private struct RestartPCButton: View {
     @Environment(AppState.self) private var state
     @State private var hovering = false
