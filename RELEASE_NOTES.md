@@ -1,34 +1,22 @@
-# VibeLight v0.1.11 — First-run setup, a shelf of new backgrounds, friendlier quit
+# VibeLight v0.1.12 — Wake your PC from the couch, and a big reliability pass
 
-*A look-and-feel release for **both Mac and iPad**: a cinematic first-run setup, a whole set of new animated backgrounds, and a quit that behaves the way you'd expect. Every current user gets the new setup once when they update.*
+*A practical release: a one-tap **Wake** button for a sleeping computer, plus a large under-the-hood hardening pass so your saved computers, your updates, and your streams are all a bit more bulletproof.*
 
-### ✨ A first-run setup experience
-Opening VibeLight for the first time — and once after this update — now walks you through a short, cinematic setup instead of dropping you straight in:
-- A warm **welcome**: the background breathes on its own for a beat, then the VibeLight wordmark arrives.
-- **Pick your look** — choose a background from live, animated previews.
-- **Set your stream quality** — resolution, FPS, and bitrate, with a plain-English hint. *(You can change all of it later in Settings ▸ Video.)*
-- **Your first preset** — your choices are saved as Preset 1, and you're shown where the other five slots live.
-- A cinematic hand-off that deals you into the launcher.
+### ⏻ Wake your computer from the home screen
+The power button moved out of the computer menu and onto the **home screen, just left of Restart** — where it's actually useful:
+- One tap sends a **Wake-on-LAN** to a sleeping PC over your network.
+- It appears **only when the selected computer is asleep** (and you have its address saved), pulses **"Waking…"** while the machine boots, and disappears the moment it comes online — so you can see it working instead of wondering if anything happened.
+- *(There's no remote power-off — nothing in the streaming protocol offers one — so "power" means turn on; **Restart** still covers reboots.)*
 
-Want to see it again? **Settings ▸ About ▸ Restart Setup** replays the whole thing.
+### 🛡️ A big reliability & security pass
+Dozens of audited fixes across the app — the parts you'd actually feel:
+- **Your saved computers can't vanish.** A single corrupt saved entry can no longer wipe your whole list of paired PCs (and the pairing certificates that go with them).
+- **Safer updates.** The in-app updater now checks each download against a published checksum before it installs, and insists on the right build.
+- **Steadier streaming on iPhone & iPad.** Game audio now hands back cleanly to Music/podcasts when a stream ends *or* fails to start, and a failed connection no longer leaves audio in a stuck state.
+- Plus quiet hardening throughout pairing, host communication, and identity handling.
 
-### 🎨 A shelf of new backgrounds
-**Settings ▸ Themes** now has a scrollable strip of live previews — pick with a tap or the controller, each tagged **Static** or **Animated**:
-- **Parallax Deep** *(the new default)* — a pitch-black starfield drifting through quiet space.
-- **Living Glass** — dark navy with dim blue-and-violet blooms migrating like light through frosted glass.
-- **Constellation** — a gentle web of light that slowly breathes.
-- **Ink Pool** and **Nightfall Sheen** — two calm, static "expensive dark" looks.
-- Plus **Ambient** and the flat, cartoony **Diagonal Drift**.
-
-All of them are built to stay smooth — no jank, even at the iPad's native resolution.
-
-### 🎬 The launcher deals itself in
-On launch, the shelf and chrome now **fade and settle into place** over a beat instead of snapping on — a calmer way to arrive home.
-
-### ⏻ A friendlier quit
-- **Mac: ⌘Q quits VibeLight instantly** again — plain and predictable.
-- **Quitting the *game* is now a deliberate hold** on every input: hold **⌘⇧Q** (keyboard), the **Menu** button (controller), or the on-screen **Hold to Quit Game** button — each fills a ring, so it never fires by accident.
-- **iPad / iPhone finally has a touch "Hold to Quit Game" button** in the hint bar.
+### 🎮 Friendlier first run
+- On a brand-new install, the **"Add Computer" button is now reachable with a controller or keyboard** — no mouse required to get going.
 
 ---
 *Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight offers this update in-app.*

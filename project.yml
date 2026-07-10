@@ -48,7 +48,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.app
         PRODUCT_NAME: VibeLight
-        MARKETING_VERSION: 0.1.11
+        MARKETING_VERSION: 0.1.12
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
@@ -87,7 +87,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.app.dev
         PRODUCT_NAME: "VibeLight Dev"
-        MARKETING_VERSION: 0.1.11
+        MARKETING_VERSION: 0.1.12
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
@@ -172,7 +172,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.ios
         PRODUCT_NAME: VibeLight
-        MARKETING_VERSION: 0.1.11
+        MARKETING_VERSION: 0.1.12
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: VibeLightiOS.entitlements
