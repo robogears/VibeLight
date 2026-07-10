@@ -126,17 +126,21 @@ enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
     // ones (see `isAnimated`). Raw values are frozen (they persist in
     // UserDefaults) — never rename an existing case; reordering cases is fine.
     case nightfallSheen, inkPool,                                      // static
-         livingGlass, parallaxDeep, constellation, ambient, diagonal   // animated
+         livingGlass, parallaxDeep, constellation, ambient, diagonal,  // animated
+         gaslight, searchlightCity, swingingBulb                       // animated — the noir set
 
     var title: String {
         switch self {
-        case .nightfallSheen: "Nightfall Sheen"
-        case .inkPool:        "Ink Pool"
-        case .livingGlass:    "Living Glass"
-        case .parallaxDeep:   "Parallax Deep"
-        case .constellation:  "Constellation"
-        case .ambient:        "Ambient"
-        case .diagonal:       "Diagonal Drift"
+        case .nightfallSheen:  "Nightfall Sheen"
+        case .inkPool:         "Ink Pool"
+        case .livingGlass:     "Living Glass"
+        case .parallaxDeep:    "Parallax Deep"
+        case .constellation:   "Constellation"
+        case .ambient:         "Ambient"
+        case .diagonal:        "Diagonal Drift"
+        case .gaslight:        "Gaslight"
+        case .searchlightCity: "Searchlight City"
+        case .swingingBulb:    "Swinging Bulb"
         }
     }
 
