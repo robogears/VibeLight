@@ -181,8 +181,18 @@ final class InProcessStreamEngine: StreamEngine {
             self.launchingApp = app
             session.start()
         } catch is CancellationError {
+            // Deliberately DON'T deactivate audio here: a CancellationError almost
+            // always means a newer launch() superseded us and has already
+            // re-grabbed the audio session, so deactivating would stomp the new
+            // stream's audio. A genuine user-abort is cleaned up by the next
+            // launch/teardown.
             phase = .idle
         } catch {
+            // Hand the audio session back on a real launch failure (host asleep/
+            // busy): we grabbed it at setActive(true) above but no stream started,
+            // so without this the user's Music/podcast stays paused with nothing
+            // playing. (audit ERR-launch-failure-leaves-audio-active)
+            deactivateAudioSession()
             phase = .failed((error as? LocalizedError)?.errorDescription
                             ?? "Couldn't start \u{201C}\(app.name)\u{201D} on \(host.name).")
         }
@@ -737,6 +747,14 @@ final class InProcessStreamEngine: StreamEngine {
         setStatsHUD(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
+        // Clear the dead connection like handleTerminated does: LiStopConnection is
+        // stage-guarded (a safe no-op after a failed LiStartConnection that already
+        // unwound), and nil-ing session/proxy stops the audio-interruption guard —
+        // which keys on `session != nil` — from treating a failed stream as live
+        // and re-grabbing audio focus later. (audit LIF-handlefail-leaves-session-nonnil)
+        session?.stop()
+        session = nil
+        proxy = nil
         deactivateAudioSession()
         phase = .failed("Stream failed at stage \(stage.rawValue) (error \(error)). Make sure the host is awake and not busy.")
     }
