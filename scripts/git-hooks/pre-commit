@@ -1,0 +1,47 @@
+#!/bin/bash
+# VibeLight pre-commit guard: keep private network topology out of the PUBLIC repo.
+#
+# CLAUDE.md's rule is that real IPs / host UUIDs / Wake-on-LAN MACs live ONLY in
+# the gitignored CLAUDE.local.md. This scans the STAGED additions for those
+# shapes so the leak that already sits in history (audit
+# SEC-topology-in-git-history) can't be extended. It BLOCKS on IPs and MACs
+# (distinctive, high-confidence) and only WARNS on bare UUIDs (canonical UUIDs
+# also appear legitimately in code/tests). Hostnames aren't regex-detectable, so
+# they're out of scope here — keep them in CLAUDE.local.md yourself.
+#
+# Enable once per clone:  git config core.hooksPath scripts/git-hooks
+# Bypass a false positive: git commit --no-verify
+
+set -u
+fail=0
+block() { echo "  ✖ $1"; fail=1; }
+warn()  { echo "  ⚠ $1"; }
+
+# Only added lines (leading '+'), excluding the +++ file header.
+added="$(git diff --cached --unified=0 --no-color | grep -E '^\+[^+]' || true)"
+[ -z "$added" ] && exit 0
+
+# RFC1918 LAN ranges.
+if grep -Eq '(^|[^0-9.])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})' <<<"$added"; then
+  block "a private LAN IP (RFC1918) was added"
+fi
+# Tailscale CGNAT range 100.64.0.0/10.
+if grep -Eq '(^|[^0-9.])100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}' <<<"$added"; then
+  block "a Tailscale-range IP (100.64.0.0/10) was added"
+fi
+# A MAC address (colon- or dash-separated 6 octets) — the WoL MAC is sensitive.
+if grep -Eiq '(^|[^0-9a-f:.-])([0-9a-f]{2}[:-]){5}[0-9a-f]{2}([^0-9a-f:.-]|$)' <<<"$added"; then
+  block "a MAC address was added (the Wake-on-LAN MAC is private)"
+fi
+# A bare host UUID — warn only (canonical UUIDs are also legitimate in code).
+if grep -Eiq '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$added"; then
+  warn "a UUID-shaped value was added — if it's a real host UUID, move it to CLAUDE.local.md"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "pre-commit: refusing to commit private network topology to a public repo."
+  echo "  Move it to CLAUDE.local.md (gitignored), or re-run with --no-verify if this is a false positive."
+  exit 1
+fi
+exit 0
