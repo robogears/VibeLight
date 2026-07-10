@@ -125,6 +125,15 @@ final class AppState {
         var mac: Data?
     }
 
+    /// Decodes one element as `T?`: a bad or schema-incompatible element becomes
+    /// nil instead of making the whole array/dictionary decode throw — so one
+    /// corrupt saved record can't silently wipe every saved host/preset (and its
+    /// pinned pairing cert). (audit DAT-decode-failure-wipes-hosts)
+    private struct FailableDecodable<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: any Decoder) throws { value = try? T(from: decoder) }
+    }
+
     /// Live pairing state for the computer manager.
     struct PairingState: Equatable, Sendable {
         var hostID: String
@@ -322,8 +331,8 @@ final class AppState {
             UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
         }
         if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey),
-           let decoded = try? JSONDecoder().decode([String: MoonDeckConfig].self, from: data) {
-            moonDeckConfigs = decoded
+           let decoded = try? JSONDecoder().decode([String: FailableDecodable<MoonDeckConfig>].self, from: data) {
+            moonDeckConfigs = decoded.compactMapValues(\.value)   // drop only unreadable entries
         }
 
         wireCallbacks()
@@ -338,9 +347,11 @@ final class AppState {
     private static func loadPresets() -> [StreamPreset?] {
         let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
         guard let data = UserDefaults.standard.data(forKey: presetsKey),
-              let arr = try? JSONDecoder().decode([StreamPreset?].self, from: data) else { return empty }
-        // Normalize to exactly the slot count (tolerate an older/shorter blob).
-        var slots = Array(arr.prefix(presetSlotCount))
+              let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data) else { return empty }
+        // A bad or incompatible slot decodes to nil (an empty slot) — preserving
+        // slot positions — instead of dropping EVERY preset when one entry can't
+        // be read. Normalize to exactly the slot count.
+        var slots: [StreamPreset?] = arr.prefix(presetSlotCount).map(\.value)
         while slots.count < presetSlotCount { slots.append(nil) }
         return slots
     }
@@ -605,9 +616,12 @@ final class AppState {
     private static let addedHostsKey = "vibelight.addedHosts"
 
     private static func loadAddedHosts() -> [AddedHost] {
+        // Lossy: decode entries one-by-one and keep the good ones, so a single
+        // corrupt or schema-incompatible record can't drop the whole list — each
+        // AddedHost carries a pinned pairing cert whose loss forces re-pairing.
         guard let data = UserDefaults.standard.data(forKey: addedHostsKey),
-              let arr = try? JSONDecoder().decode([AddedHost].self, from: data) else { return [] }
-        return arr
+              let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else { return [] }
+        return arr.compactMap(\.value)
     }
 
     private func persistAddedHosts() {
@@ -1155,6 +1169,13 @@ final class AppState {
                         id: "header", kind: .shelf,
                         itemIDs: ["header:restart", "header:host"]
                     ))
+                } else {
+                    // Fresh install (no host): "Add Computer" is the only way in,
+                    // so make it controller/keyboard reachable instead of a
+                    // pointer-only dead-end. (audit QOL-controller-deadend-no-host)
+                    sections.append(FocusSection(
+                        id: "header", kind: .shelf, itemIDs: ["header:addhost"]
+                    ))
                 }
                 sections.append(FocusSection(
                     id: "apps", kind: .shelf,
@@ -1408,7 +1429,7 @@ final class AppState {
         case .select:
             if let id = focus.focusedItemID, id.hasPrefix("host:") {
                 selectHost(String(id.dropFirst(5)))
-            } else if focus.focusedItemID == "header:host" {
+            } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
             } else if focus.focusedItemID == "header:restart" {
                 requestRestartPC()

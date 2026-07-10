@@ -93,18 +93,7 @@ private struct HeaderBar: View {
                 }
             } else {
                 // Fresh user, no computers yet — the way in to add one.
-                Button { state.openHostMenu() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Computer")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(Theme.accent, in: Capsule())
-                }
-                .buttonStyle(.plain)
+                AddComputerButton()
             }
 
             TimelineView(.everyMinute) { context in
@@ -114,6 +103,30 @@ private struct HeaderBar: View {
                     .monospacedDigit()
             }
         }
+    }
+}
+
+/// The "Add Computer" affordance shown before any host exists. Focusable by
+/// controller/keyboard (id "header:addhost") so first-run isn't pointer-only.
+private struct AddComputerButton: View {
+    @Environment(AppState.self) private var state
+    private var isFocused: Bool { state.focus.focusedItemID == "header:addhost" }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus.circle.fill")
+            Text("Add Computer")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(Theme.accent, in: Capsule())
+        .overlay { Capsule().strokeBorder(.white, lineWidth: isFocused ? 2 : 0) }
+        .scaleEffect(isFocused ? 1.03 : 1.0)
+        .contentShape(Capsule())
+        .onTapGesture { state.openHostMenu() }
+        .animation(Theme.focusSpring, value: isFocused)
     }
 }
 
