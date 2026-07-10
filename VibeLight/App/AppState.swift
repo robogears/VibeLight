@@ -120,6 +120,9 @@ final class AppState {
         var ip: String
         var uuid: String?
         var serverCert: Data?
+        /// Learned from serverinfo on refresh — enables Wake-on-LAN for hosts
+        /// paired in-app (optional: old saved records decode with nil).
+        var mac: Data?
     }
 
     /// Live pairing state for the computer manager.
@@ -500,6 +503,9 @@ final class AppState {
                     dismissOverlay()
                 } else {
                     presentOverlay(.sessionEnded(app))
+                    // Default focus = the headline action. Landing on "Resume"
+                    // meant an impatient double-press resumed by accident.
+                    focus.focus(itemID: "ended:quit")
                 }
             } else {
                 rebuildFocus()
@@ -629,7 +635,7 @@ final class AppState {
                    localAddress: added.ip, localPort: 47989,
                    remoteAddress: nil, remotePort: 47989,
                    manualAddress: added.ip, manualPort: 47989,
-                   macAddress: nil, serverCertPEM: added.serverCert, apps: [])
+                   macAddress: added.mac, serverCertPEM: added.serverCert, apps: [])
     }
 
     // MARK: - Pairing
@@ -711,6 +717,11 @@ final class AppState {
     /// on also /cancel the remote game. Runs inside a UIKit background task so
     /// the HTTPS round-trip has time to land before suspension.
     func handleAppDidEnterBackground() {
+        // DELIBERATELY narrow: only a stream THIS device is running right now.
+        // Backgrounding is app-switching, not quitting — a broader predicate
+        // (hasActiveRemoteSession) would /cancel games this device merely
+        // *sees* running: another client's live session, or a game the user
+        // explicitly kept playing via disconnect-keep-playing (invariant 6).
         let live: Bool
         switch session.phase {
         case .streaming, .launching: live = true
@@ -936,11 +947,12 @@ final class AppState {
 
     /// Once a probe learns an added host's real UUID/name, upgrade the stored
     /// entry so it de-dupes against Moonlight and shows a friendly name.
-    private func upgradeAddedHost(ip: String, uuid: String?, name: String?) {
+    private func upgradeAddedHost(ip: String, uuid: String?, name: String?, mac: Data? = nil) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         var changed = false
         if let uuid, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
         if let name, !name.isEmpty, addedHosts[i].name == ip { addedHosts[i].name = name; changed = true }
+        if let mac, addedHosts[i].mac != mac { addedHosts[i].mac = mac; changed = true }
         if changed {
             persistAddedHosts()
             let keepID = selectedHostID
@@ -974,9 +986,10 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
-            // A freshly-added host reports its real name here.
+            // A freshly-added host reports its real name here — and its MAC,
+            // which is what makes Wake-on-LAN possible for in-app-paired hosts.
             if isAddedHost(host), let ip = host.manualAddress {
-                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname)
+                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
             apps = displayApps(from: fresh)
@@ -1025,8 +1038,17 @@ final class AppState {
 
     func wakeHost(_ host: StreamHost) {
         guard let mac = host.macAddress else { return }
-        let addresses = host.candidateAddresses.map(\.host)
-        try? WakeOnLAN.wake(mac: mac, unicastAddresses: addresses)
+        let targets = host.candidateAddresses
+        // Burst off the main thread: hostname resolution can block, and Wi-Fi
+        // drops broadcast UDP often enough that one packet is a coin flip —
+        // three full bursts 300 ms apart is cheap insurance (same reasoning as
+        // moonlight-qt re-waking on every seek attempt).
+        Task.detached(priority: .utility) {
+            for attempt in 0..<3 {
+                if attempt > 0 { try? await Task.sleep(for: .milliseconds(300)) }
+                try? WakeOnLAN.wake(mac: mac, targets: targets)
+            }
+        }
     }
 
     // MARK: - Focus content
@@ -1295,15 +1317,17 @@ final class AppState {
         // Menu SFX — deliberate actions make sound, navigation mostly doesn't:
         //  • Overlays (cards) keep normal select/back — they're deliberate.
         //  • Settings screen is SILENT except an explicit value change (adjust()).
-        //  • Home: select confirms; the Restart PC button gets its own reboot cue
-        //    (the host chip / apps just confirm). Focus-move ticks are header-only
-        //    (onFocusChange).
+        //  • Home: select confirms. The rising reboot cue plays ONLY when a PC
+        //    restart actually fires (the confirm/setup overlay buttons) — the
+        //    header button just opens the confirm, so it's a plain select.
         switch event {
         case .select:
             if overlay != nil {
-                sfx.play(.select)
+                let firesRestart = !moonDeckRestarting &&
+                    (focus.focusedItemID == "restartpc:yes" || focus.focusedItemID == "moondeck:restart")
+                sfx.play(firesRestart ? .restart : .select)
             } else if screen != .settings {
-                sfx.play(focus.focusedItemID == "header:restart" ? .restart : .select)
+                sfx.play(.select)
             }
         case .back:
             if overlay != nil || screen != .settings { sfx.play(.back) }
@@ -1688,6 +1712,16 @@ final class AppState {
     /// The headline feature: fully terminate the remote game, from anywhere.
     func quitRemoteGameCompletely() {
         guard let host = selectedHost else { return }
+        // Dismiss the card on the SAME press: the /cancel round-trip (~1 s)
+        // used to hold it open, which read as "the button didn't work" and
+        // invited a double-press that resumed the stream instead.
+        if case .sessionEnded = overlay {
+            dismissOverlay()
+            // Park focus on the host chip — the section-restore would land on
+            // Restart PC, where the same impatient mash walks straight into a
+            // PC reboot (select → confirm → yes). The chip just opens a menu.
+            focus.focus(itemID: "header:host")
+        }
         Task {
             await session.quitCompletely(host: host)
             if case .failed = session.phase {
@@ -1731,7 +1765,7 @@ final class AppState {
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss
-        case touchControls, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
+        case touchControls, touchWithController, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case background
         case appVersion, checkUpdates, restartSetup
@@ -1756,6 +1790,7 @@ final class AppState {
             case .muteHostSpeakers: "Mute Host Speakers"
             case .muteOnFocusLoss: "Mute When Inactive"
             case .touchControls: "Touch Control"
+            case .touchWithController: "Touch With Controller"
             case .externalDisplay: "Use TV / Monitor"
             case .absoluteMouse: "Remote Desktop Mouse"
             case .swapMouseButtons: "Swap Mouse Buttons"
@@ -1798,7 +1833,7 @@ final class AppState {
             case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
             case .input:
                 #if os(iOS)
-                [.touchControls, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
+                [.touchControls, .touchWithController, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #else
                 [.absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
                 #endif
@@ -1888,6 +1923,7 @@ final class AppState {
         case .muteHostSpeakers: settings.muteHostSpeakers ? "On" : "Off"
         case .muteOnFocusLoss: settings.muteOnFocusLoss ? "On" : "Off"
         case .touchControls: settings.touchControls ? "On" : "Off"
+        case .touchWithController: settings.touchWithController ? "On" : "Off"
         case .externalDisplay: settings.externalDisplay ? "On" : "Off"
         case .absoluteMouse: settings.absoluteMouse ? "On" : "Off"
         case .swapMouseButtons: settings.swapMouseButtons ? "On" : "Off"
@@ -1965,6 +2001,7 @@ final class AppState {
         case .muteHostSpeakers: settings.muteHostSpeakers.toggle()
         case .muteOnFocusLoss: settings.muteOnFocusLoss.toggle()
         case .touchControls: settings.touchControls.toggle()
+        case .touchWithController: settings.touchWithController.toggle()
         case .externalDisplay: settings.externalDisplay.toggle()
         case .absoluteMouse: settings.absoluteMouse.toggle()
         case .swapMouseButtons: settings.swapMouseButtons.toggle()

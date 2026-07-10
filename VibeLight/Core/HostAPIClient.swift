@@ -429,8 +429,23 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             httpsPort: text("HttpsPort").flatMap(Int.init) ?? 47984,
             appVersion: text("appversion") ?? "",
             permissionMask: text("Permission").flatMap(UInt32.init),
-            virtualDisplayCapable: text("VirtualDisplayCapable").map { $0 == "true" || $0 == "1" }
+            virtualDisplayCapable: text("VirtualDisplayCapable").map { $0 == "true" || $0 == "1" },
+            macAddress: parseMAC(text("mac"))
         )
+    }
+
+    /// "aa:bb:cc:dd:ee:ff" → 6 raw bytes. All-zeros is Sunshine's "unknown" → nil.
+    private static func parseMAC(_ s: String?) -> Data? {
+        guard let s, !s.isEmpty else { return nil }
+        let parts = s.split(separator: ":")
+        guard parts.count == 6 else { return nil }
+        var bytes: [UInt8] = []
+        for part in parts {
+            guard let b = UInt8(part, radix: 16) else { return nil }
+            bytes.append(b)
+        }
+        guard bytes.contains(where: { $0 != 0 }) else { return nil }
+        return Data(bytes)
     }
 
     // MARK: - Identity helpers

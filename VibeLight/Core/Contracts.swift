@@ -27,6 +27,9 @@ struct ServerInfo: Sendable, Equatable {
     var appVersion: String
     var permissionMask: UInt32?     // Vibepollo/Apollo extension
     var virtualDisplayCapable: Bool?
+    /// Host NIC MAC from serverinfo — what makes Wake-on-LAN possible for
+    /// hosts paired in-app (imported Moonlight hosts carry theirs in the plist).
+    var macAddress: Data?
 
     var runningAppID: Int? {
         state == .busy && currentGameID != 0 ? currentGameID : nil

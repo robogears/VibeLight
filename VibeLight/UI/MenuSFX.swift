@@ -45,10 +45,12 @@ final class MenuSFX {
         buffers[.select] = Self.blip(segments: [(880, 0.035), (1318.5, 0.035)], gain: 0.22, format: format)
         // back: soft step down (E5 → A4), 70 ms — a gentle "closing".
         buffers[.back] = Self.blip(segments: [(659.3, 0.035), (440, 0.035)], gain: 0.18, format: format)
-        // restart: "power down… power up" — two falling tones then a rising
-        // resolve (E5 → G#4 → G#5), ~200 ms. Unmistakably the reboot cue.
+        // restart: the reboot cue — an unmistakably RISING four-note climb
+        // (G4 → C5 → E5 → A5) with the last note ringing out, ~0.4 s. Plays
+        // only when a PC restart actually fires, nowhere else.
         buffers[.restart] = Self.blip(
-            segments: [(659.3, 0.05), (415.3, 0.05), (830.6, 0.10)], gain: 0.20, format: format)
+            segments: [(392.0, 0.06), (523.3, 0.06), (659.3, 0.06), (880.0, 0.24)],
+            gain: 0.22, format: format)
         // launch: a long cinematic "arrival" — a C-major run climbing two octaves
         // (C4 → E4 → G4 → C5 → E5 → G5) then a sustained bell that rings out,
         // ~1.7 s. Plays under the setup finale's VibeLight wordmark reveal.

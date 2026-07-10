@@ -10,6 +10,12 @@ struct RootView: View {
     /// screen (Stage Manager, launched from the TV). Safe-by-default — see
     /// `ExternalScenePlacement`. Scene-scoped state, not a singleton.
     @State private var placement = ExternalScenePlacement()
+
+    /// Equatable flag the stream overlay's enter/exit animation binds to.
+    private var isStreamingPhase: Bool {
+        if case .streaming = state.session.phase { return true }
+        return false
+    }
     #endif
 
     var body: some View {
@@ -88,8 +94,20 @@ struct RootView: View {
                         }
                     }
                     .overlay {
-                        // Hold Start+Select+L1+R1 → leave-stream progress ring.
+                        // While the leave chord is held the stream sinks toward
+                        // black (scrim = ring progress), and it STAYS black at
+                        // fire (the engine pins progress to 1 through teardown)
+                        // so leaving is a fade — not a jump cut to the launcher.
                         if let p = state.session.streamQuitProgress {
+                            Color.black.opacity(p)
+                                .ignoresSafeArea()
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .overlay {
+                        // Hold Start+Select+L1+R1 → leave-stream progress ring
+                        // (hidden once the hold completes and the fade takes over).
+                        if let p = state.session.streamQuitProgress, p < 1 {
                             HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
                                 .transition(.opacity)
                         }
@@ -97,6 +115,10 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        // Bound to the streaming flag so the overlay's insertion/removal
+        // actually animates (the .transition above never ran without it) —
+        // the launcher now fades back in when the stream ends.
+        .animation(.easeInOut(duration: 0.45), value: isStreamingPhase)
         // Accidental case: the app's OWN window is on an external screen (Stage
         // Manager extended display, launched from the TV). Guide the user back to
         // the iPad. Last overlay → wins the z-order; safe-by-default so it can
@@ -225,7 +247,16 @@ struct ExternalDisplayContent: View {
 /// status panel. While streaming it's also a trackpad (touches pass through);
 /// while idle it just says "use your controller".
 private struct ExternalDisplayPlaceholder: View {
+    @Environment(AppState.self) private var state
     var streaming = true
+
+    /// Whether companion touches actually reach the host: the phantom-cursor
+    /// gate suppresses touch while a gamepad is connected (unless the user
+    /// re-enabled it) — the on-screen copy must not promise a dead trackpad.
+    private var trackpadLive: Bool {
+        state.settings.touchWithController ||
+            !state.controller.connectedControllers.contains { $0.extendedGamepad != nil }
+    }
     /// True after ~30 s idle while streaming: the companion fades to PURE black
     /// (only the lit glow + text fade — the base black stays opaque so it still
     /// hides the video underneath) so it isn't a glowing rectangle in a dark
@@ -271,8 +302,11 @@ private struct ExternalDisplayPlaceholder: View {
                                    : "VibeLight is on \(ExternalDisplay.shared.name)")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.textPrimary)
-                    Text(streaming ? "This screen is a trackpad — drag to move the cursor."
-                                   : "Use your controller to navigate on the big screen.")
+                    Text(streaming
+                         ? (trackpadLive
+                            ? "This screen is a trackpad — drag to move the cursor."
+                            : "Touch is off while a controller is connected — Settings ▸ Input ▸ Touch With Controller.")
+                         : "Use your controller to navigate on the big screen.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                     if let geometry = ExternalDisplay.shared.geometrySummary {

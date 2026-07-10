@@ -109,10 +109,22 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
       normalizedX:(float)x
       normalizedY:(float)y;
 
-/// Announces a player-1 gamepad to the host with its capabilities, so the host
-/// materializes the virtual pad before the first input (games list it in
-/// controller menus immediately). Falls back to a plain controller event on
-/// hosts without arrival support.
+/// Announces a gamepad slot to the host with its family + capabilities, so the
+/// host materializes a MATCHING virtual pad before the first input event locks
+/// the slot as a default X360 (`type` is a LI_CTYPE_* value: 0 unknown, 1 Xbox,
+/// 2 PlayStation, 3 Nintendo — with Sunshine/Apollo `gamepad=auto`, PlayStation
+/// becomes a virtual DS4). Must be this slot's FIRST controller packet.
+/// Returns 0 on success; NONZERO while the input stream isn't up yet — callers
+/// must retry until success and hold back controller events for the slot until
+/// then (a plain event that slips out first locks the slot as X360). Falls
+/// back to a plain controller event on hosts without arrival support.
+- (int)sendControllerArrivalForNumber:(uint8_t)controllerNumber
+                           activeMask:(uint16_t)activeMask
+                                 type:(uint8_t)type
+                     supportedButtons:(uint32_t)supportedButtons
+                         capabilities:(uint16_t)capabilities;
+
+/// Announces a player-1 gamepad (legacy single-pad wrapper for the above).
 - (void)sendControllerArrivalWithButtons:(uint32_t)supportedButtons
                             capabilities:(uint16_t)capabilities;
 
@@ -120,9 +132,22 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
 /// call, Siri, alarm). Safe no-op when no stream audio exists.
 + (void)resumeAudio;
 
-/// Forwards a complete player-1 gamepad snapshot to the host
-/// (LiSendMultiControllerEvent). Sticks: -32768…32767, up/right positive.
-/// Triggers: 0…255. No-op when this session isn't the active connection.
+/// Forwards a complete gamepad snapshot for one slot (LiSendMultiControllerEvent).
+/// `activeMask` is the live set of allocated slots — sending an event whose mask
+/// has this slot's bit CLEARED is the removal signal that makes the host destroy
+/// the virtual pad. Sticks: -32768…32767, up/right positive. Triggers: 0…255.
+/// No-op when this session isn't the active connection.
+- (void)sendControllerNumber:(uint8_t)controllerNumber
+                  activeMask:(uint16_t)activeMask
+                 buttonFlags:(int)buttonFlags
+                 leftTrigger:(uint8_t)leftTrigger
+                rightTrigger:(uint8_t)rightTrigger
+                  leftStickX:(int16_t)leftStickX
+                  leftStickY:(int16_t)leftStickY
+                 rightStickX:(int16_t)rightStickX
+                 rightStickY:(int16_t)rightStickY;
+
+/// Player-1 snapshot (legacy single-pad wrapper for the above).
 - (void)sendControllerButtonFlags:(int)buttonFlags
                       leftTrigger:(uint8_t)leftTrigger
                      rightTrigger:(uint8_t)rightTrigger
