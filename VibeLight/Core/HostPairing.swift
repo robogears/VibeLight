@@ -151,7 +151,11 @@ final class HostPairing: @unchecked Sendable {
         var comps = URLComponents()
         comps.scheme = "http"; comps.host = address; comps.port = 47989; comps.path = path
         comps.percentEncodedQuery = query + "&uniqueid=\(uniqueID)&uuid=\(UUID().uuidString)"
-        var req = URLRequest(url: comps.url!)
+        // A malformed address (space, slash, bracket-less IPv6) makes comps.url
+        // nil — throw instead of trapping (the pairing path can be reached with
+        // imported/edited addresses the add-host UI never validated).
+        guard let url = comps.url else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
         req.setValue("close", forHTTPHeaderField: "Connection")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = timeout
@@ -163,7 +167,8 @@ final class HostPairing: @unchecked Sendable {
         var comps = URLComponents()
         comps.scheme = "https"; comps.host = address; comps.port = 47984; comps.path = "/pair"
         comps.percentEncodedQuery = query + "&uniqueid=\(uniqueID)&uuid=\(UUID().uuidString)"
-        var req = URLRequest(url: comps.url!)
+        guard let url = comps.url else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
         req.setValue("close", forHTTPHeaderField: "Connection")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = 10

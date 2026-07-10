@@ -56,7 +56,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             do {
                 let request = try makeRequest(
                     address: candidate.host, port: candidate.port - httpsPortOffset, path: "/serverinfo")
-                data = try await session.data(for: request).0
+                data = try await boundedData(session, request).0
             } catch let error as URLError {
                 // Task cancellation surfaces as URLError.cancelled too (and so
                 // does our own pin-mismatch rejection) — only genuine Swift
@@ -117,7 +117,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await boundedData(session, request)
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
@@ -190,14 +190,21 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         var request = try makeRequest(
             address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: items)
         // LiGetLaunchUrlQueryParameters() is a raw pre-formed query fragment.
-        if !extraLaunchParams.isEmpty, let url = request.url {
-            let joiner = url.absoluteString.contains("?") ? "&" : "?"
-            request.url = URL(string: url.absoluteString + joiner + extraLaunchParams)
+        // Merge it into the URL's percent-encoded query via URLComponents (same
+        // encoding path as every other query item) rather than concatenating
+        // onto the absolute string — string surgery + URL(string:) would null
+        // the request URL on any parse hiccup. On failure keep the original URL.
+        if !extraLaunchParams.isEmpty, let url = request.url,
+           var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            let existing = comps.percentEncodedQuery ?? ""
+            comps.percentEncodedQuery = existing.isEmpty ? extraLaunchParams
+                                                         : existing + "&" + extraLaunchParams
+            if let merged = comps.url { request.url = merged }
         }
         let session = try session(for: host)
         let data: Data
         do {
-            data = try await session.data(for: request).0
+            data = try await boundedData(session, request).0
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)
@@ -218,6 +225,34 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             return match.port - httpsPortOffset
         }
         return 47989 - httpsPortOffset
+    }
+
+    /// Hard byte ceiling for a host response. A MITM'd or compromised host
+    /// could otherwise stream unbounded bytes into memory (and the box-art path
+    /// writes them to disk) — the 5 s timeout is per-chunk, so a slow trickle
+    /// never trips it. Mirrors the updater's byteCap. XML replies are a few KB
+    /// and box art well under a megabyte; 16 MB is far above any legit response.
+    private static let responseByteCap = 16 * 1024 * 1024
+
+    /// Byte-capped replacement for `session.data(for:)`: rejects an honestly
+    /// oversized Content-Length up front, then caps the actual stream in case
+    /// the host lies or omits it.
+    private func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        if response.expectedContentLength > Int64(Self.responseByteCap) {
+            throw HostAPIError.malformedResponse("response too large (\(response.expectedContentLength) bytes)")
+        }
+        var data = Data()
+        if response.expectedContentLength > 0 {
+            data.reserveCapacity(min(Int(response.expectedContentLength), Self.responseByteCap))
+        }
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > Self.responseByteCap {
+                throw HostAPIError.malformedResponse("response exceeded \(Self.responseByteCap) bytes")
+            }
+        }
+        return (data, response)
     }
 
     private func makeRequest(
@@ -259,7 +294,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: extraQuery)
         let data: Data
         do {
-            data = try await session.data(for: request).0
+            data = try await boundedData(session, request).0
         } catch is URLError {
             if Task.isCancelled { throw CancellationError() }
             throw HostAPIError.unreachable(host.name)

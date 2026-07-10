@@ -177,8 +177,12 @@ actor ArtworkStore: ArtworkProviding {
         knownPlaceholders = knownPlaceholders.filter { $0.key.hostID != hostUUID }
         recentFailures = recentFailures.filter { $0.key.hostID != hostUUID }
         revalidating = revalidating.filter { $0.hostID != hostUUID }
+        // Route the host ID through the SAME traversal guard the write path
+        // uses (cacheFileURL, safeComponent): host.id comes from the host, so a
+        // hostile "../../.." value would otherwise escape the boxart cache and
+        // recursively delete an attacker-chosen directory.
         try? FileManager.default.removeItem(
-            at: Self.cacheRootURL().appendingPathComponent(hostUUID, isDirectory: true))
+            at: Self.cacheRootURL().appendingPathComponent(Self.safeComponent(hostUUID), isDirectory: true))
     }
 
     // MARK: - Alias table

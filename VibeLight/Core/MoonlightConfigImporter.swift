@@ -87,7 +87,11 @@ struct MoonlightConfigImporter {
             ?? inferredCount(in: dict, prefix: hostPrefix + "apps.", field: "id")
         guard count > 0 else { return [] }
         var apps: [StreamApp] = []
-        for i in 1...count {
+        // Clamp the untrusted `apps.size` like parseHosts clamps `hosts.size`
+        // (the SEV-10 fix): a corrupt/hostile plist value (e.g. Int.max) would
+        // otherwise spin this loop for billions of iterations on the launch
+        // path and hang the app. 4096 is far above any real synced library.
+        for i in 1...min(count, 4096) {
             let p = hostPrefix + "apps.\(i)."
             guard let id = intValue(dict[p + "id"]),
                   let rawName = dict[p + "name"] as? String else { continue }

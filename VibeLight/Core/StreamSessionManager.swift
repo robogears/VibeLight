@@ -671,7 +671,10 @@ final class StreamSessionManager: StreamEngine {
     private func runCLIQuitFallback(host: StreamHost) async -> Bool {
         let process = Process()
         process.executableURL = moonlightBinary
-        process.arguments = ["quit", host.id]
+        // `--` terminates option parsing so a host id starting with '-' can't be
+        // read as a flag by the helper's QCommandLineParser — mirrors the
+        // hardening on streamArguments.
+        process.arguments = ["quit", "--", host.id]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
