@@ -234,23 +234,17 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     /// and box art well under a megabyte; 16 MB is far above any legit response.
     private static let responseByteCap = 16 * 1024 * 1024
 
-    /// Byte-capped replacement for `session.data(for:)`: rejects an honestly
-    /// oversized Content-Length up front, then caps the actual stream in case
-    /// the host lies or omits it.
+    /// Byte-capped replacement for `session.data(for:)`. Reads in ONE buffered
+    /// pass (fast — a per-byte `bytes(for:)` drain was ~an order of magnitude
+    /// slower on the box-art path) and rejects an over-cap response two ways: an
+    /// honestly-oversized declared Content-Length, and the delivered byte count.
+    /// The per-request timeout bounds a lying/omitted-length trickle, so we trade
+    /// the streaming mid-transfer abort for the buffered-read speed — a fine deal
+    /// when XML replies are a few KB and box art is well under a MB (cap 16 MB).
     private func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
-        if response.expectedContentLength > Int64(Self.responseByteCap) {
-            throw HostAPIError.malformedResponse("response too large (\(response.expectedContentLength) bytes)")
-        }
-        var data = Data()
-        if response.expectedContentLength > 0 {
-            data.reserveCapacity(min(Int(response.expectedContentLength), Self.responseByteCap))
-        }
-        for try await byte in bytes {
-            data.append(byte)
-            if data.count > Self.responseByteCap {
-                throw HostAPIError.malformedResponse("response exceeded \(Self.responseByteCap) bytes")
-            }
+        let (data, response) = try await session.data(for: request)
+        if response.expectedContentLength > Int64(Self.responseByteCap) || data.count > Self.responseByteCap {
+            throw HostAPIError.malformedResponse("host response too large (\(data.count) bytes)")
         }
         return (data, response)
     }

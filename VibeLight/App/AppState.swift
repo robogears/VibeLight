@@ -187,6 +187,12 @@ final class AppState {
     }
     var hostOnline: Bool { serverInfo != nil }
 
+    /// The selected computer can be woken: it's asleep (not online) and we have a
+    /// MAC for the magic packet. SINGLE source of truth for the home-header wake
+    /// button — HomeView's render gate AND rebuildFocus's `header:power` id both
+    /// read this, so the focus invariant (id emitted iff view drawn) can't drift.
+    var canWakeSelectedHost: Bool { !hostOnline && selectedHost?.macAddress != nil }
+
     // MARK: UI state
 
     var screen: Screen = .home
@@ -753,10 +759,15 @@ final class AppState {
         default: live = false
         }
         guard live else { return }
+        // One quit-on-background episode at a time: if a prior assertion's Task is
+        // still in flight (rapid foreground→background toggle), let it finish
+        // rather than begin a second and cross-end them — ending id=2 from Task_A
+        // could cut off Task_B's /cancel mid-round-trip. The in-flight Task's own
+        // disconnect() already covers the teardown. (review: bgQuitTaskID race)
+        guard bgQuitTaskID == .invalid else { return }
         // An expiration handler is mandatory: if the task outlives iOS's grace
         // window with no handler, the app is force-terminated. Here we just end
         // the assertion cleanly — the /cancel is best-effort, staying alive isn't.
-        endBGQuitTask()   // never stack two assertions
         bgQuitTaskID = UIApplication.shared.beginBackgroundTask(withName: "vibelight.quit-on-background") { [weak self] in
             self?.endBGQuitTask()
         }
@@ -908,6 +919,11 @@ final class AppState {
                 // shows it going offline rather than a stale "online".
                 serverInfo = nil
                 hostError = "Restarting \(host.name)…"
+                // hostOnline just flipped false AFTER dismissOverlay()'s
+                // rebuildFocus already ran — rebuild again so the now-visible
+                // wake button's header:power id becomes focusable immediately
+                // instead of only on the next refresh. (review: restart focus gap)
+                rebuildFocus()
             } catch {
                 moonDeckRestarting = false
                 guard inRestartFlow(for: hostID) else { return }
@@ -1188,14 +1204,13 @@ final class AppState {
                 // Header row above the shelf: restart PC + host chip, reachable
                 // with d-pad UP from the games. IDs only when the views render
                 // (host set) — never emit focusable IDs no view draws.
-                if let host = selectedHost {
+                if selectedHost != nil {
                     var headerIDs = ["header:restart", "header:host"]
-                    // The wake/power button sits LEFT of restart, but only when
-                    // the selected computer is asleep AND wakeable (stored MAC) —
-                    // its only useful moment. rebuildFocus() runs every refresh, so
-                    // this drops the moment the host comes online. (never emit a
-                    // focusable id whose view isn't drawn — HomeView gates identically)
-                    if !hostOnline, host.macAddress != nil { headerIDs.insert("header:power", at: 0) }
+                    // The wake/power button sits LEFT of restart, but only when the
+                    // selected computer is wakeable — its only useful moment. Shares
+                    // canWakeSelectedHost with HomeView's render gate so the id is
+                    // emitted iff the view is drawn (focus invariant).
+                    if canWakeSelectedHost { headerIDs.insert("header:power", at: 0) }
                     sections.append(FocusSection(id: "header", kind: .shelf, itemIDs: headerIDs))
                 } else {
                     // Fresh install (no host): "Add Computer" is the only way in,

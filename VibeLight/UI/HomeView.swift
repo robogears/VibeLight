@@ -89,8 +89,9 @@ private struct HeaderBar: View {
             if let host = state.selectedHost {
                 HStack(spacing: 12) {
                     // Wake/power sits left of restart, only while the computer is
-                    // asleep and wakeable (must match AppState.rebuildFocus).
-                    if !state.hostOnline && host.macAddress != nil {
+                    // wakeable. Shares canWakeSelectedHost with rebuildFocus so the
+                    // header:power focus id is emitted iff this view is drawn.
+                    if state.canWakeSelectedHost {
                         WakePCButton()
                     }
                     RestartPCButton()
@@ -185,9 +186,6 @@ private struct HostChip: View {
     }
 }
 
-/// Header button, left of the host chip: force-restart the selected PC via
-/// MoonDeckBuddy. First use walks the user through pairing; after that it's a
-/// one-tap confirm → reboot (no dialog on the PC).
 /// Header button, LEFT of restart: wake the selected computer over the network
 /// (Wake-on-LAN). Shown only while the computer is asleep and has a stored MAC —
 /// the one time a power-on is useful. Pulses while a wake is in flight so it
@@ -222,6 +220,9 @@ private struct WakePCButton: View {
     }
 }
 
+/// Header button, left of the host chip: force-restart the selected PC via
+/// MoonDeckBuddy. First use walks the user through pairing; after that it's a
+/// one-tap confirm → reboot (no dialog on the PC).
 private struct RestartPCButton: View {
     @Environment(AppState.self) private var state
     @State private var hovering = false

@@ -258,12 +258,23 @@ final class UpdateService {
     /// and proceeds (older releases predate the sidecar contract; the zip already
     /// arrived over pinned TLS) — the house "warn, don't block" pattern. Only a
     /// definitive hash MISMATCH hard-fails.
-    private static func verifyChecksum(zipURL: URL, sha256URL: URL?) async throws {
+    nonisolated static func verifyChecksum(zipURL: URL, sha256URL: URL?) async throws {
         guard let sha256URL else {
             NSLog("[VibeLight] update: no .sha256 sidecar published; skipping checksum verification")
             return
         }
-        let (data, response) = try await githubSession.data(from: sha256URL)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await githubSession.data(from: sha256URL)
+        } catch {
+            // A network throw fetching the tiny sidecar is an UNREADABLE sidecar,
+            // not a bad download — warn and proceed rather than discard a multi-MB
+            // zip that already arrived over pinned TLS. Only a definitive hash
+            // MISMATCH hard-fails. (review: verifyChecksum throw-hardfail)
+            NSLog("[VibeLight] update: .sha256 sidecar fetch failed (\(error.localizedDescription)); skipping checksum verification")
+            return
+        }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let text = String(data: data, encoding: .utf8),
               let expected = sidecarExpectedHash(from: text) else {
