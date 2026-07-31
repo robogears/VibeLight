@@ -26,12 +26,21 @@ enum IdentityStore {
         #else
         if let moonlightIdentity, !moonlightIdentity.certificatePEM.isEmpty,
            !moonlightIdentity.privateKeyPEM.isEmpty {
+            // Reusing Moonlight's identity is the zero-setup story — but until
+            // now we reused it WITHOUT keeping a copy, so VibeLight's pairings
+            // lived entirely in someone else's file. Reset or uninstall Moonlight
+            // and we'd mint a brand-new cert and every host would say "not
+            // paired" until re-paired by hand. Adopt it into our own store on
+            // first sight: same bytes, same pairings, now durable. Never
+            // overwrites an identity we already own.
+            adoptAsOwn(moonlightIdentity)
             return moonlightIdentity
         }
         if let existing = loadOwn() {
             syncHelperIdentity(existing)
             return existing
         }
+        // (the Moonlight-import branch above adopts a copy via adoptAsOwn)
         if let generated = generateAndPersist() {
             syncHelperIdentity(generated)
             return generated
@@ -76,6 +85,33 @@ enum IdentityStore {
     /// the cert/key into the Moonlight domain so launcher + helper present one
     /// identity. A real Moonlight install later reads this same plist, so
     /// pairings keep working. Never overwrites an existing identity.
+    /// Persists an identity we adopted from Moonlight into VibeLight's own store,
+    /// so it survives Moonlight being reset, uninstalled, or its plist cleared.
+    /// No-op when we already own one — the on-disk copy is the source of truth
+    /// and must never be silently replaced (that WOULD force a re-pair, the exact
+    /// failure this exists to prevent).
+    private static func adoptAsOwn(_ identity: ClientIdentity) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: certURL.path) else { return }
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Same 0600-before-write ordering as generateAndPersist: create the key
+        // file with the right mode FIRST, because writing to an existing file
+        // keeps its permissions and a post-hoc chmod leaves a readable window.
+        try? fm.removeItem(at: keyURL)
+        fm.createFile(atPath: keyURL.path, contents: nil,
+                      attributes: [.posixPermissions: 0o600])
+        do {
+            try identity.certificatePEM.write(to: certURL)
+            try identity.privateKeyPEM.write(to: keyURL)
+        } catch {
+            // Best-effort: failing to cache it just leaves us on the old
+            // reuse-only behaviour, which still works while Moonlight's plist
+            // is intact. Never fail startup over this.
+            try? fm.removeItem(at: certURL)
+            try? fm.removeItem(at: keyURL)
+        }
+    }
+
     private static func syncHelperIdentity(_ identity: ClientIdentity) {
         guard let defaults = UserDefaults(suiteName: "com.moonlight-stream.Moonlight") else { return }
         if let cert = defaults.data(forKey: "certificate"), !cert.isEmpty { return }
