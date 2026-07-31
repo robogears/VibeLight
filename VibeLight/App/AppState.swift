@@ -187,11 +187,20 @@ final class AppState {
     }
     var hostOnline: Bool { serverInfo != nil }
 
+    /// The host answered at the socket level but never replied — its streaming
+    /// service is stuck, not asleep. Kept distinct from plain offline so the UI
+    /// can say something true and skip the useless wake offer.
+    private(set) var hostNotResponding = false
+
     /// The selected computer can be woken: it's asleep (not online) and we have a
     /// MAC for the magic packet. SINGLE source of truth for the home-header wake
     /// button — HomeView's render gate AND rebuildFocus's `header:power` id both
     /// read this, so the focus invariant (id emitted iff view drawn) can't drift.
-    var canWakeSelectedHost: Bool { !hostOnline && selectedHost?.macAddress != nil }
+    /// A NOT-RESPONDING host is excluded: it demonstrably has power, so a magic
+    /// packet is noise — the fix there is restarting its streaming service.
+    var canWakeSelectedHost: Bool {
+        !hostOnline && !hostNotResponding && selectedHost?.macAddress != nil
+    }
 
     // MARK: UI state
 
@@ -1037,6 +1046,7 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
+            hostNotResponding = false
             if wakingHostID == host.id {   // it woke up — drop the transient state
                 wakingHostID = nil
                 wakeClearTask?.cancel()
@@ -1052,6 +1062,9 @@ final class AppState {
         } catch let error as HostAPIError {
             serverInfo = nil
             hostAddress = nil
+            // A wedged host is NOT the normal asleep case — surface it, and
+            // remember it so the wake button stays hidden (see canWakeSelectedHost).
+            if case .notResponding = error { hostNotResponding = true } else { hostNotResponding = false }
             if case .unreachable = error {
                 hostError = nil // asleep host is a normal state, not an error banner
             } else {
@@ -1061,6 +1074,7 @@ final class AppState {
         } catch {
             serverInfo = nil
             hostAddress = nil
+            hostNotResponding = false
         }
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }

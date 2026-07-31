@@ -38,6 +38,13 @@ struct ServerInfo: Sendable, Equatable {
 
 enum HostAPIError: Error, LocalizedError, Sendable {
     case unreachable(String)                 // no address responded
+    /// The host ACCEPTED the connection (TCP + TLS completed) but never answered
+    /// the request. That is a wedged/overloaded host service — NOT a powered-off
+    /// machine — so it must never be reported as "asleep" and must never offer
+    /// Wake-on-LAN. Seen for real when Sunshine/Vibepollo's GameStream thread is
+    /// jammed by a stuck session: its web UI still answers instantly on 47990
+    /// while 47984 hangs forever.
+    case notResponding(String)
     case xmlStatus(code: Int, message: String)  // <root status_code != 200>
     case notAuthorized                       // XML 401 — cert not in host's paired pool
     case malformedResponse(String)
@@ -46,6 +53,7 @@ enum HostAPIError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .unreachable(let host): "\(host) is not reachable."
+        case .notResponding(let host): "\(host) accepted the connection but didn't answer — its streaming service may be stuck. Try restarting Sunshine/Vibepollo on the PC."
         case .xmlStatus(let code, let message): "Host error \(code): \(message)"
         case .notAuthorized: "This Mac's pairing was not accepted by the host. Re-pair in Moonlight."
         case .malformedResponse(let detail): "Unexpected host response: \(detail)"

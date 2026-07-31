@@ -109,9 +109,18 @@ final class InProcessStreamEngine: StreamEngine {
         } catch {
             NSLog("[VibeLight] audio session setup failed: \(error.localizedDescription)")
         }
+        // If a /launch we issued against a FREE host fails (classically: it times
+        // out while the host has ALREADY started capturing — the PC screen goes
+        // black), the host is left streaming to nobody and the next attempt
+        // collides with that orphan. Remember enough to clean it up in `catch`.
+        // Deliberately NOT set on the /resume path: that session predates us and
+        // may belong to another client, so cancelling it would be hostile.
+        var launchedOnFreeHost = false
+        var resolvedAddress: String?
         do {
             // Fresh serverinfo for the working address + host generation/codecs.
             let (info, address) = try await api.serverInfo(for: host)
+            resolvedAddress = address
 
             // User settings pass through untouched — resolution/fps/bitrate are
             // theirs to choose (a too-hot profile over a relay shows up as FEC
@@ -147,6 +156,7 @@ final class InProcessStreamEngine: StreamEngine {
                     app: app, on: host, at: address, settings: effective,
                     rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
             } else {
+                launchedOnFreeHost = true
                 sessionUrl = try await api.launch(
                     app: app, on: host, at: address, settings: effective,
                     rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
@@ -193,6 +203,14 @@ final class InProcessStreamEngine: StreamEngine {
             // so without this the user's Music/podcast stays paused with nothing
             // playing. (audit ERR-launch-failure-leaves-audio-active)
             deactivateAudioSession()
+            // Orphan cleanup: our /launch may have reached a host that started
+            // capturing and then never replied. Best-effort /cancel so the host
+            // isn't left streaming to nobody (which makes the NEXT attempt fail
+            // at the RTSP handshake against a session we can't join).
+            if launchedOnFreeHost, let address = resolvedAddress {
+                let api = self.api, cancelHost = host
+                Task.detached { try? await api.cancel(for: cancelHost, at: address) }
+            }
             phase = .failed((error as? LocalizedError)?.errorDescription
                             ?? "Couldn't start \u{201C}\(app.name)\u{201D} on \(host.name).")
         }

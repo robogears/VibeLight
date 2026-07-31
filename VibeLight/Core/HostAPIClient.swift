@@ -51,6 +51,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let session = try session(for: host)
 
         var sawPinRejection = false
+        // A timeout means the host ACCEPTED our connection and then went silent —
+        // a stuck service, not a sleeping PC. Tracked separately so the UI can say
+        // so instead of lying with "asleep" (and offering a pointless wake).
+        var sawTimeout = false
         for candidate in candidates {
             let data: Data
             do {
@@ -67,6 +71,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                 // a different cert than we paired with. Remember it: "re-pair"
                 // is actionable, "offline" is a lie.
                 if error.code == .cancelled { sawPinRejection = true }
+                // .timedOut = the socket opened but no reply arrived. Anything
+                // else (cannotConnectToHost, cannotFindHost, notConnectedToInternet)
+                // is a genuine "nothing there", i.e. asleep/offline/wrong network.
+                if error.code == .timedOut { sawTimeout = true }
                 // Network-level failure: this address may just be the wrong
                 // network (LAN address while on VPN, or host asleep). Next.
                 logger.debug("serverinfo via \(candidate.host, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
@@ -78,6 +86,11 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             return (Self.parseServerInfo(from: root), candidate.host)
         }
         if sawPinRejection { throw HostAPIError.notAuthorized }
+        // Order matters: a pin rejection is the more actionable verdict, but a
+        // timeout beats "unreachable" — the host demonstrably answered at the
+        // socket level, so calling it offline would send the user to Wake-on-LAN
+        // for a machine that is already on.
+        if sawTimeout { throw HostAPIError.notResponding(host.name) }
         throw HostAPIError.unreachable(host.name)
     }
 
@@ -118,8 +131,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let response: URLResponse
         do {
             (data, response) = try await boundedData(session, request)
-        } catch is URLError {
+        } catch let error as URLError {
             if Task.isCancelled { throw CancellationError() }
+            // A timeout means the host took our request and went silent — it may
+            // well have ACTED on it (a /launch that times out still starts the
+            // session). Saying "unreachable" there sends the user to Wake-on-LAN
+            // for a machine that is very much awake.
+            if error.code == .timedOut { throw HostAPIError.notResponding(host.name) }
             throw HostAPIError.unreachable(host.name)
         }
 
@@ -188,7 +206,8 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             items.append(URLQueryItem(name: "clientHdrCapVersion", value: "0"))
         }
         var request = try makeRequest(
-            address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: items)
+            address: address, port: httpsPort(for: host, at: address), path: path, extraQuery: items,
+            timeout: Self.launchTimeout)
         // LiGetLaunchUrlQueryParameters() is a raw pre-formed query fragment.
         // Merge it into the URL's percent-encoded query via URLComponents (same
         // encoding path as every other query item) rather than concatenating
@@ -205,8 +224,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let data: Data
         do {
             data = try await boundedData(session, request).0
-        } catch is URLError {
+        } catch let error as URLError {
             if Task.isCancelled { throw CancellationError() }
+            // A timeout means the host took our request and went silent — it may
+            // well have ACTED on it (a /launch that times out still starts the
+            // session). Saying "unreachable" there sends the user to Wake-on-LAN
+            // for a machine that is very much awake.
+            if error.code == .timedOut { throw HostAPIError.notResponding(host.name) }
             throw HostAPIError.unreachable(host.name)
         }
         let root = try Self.verifiedRoot(in: data, context: path)   // throws on status_code != 200
@@ -249,8 +273,19 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         return (data, response)
     }
 
+    /// Cheap, read-only endpoints (serverinfo, applist, appasset, cancel) answer
+    /// in milliseconds on a healthy host — a short timeout keeps the UI snappy.
+    static let quickTimeout: TimeInterval = 5
+    /// `/launch` and `/resume` are NOT cheap: the host spins up an encoder and,
+    /// on a virtual-display setup, creates/switches a display mode before it
+    /// replies. 5 s is short enough that a normal-but-slow start looks like a
+    /// failure — and worse, the host proceeds anyway, leaving a session running
+    /// that the client already gave up on. Give them real room.
+    static let launchTimeout: TimeInterval = 20
+
     private func makeRequest(
-        address: String, port: Int, path: String, extraQuery: [URLQueryItem] = []
+        address: String, port: Int, path: String, extraQuery: [URLQueryItem] = [],
+        timeout: TimeInterval = HostAPIClient.quickTimeout
     ) throws -> URLRequest {
         var components = URLComponents()
         components.scheme = "https"
@@ -269,7 +304,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
-            timeoutInterval: 5
+            timeoutInterval: timeout
         )
         // The server closes after every response (close_connection_after_response);
         // announce it so URLSession doesn't try to reuse the connection.
@@ -289,8 +324,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let data: Data
         do {
             data = try await boundedData(session, request).0
-        } catch is URLError {
+        } catch let error as URLError {
             if Task.isCancelled { throw CancellationError() }
+            // A timeout means the host took our request and went silent — it may
+            // well have ACTED on it (a /launch that times out still starts the
+            // session). Saying "unreachable" there sends the user to Wake-on-LAN
+            // for a machine that is very much awake.
+            if error.code == .timedOut { throw HostAPIError.notResponding(host.name) }
             throw HostAPIError.unreachable(host.name)
         }
         return try Self.verifiedRoot(in: data, context: context)
@@ -326,7 +366,11 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         }
 
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 5
+        // Session-level ceiling only. Each request sets its OWN timeoutInterval
+        // (quickTimeout for reads, launchTimeout for /launch + /resume) and that
+        // is what actually bounds it — this must be >= the largest of them or it
+        // would clamp the long launch back down to the short value.
+        configuration.timeoutIntervalForRequest = HostAPIClient.launchTimeout
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
         configuration.httpShouldUsePipelining = false
