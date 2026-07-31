@@ -6,6 +6,11 @@ DerivedData/
 build/
 *.xcresult
 
+# Quarantined junk from the cleanup pass — nothing here is deleted, and
+# _dump/undo.sh restores every item to its original path. Safe to delete once
+# you're satisfied nothing broke.
+_dump/
+
 # XcodeGen generates the project — project.yml is the source of truth
 VibeLight.xcodeproj/
 VibeLight/Info.plist
