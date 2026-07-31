@@ -280,12 +280,13 @@ final class AppState {
     // MARK: - Boot
 
     init() {
-        let importer = MoonlightConfigImporter()
-        let imported = try? importer.importAll()
-
-        // Reuse Moonlight's identity if present; otherwise generate our own so
-        // a user without Moonlight can still pair hosts in-app.
-        let identity = IdentityStore.resolve(moonlightIdentity: imported?.identity)
+        // VibeLight is SEPARATE from Moonlight: it no longer reads Moonlight's
+        // preferences for identity, hosts, apps or stream defaults. Sharing that
+        // file meant installing/resetting/removing Moonlight silently rewrote
+        // VibeLight's pairings and settings. A user switching over pairs their
+        // computers once, in-app, by PIN — Moonlight is never consulted and never
+        // written to.
+        let identity = IdentityStore.resolve(moonlightIdentity: nil)
         let identityProvider = ClientIdentityProvider(identity: identity)
         self.identityProvider = identityProvider
         self.clientUniqueID = identity.uniqueID
@@ -304,7 +305,7 @@ final class AppState {
            let saved = try? JSONDecoder().decode(StreamSettings.self, from: data) {
             loaded = saved
         } else {
-            loaded = imported?.settings ?? .fallback
+            loaded = .fallback   // no Moonlight import — our own defaults
         }
         // Snap the imported bitrate (e.g. 87500) onto the clean 10 Mbps grid so
         // it reads "90 Mbps", not "87". didSet doesn't fire during init.
@@ -321,7 +322,7 @@ final class AppState {
         let completedSetup = UserDefaults.standard.integer(forKey: Self.setupVersionKey)
         if completedSetup < Self.requiredSetupVersion { onboardingStep = .welcome }
 
-        importedHosts = (imported?.hosts ?? []).filter(\.isPaired)
+        importedHosts = []   // hosts come from VibeLight's own store only
         addedHosts = Self.loadAddedHosts()
         rebuildHosts()
         // Reopen on the last-used PC if it's still around (by id, or by its

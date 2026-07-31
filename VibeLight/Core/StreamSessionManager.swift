@@ -78,8 +78,13 @@ final class StreamSessionManager: StreamEngine {
                 .appendingPathComponent("Contents/Helpers/StreamHelper.app/Contents/MacOS/Moonlight"),
             URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Documents/vibelight-moonlight-helper/app/Moonlight.app/Contents/MacOS/Moonlight"),
-            URL(fileURLWithPath: "/Applications/Moonlight.app/Contents/MacOS/Moonlight"),
         ]
+        // Stock /Applications/Moonlight.app used to be a third fallback. It is
+        // gone deliberately: VibeLight is separate from Moonlight, and the stock
+        // binary reads a DIFFERENT preferences domain, so it would stream with an
+        // identity VibeLight never paired — presenting as "not paired" while
+        // looking like a VibeLight bug. It also shows its own chrome and can hang
+        // on modal dialogs. Better to fail loudly with a fixable message.
         return candidates.first { fm.isExecutableFile(atPath: $0.path) } ?? candidates.last!
     }
 

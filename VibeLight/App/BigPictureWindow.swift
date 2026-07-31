@@ -232,7 +232,12 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
         if let helperPID, let helperApp = NSRunningApplication(processIdentifier: helperPID) {
             helperApp.activate()
         } else {
-            NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.moonlight-stream.Moonlight")
+            // Our own helper's bundle id. This said "com.moonlight-stream.Moonlight"
+            // — stock Moonlight's id — which the fork stopped using when it took
+            // its own identity, so this fallback was yielding activation to an app
+            // that usually isn't even running. (Only reached when we never learned
+            // the helper's pid; the pid path above is the normal one.)
+            NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.vibelight.streamhelper")
         }
     }
 
