@@ -658,6 +658,14 @@ final class AppState {
             if !dupe { merged.append(h) }
         }
         hosts = Array(merged.prefix(Self.maxHosts))
+        #if os(macOS)
+        // Hand the stream helper the same host list — critically each host's
+        // pinned server cert, without which it can't use HTTPS 47984 and would
+        // read PairStatus off the unauthenticated 47989 port as "not paired".
+        // Runs on every rebuild so pairing a host, renaming it, or removing one
+        // reaches the helper immediately.
+        IdentityStore.syncHelperHosts(hosts)
+        #endif
     }
 
     private static func streamHost(from added: AddedHost) -> StreamHost {
@@ -1055,7 +1063,12 @@ final class AppState {
             // A freshly-added host reports its real name here — and its MAC,
             // which is what makes Wake-on-LAN possible for in-app-paired hosts.
             if isAddedHost(host), let ip = host.manualAddress {
-                upgradeAddedHost(ip: ip, uuid: nil, name: info.hostname, mac: info.macAddress)
+                // Pass the host's REAL uuid (serverinfo <uniqueid>). This used to
+                // be nil, so a host added by IP kept the synthetic `added:<ip>` id
+                // forever — and the stream helper, which matches saved computers
+                // by uuid, rejected it as a different PC ("Found unexpected PC")
+                // and reported it offline.
+                upgradeAddedHost(ip: ip, uuid: info.hostUUID, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
             guard selectedHost?.id == host.id, session.phase == .idle else { return }

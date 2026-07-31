@@ -30,6 +30,11 @@ struct ServerInfo: Sendable, Equatable {
     /// Host NIC MAC from serverinfo — what makes Wake-on-LAN possible for
     /// hosts paired in-app (imported Moonlight hosts carry theirs in the plist).
     var macAddress: Data?
+    /// The HOST's own identifier (serverinfo `<uniqueid>`), not ours. The stream
+    /// helper matches saved computers by it and logs "Found unexpected PC" when
+    /// it disagrees, so a host added by IP must learn its real UUID instead of
+    /// keeping the synthetic `added:<ip>` id forever.
+    var hostUUID: String?
 
     var runningAppID: Int? {
         state == .busy && currentGameID != 0 ? currentGameID : nil

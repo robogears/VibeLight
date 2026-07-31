@@ -517,7 +517,8 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             appVersion: text("appversion") ?? "",
             permissionMask: text("Permission").flatMap(UInt32.init),
             virtualDisplayCapable: text("VirtualDisplayCapable").map { $0 == "true" || $0 == "1" },
-            macAddress: parseMAC(text("mac"))
+            macAddress: parseMAC(text("mac")),
+            hostUUID: text("uniqueid").flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 

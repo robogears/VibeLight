@@ -99,6 +99,59 @@ enum IdentityStore {
     /// "host says not paired" bug. MUST stay in lockstep with app/main.cpp.
     static let helperDefaultsSuite = "com.vibelight.StreamHelper"
 
+    /// Projects VibeLight's known hosts into the helper's preferences domain.
+    ///
+    /// The helper needs each host's PINNED SERVER CERT (`srvcert`) to speak
+    /// HTTPS on 47984 at all. Without it, moonlight-qt falls back to plain HTTP
+    /// on 47989 — where no client certificate is presented, so the host answers
+    /// `PairStatus 0` no matter how well-paired you actually are. The visible
+    /// symptom is "Computer X has not been paired" while VibeLight itself shows
+    /// the host as paired and lists its apps, because VibeLight talks 47984
+    /// directly. Verified on a live host: 47989 → PairStatus 0 / Permission 0;
+    /// 47984 with the cert → PairStatus 1 / Permission 119480064.
+    ///
+    /// Before the Moonlight split the helper inherited these records from
+    /// Moonlight's plist; now VibeLight owns them and must hand them over. Key
+    /// names mirror NvComputer's SER_* constants in the fork
+    /// (app/backend/nvcomputer.cpp) — QSettings arrays are 1-based.
+    static func syncHelperHosts(_ hosts: [StreamHost]) {
+        guard let defaults = UserDefaults(suiteName: helperDefaultsSuite) else { return }
+        // Only hosts we actually hold a pinned cert for are useful to the helper;
+        // an entry without one would put it right back on the HTTP fallback.
+        let usable = hosts.filter { ($0.serverCertPEM?.isEmpty == false) }
+
+        // Clear the previous array wholesale (including any record the helper
+        // wrote for itself) so removals propagate instead of lingering.
+        let previous = defaults.integer(forKey: "hosts.size")
+        if previous > 0 {
+            for i in 1...previous {
+                for key in ["hostname", "uuid", "customname", "mac", "srvcert", "nvidiasw",
+                            "localaddress", "localport", "remoteaddress", "remoteport",
+                            "manualaddress", "manualport", "ipv6address", "ipv6port"] {
+                    defaults.removeObject(forKey: "hosts.\(i).\(key)")
+                }
+            }
+        }
+
+        for (offset, host) in usable.enumerated() {
+            let p = "hosts.\(offset + 1)."
+            defaults.set(host.name, forKey: p + "hostname")
+            defaults.set(host.id, forKey: p + "uuid")
+            defaults.set(host.serverCertPEM, forKey: p + "srvcert")
+            if let mac = host.macAddress { defaults.set(mac, forKey: p + "mac") }
+            if let a = host.localAddress {
+                defaults.set(a, forKey: p + "localaddress"); defaults.set(host.localPort, forKey: p + "localport")
+            }
+            if let a = host.remoteAddress {
+                defaults.set(a, forKey: p + "remoteaddress"); defaults.set(host.remotePort, forKey: p + "remoteport")
+            }
+            if let a = host.manualAddress {
+                defaults.set(a, forKey: p + "manualaddress"); defaults.set(host.manualPort, forKey: p + "manualport")
+            }
+        }
+        defaults.set(usable.count, forKey: "hosts.size")
+    }
+
     private static func syncHelperIdentity(_ identity: ClientIdentity) {
         guard let defaults = UserDefaults(suiteName: helperDefaultsSuite) else { return }
         // VibeLight is the SOURCE OF TRUTH for the client identity; the helper
@@ -114,9 +167,18 @@ enum IdentityStore {
         // would then win forever with no way to correct it. Mirror ours over the
         // top whenever they differ (compared first, so the common case is a
         // no-op write).
-        guard defaults.data(forKey: "certificate") != identity.certificatePEM else { return }
+        // The uniqueid matters as much as the certificate. Sunshine/Vibepollo
+        // tracks paired clients by it, so a helper querying with its OWN id gets
+        // PairStatus 0 — "Computer X has not been paired" — even while holding
+        // the correct certificate and reaching the host fine. The helper mints
+        // one on first run ("Loaded unique ID from settings"), so it must be
+        // overwritten too, not just the key material.
+        let certMatches = defaults.data(forKey: "certificate") == identity.certificatePEM
+        let idMatches = defaults.string(forKey: "uniqueid") == identity.uniqueID
+        guard !certMatches || !idMatches else { return }
         defaults.set(identity.certificatePEM, forKey: "certificate")
         defaults.set(identity.privateKeyPEM, forKey: "key")
+        defaults.set(identity.uniqueID, forKey: "uniqueid")
     }
 
     private static func loadOwn() -> ClientIdentity? {
