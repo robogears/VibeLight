@@ -52,15 +52,26 @@ enum HostAPIError: Error, LocalizedError, Sendable {
     case notResponding(String)
     case xmlStatus(code: Int, message: String)  // <root status_code != 200>
     case notAuthorized                       // XML 401 — cert not in host's paired pool
+    /// The host presented a DIFFERENT certificate than the one pinned at
+    /// pairing, so we refused the TLS handshake. Usually the host's streaming
+    /// software was reinstalled or reset — but it can also mean another machine
+    /// now answers on that address, so it is worth saying out loud rather than
+    /// folding into a generic "not paired".
+    case hostIdentityChanged(String)
     case malformedResponse(String)
     case identityUnavailable(String)
 
     var errorDescription: String? {
         switch self {
+        // Kept SHORT on purpose: these land in a single-line host banner that
+        // truncates, so the actionable half must survive. No "Moonlight" — you
+        // pair in VibeLight now, and pairing in Moonlight would pair a different
+        // identity entirely. No "this Mac" either; the same strings ship on iPad.
         case .unreachable(let host): "\(host) is not reachable."
-        case .notResponding(let host): "\(host) accepted the connection but didn't answer — its streaming service may be stuck. Try restarting Sunshine/Vibepollo on the PC."
+        case .notResponding(let host): "\(host) isn't answering — restart Sunshine/Vibepollo on the PC."
         case .xmlStatus(let code, let message): "Host error \(code): \(message)"
-        case .notAuthorized: "This Mac's pairing was not accepted by the host. Re-pair in Moonlight."
+        case .notAuthorized: "Not paired with this computer — pair it again in Computers."
+        case .hostIdentityChanged: "This computer's security certificate changed — pair it again."
         case .malformedResponse(let detail): "Unexpected host response: \(detail)"
         case .identityUnavailable(let detail): "Client identity unavailable: \(detail)"
         }

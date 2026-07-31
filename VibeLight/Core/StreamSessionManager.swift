@@ -765,7 +765,7 @@ final class StreamSessionManager: StreamEngine {
     }
 
     private func hungStartupMessage() -> String {
-        var message = "The stream did not start within 45 seconds — Moonlight was likely stuck on an error dialog and has been force-quit."
+        var message = "The stream did not start within 45 seconds — the stream helper was likely stuck on an error dialog and has been force-quit."
         if let moonlightLogPath { message += " See \(moonlightLogPath) for details." }
         return message
     }

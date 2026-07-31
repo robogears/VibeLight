@@ -85,7 +85,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             let root = try Self.verifiedRoot(in: data, context: "serverinfo")
             return (Self.parseServerInfo(from: root), candidate.host)
         }
-        if sawPinRejection { throw HostAPIError.notAuthorized }
+        // Pin rejection != unpaired: the host answered with a cert that isn't the
+        // one we pinned, which is a different situation (and a different remedy)
+        // from our own cert being absent from its paired pool.
+        if sawPinRejection { throw HostAPIError.hostIdentityChanged(host.name) }
         // Order matters: a pin rejection is the more actionable verdict, but a
         // timeout beats "unreachable" — the host demonstrably answered at the
         // socket level, so calling it offline would send the user to Wake-on-LAN

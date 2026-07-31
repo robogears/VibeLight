@@ -211,7 +211,7 @@ private struct CheatSheetCard: View {
                 keyRow("PS / Xbox button", "Opens the game's own overlay (Steam, PS)")
                 keyRow("Touch", "Tap = click, drag = cursor (Settings ▸ Input)")
                 #else
-                sheetSection("During a stream (Moonlight)")
+                sheetSection("During a stream")
                 keyRow("Start+Select+L1+R1", "Leave the stream — game keeps running")
                 keyRow("⌃⌥⇧ Q", "Disconnect — game keeps running")
                 keyRow("⌃⌥⇧ E", "Quit the game completely")
