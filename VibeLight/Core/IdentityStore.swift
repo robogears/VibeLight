@@ -101,7 +101,20 @@ enum IdentityStore {
 
     private static func syncHelperIdentity(_ identity: ClientIdentity) {
         guard let defaults = UserDefaults(suiteName: helperDefaultsSuite) else { return }
-        if let cert = defaults.data(forKey: "certificate"), !cert.isEmpty { return }
+        // VibeLight is the SOURCE OF TRUTH for the client identity; the helper
+        // must present the same certificate or the host sees two different
+        // clients and rejects the streaming one as unpaired — while the launcher,
+        // using its own good cert, still shows the host as paired. That split
+        // brain is the ON-1 bug.
+        //
+        // This used to bail out whenever the helper already had a cert. That was
+        // right while Moonlight's identity was authoritative (we adopted it, so
+        // they matched by construction) and is WRONG now: the helper mints its
+        // own identity the first time it runs for any reason, and that stale cert
+        // would then win forever with no way to correct it. Mirror ours over the
+        // top whenever they differ (compared first, so the common case is a
+        // no-op write).
+        guard defaults.data(forKey: "certificate") != identity.certificatePEM else { return }
         defaults.set(identity.certificatePEM, forKey: "certificate")
         defaults.set(identity.privateKeyPEM, forKey: "key")
     }
