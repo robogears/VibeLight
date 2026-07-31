@@ -1,22 +1,31 @@
-# VibeLight v0.1.12 — Wake your PC from the couch, and a big reliability pass
+# VibeLight v0.2.0 — VibeLight stands on its own
 
-*A practical release: a one-tap **Wake** button for a sleeping computer, plus a large under-the-hood hardening pass so your saved computers, your updates, and your streams are all a bit more bulletproof.*
+*VibeLight no longer shares anything with Moonlight. It has its own identity, its own computer list, and its own settings — so installing, resetting or deleting Moonlight can't change VibeLight underneath you. **This is a clean break: you'll pair your computers once more.***
 
-### ⏻ Wake your computer from the home screen
-The power button moved out of the computer menu and onto the **home screen, just left of Restart** — where it's actually useful:
-- One tap sends a **Wake-on-LAN** to a sleeping PC over your network.
-- It appears **only when the selected computer is asleep** (and you have its address saved), pulses **"Waking…"** while the machine boots, and disappears the moment it comes online — so you can see it working instead of wondering if anything happened.
-- *(There's no remote power-off — nothing in the streaming protocol offers one — so "power" means turn on; **Restart** still covers reboots.)*
+### ⚠️ Read this first — you'll re-pair your computers
+Until now VibeLight quietly reused Moonlight's pairing file. It worked, but it meant your computers and your pairing lived inside another app's data, and anything that touched Moonlight could break VibeLight without warning.
 
-### 🛡️ A big reliability & security pass
-Dozens of audited fixes across the app — the parts you'd actually feel:
-- **Your saved computers can't vanish.** A single corrupt saved entry can no longer wipe your whole list of paired PCs (and the pairing certificates that go with them).
-- **Safer updates.** The in-app updater now checks each download against a published checksum before it installs, and insists on the right build.
-- **Steadier streaming on iPhone & iPad.** Game audio now hands back cleanly to Music/podcasts when a stream ends *or* fails to start, and a failed connection no longer leaves audio in a stuck state.
-- Plus quiet hardening throughout pairing, host communication, and identity handling.
+That link is now cut, which means **after updating:**
+- Computers that came from Moonlight **won't be listed** — add them again with **Computers ▸ Add computer by IP address**.
+- Pairing happens **in VibeLight** (enter the PIN on your PC). You never need to open Moonlight again — and pairing there won't help, because VibeLight now has its own identity.
+- Your presets, theme and settings are untouched.
 
-### 🎮 Friendlier first run
-- On a brand-new install, the **"Add Computer" button is now reachable with a controller or keyboard** — no mouse required to get going.
+*A one-time chore, and after it VibeLight is genuinely self-contained.*
+
+### 🔗 Completely separate from Moonlight
+- VibeLight generates and keeps **its own client identity**, stored with VibeLight.
+- Its **computers, apps and stream settings** are its own — nothing is read from, or written to, Moonlight's preferences.
+- The bundled streaming helper got the same treatment, so the two apps no longer trade data behind the scenes.
+- Moonlight can be uninstalled with no effect on VibeLight. You don't need it installed at all.
+
+### 💬 Errors that tell you the truth
+- A computer that's **awake but not answering** no longer shows as "asleep" — you get *"isn't answering — restart Sunshine/Vibepollo on the PC"*, and VibeLight stops offering to wake a machine that's already on.
+- **"Not paired"** now says what to do about it, in VibeLight, instead of sending you to Moonlight.
+- A computer whose **security certificate changed** is called out specifically — that usually means its streaming software was reinstalled, but it can also mean a different machine is answering on that address.
+
+### 🎯 Streaming reliability
+- **Starting a game no longer times out too early.** Launching does real work on the PC (spinning up the encoder, sometimes creating a display), which could take longer than VibeLight was willing to wait — so it gave up while the PC carried on and started streaming to nobody. Launches now get room to breathe, and a launch that *does* fail cleans up after itself instead of leaving a stuck session that broke the next attempt.
+- **Computers added by IP now learn their real identity** from the PC, which fixes a case where the streaming helper refused to connect to a computer it had been given.
 
 ---
 *Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight offers this update in-app.*
