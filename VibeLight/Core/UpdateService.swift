@@ -106,7 +106,11 @@ final class UpdateService {
         // leftovers — but never while THIS session holds a staged bundle
         // (readyToInstall) or is about to produce one.
         if silent, stagedApp == nil {
-            Self.sweepStaleArtifacts()
+            // Detached: the leftover it exists to clear is a ~100 MB staged
+            // bundle (thousands of files), and a recursive delete of that on the
+            // main actor is exactly the freeze this same commit moved
+            // unpackAndValidate off-main to avoid.
+            Task.detached(priority: .utility) { Self.sweepStaleArtifacts() }
         }
         phase = .checking
         do {

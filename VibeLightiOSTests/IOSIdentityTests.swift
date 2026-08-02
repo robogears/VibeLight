@@ -63,10 +63,34 @@ final class IOSIdentityTests: XCTestCase {
         XCTAssertEqual(K.classify(certStatus: errSecItemNotFound, keyStatus: errSecItemNotFound),
                        .absent)
 
-        // Exactly one half present: a half-formed identity cannot assemble, and
-        // generatePEMs' deleteAll clears the orphan. Still .absent.
-        XCTAssertEqual(K.classify(certStatus: errSecSuccess, keyStatus: errSecItemNotFound), .absent)
-        XCTAssertEqual(K.classify(certStatus: errSecItemNotFound, keyStatus: errSecSuccess), .absent)
+        // ONE half answered, the other said not-found. This is the subtle one:
+        // the keychain OMITS items whose protection class is unavailable from a
+        // search rather than reporting errSecInteractionNotAllowed, so on a
+        // locked device a perfectly real item reads as "not found". Before the
+        // accessibility fix the cert was WhenUnlocked while the key was
+        // AfterFirstUnlock, which produces exactly this shape — and treating it
+        // as absent would deleteAll a live, host-trusted key.
+        //
+        // So a half-answer is only "absent" on a device we can PROVE is
+        // unlocked; otherwise it must be unavailable.
+        XCTAssertEqual(K.classify(certStatus: errSecSuccess, keyStatus: errSecItemNotFound,
+                                  deviceUnlocked: true), .absent)
+        XCTAssertEqual(K.classify(certStatus: errSecItemNotFound, keyStatus: errSecSuccess,
+                                  deviceUnlocked: true), .absent)
+        XCTAssertEqual(K.classify(certStatus: errSecSuccess, keyStatus: errSecItemNotFound,
+                                  deviceUnlocked: false), .unavailable(errSecInteractionNotAllowed))
+        XCTAssertEqual(K.classify(certStatus: errSecItemNotFound, keyStatus: errSecSuccess,
+                                  deviceUnlocked: false), .unavailable(errSecInteractionNotAllowed))
+
+        // Both-not-found stays absent regardless of lock state: there is nothing
+        // to protect, so a first run on a locked device still gets an identity.
+        XCTAssertEqual(K.classify(certStatus: errSecItemNotFound, keyStatus: errSecItemNotFound,
+                                  deviceUnlocked: false), .absent)
+
+        // The probe itself must work on a real (unlocked) device/simulator,
+        // otherwise the half-answer path would never resolve to .absent.
+        XCTAssertTrue(K.isDeviceUnlocked(),
+                      "a running simulator/device is unlocked; the probe must say so")
 
         // Anything the keychain says OTHER than not-found must be unavailable.
         // errSecInteractionNotAllowed is the one that bit us: a launch before

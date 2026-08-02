@@ -47,8 +47,10 @@ LSUIElement agent — see its FORK-CHANGES.md). Build it with
 before qmake), then `export PATH="$(brew --prefix qt)/bin:$PATH" && qmake
 moonlight-qt.pro && make release`. `scripts/embed-helper.sh` macdeployqt's a
 copy into `VibeLight.app/Contents/Helpers/StreamHelper.app` (relocatable,
-ad-hoc signed); `resolveStreamBinary()` prefers embedded → fork dev build →
-stock Moonlight. Notarization needs a paid Developer ID (not configured);
+ad-hoc signed); `resolveStreamBinary()` takes the embedded copy, else the fork
+dev build — there is deliberately NO stock-Moonlight fallback (it reads a
+different preferences domain, so it would stream with an identity VibeLight
+never paired). Notarization needs a paid Developer ID (not configured);
 GPL fork = never MAS.
 
 ## Ship / release (no CI — local Path B)

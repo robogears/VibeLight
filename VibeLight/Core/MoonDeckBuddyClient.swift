@@ -210,8 +210,14 @@ final class MoonDeckBuddyClient: Sendable {
             // (including re-pairing), Restart PC could never work again after a
             // Buddy reinstall. Name the real condition so the caller can offer
             // the real remedy.
-            if let urlError = error as? URLError, urlError.code == .cancelled,
-               !(error is CancellationError) {
+            // NOTE: this still INFERS the pin rejection from URLError.cancelled,
+            // which is the same guess HostAPIClient stopped making — PinnedTrust
+            // has no channel to report through. It is acceptable only because
+            // every caller checks Task.isCancelled first (AppState), so the one
+            // other producer of .cancelled cannot reach the destructive
+            // "forget the pin" branch. Give PinnedTrust a counter like
+            // MTLSDelegate's if this grows another caller.
+            if let urlError = error as? URLError, urlError.code == .cancelled {
                 throw MDError.certChanged
             }
             throw MDError.offline

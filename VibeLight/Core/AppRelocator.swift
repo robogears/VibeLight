@@ -98,13 +98,28 @@ enum AppRelocator {
         if ! codesign --force --deep --sign - "$DEST"; then echo "re-sign failed"; restore; rm -f "$0"; exit 1; fi
         if ! codesign --verify --deep "$DEST"; then echo "verify failed"; restore; rm -f "$0"; exit 1; fi
 
-        if open "$DEST"; then
+        # By here the copy is complete, re-signed and VERIFIED — it is a good
+        # install. A failing `open` at this point is a LaunchServices hiccup (it
+        # hasn't noticed the freshly written bundle yet), not a bad bundle, so
+        # retry rather than roll back. Deleting a verified install because the
+        # launcher was slow would silently downgrade the user — or, on a first
+        # relocation where there is no backup, throw the good copy away
+        # entirely. The updater's relauncher takes the same retry approach.
+        if open "$DEST" || { sleep 1; open "$DEST"; }; then
           # The new copy launched: NOW it is safe to drop the backup, and only
           # then the original.
           [ -n "$BAK" ] && rm -rf "$BAK"
           if [ "$REMOVE_SRC" = "1" ] && [ "$SRC" != "$DEST" ]; then rm -rf "$SRC"; fi
         else
-          restore
+          # Still not launching. KEEP the verified copy in place — the user can
+          # start it from Finder — and just put the old one back beside it if we
+          # have one, then fall back to opening the source so they aren't left
+          # staring at nothing.
+          echo "installed copy verified but would not launch; leaving it in place"
+          if [ -n "$BAK" ]; then
+            rm -rf "$DEST.previous" && mv "$BAK" "$DEST.previous" 2>/dev/null || rm -rf "$BAK"
+          fi
+          open "$SRC" 2>/dev/null || open "$DEST" 2>/dev/null || true
         fi
         rm -f "$0"
         """

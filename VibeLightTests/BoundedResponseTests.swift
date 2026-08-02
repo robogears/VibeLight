@@ -72,6 +72,13 @@ final class BoundedResponseTests: XCTestCase {
         } catch {
             XCTAssertTrue("\(error)".contains("too large"), "unexpected error: \(error)")
         }
+        // The property that matters, and the one the OLD code failed: a declared
+        // oversize is refused from the headers, so the body is never served at
+        // all. Asserting only the error message would pass against the previous
+        // implementation, which buffered all 20 MB and complained afterwards.
+        let served = server.bytesServed() ?? 0
+        XCTAssertLessThan(served, 1 * 1024 * 1024,
+                          "declared oversize must be refused before the body is read; server sent \(served) bytes")
     }
 
     func testOversizedBodyWithNoContentLengthIsRejectedMidTransfer() async throws {
@@ -85,6 +92,12 @@ final class BoundedResponseTests: XCTestCase {
         } catch {
             XCTAssertTrue("\(error)".contains("too large"), "unexpected error: \(error)")
         }
+        // Killed MID-transfer: the server must not have managed to send the
+        // whole 20 MB. The old post-hoc check consumed every byte first, so this
+        // assertion — not the error message — is what proves the fix.
+        let served = server.bytesServed() ?? Int.max
+        XCTAssertLessThan(served, 20 * 1024 * 1024,
+                          "transfer must be aborted before the full body is served; server sent \(served) bytes")
     }
 
     func testResponseJustUnderTheCapIsAccepted() async throws {
@@ -147,6 +160,25 @@ final class LocalTLSServer {
     private let pemPath: String
     private var stderrURL: URL?
 
+    /// Body bytes the server actually managed to write before the client hung
+    /// up. This is what distinguishes "rejected after buffering it all" from
+    /// "killed mid-transfer" — the whole point of the rewrite.
+    /// Waits briefly for the count to land: when the client aborts mid-transfer
+    /// the client's error surfaces immediately, while the server only notices
+    /// on its next blocked write — so reading straight away races it.
+    func bytesServed(timeout: TimeInterval = 5) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let text = try? String(contentsOf: sentURL, encoding: .utf8),
+               let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return n
+            }
+            usleep(50_000)
+        } while Date() < deadline
+        return nil
+    }
+    private var sentURL: URL { dir.appendingPathComponent("sent.txt") }
+
     /// Everything the server wrote to stderr — printed when it never came up.
     var diagnostics: String {
         guard let stderrURL, let d = try? Data(contentsOf: stderrURL) else { return "(no stderr)" }
@@ -175,14 +207,24 @@ final class LocalTLSServer {
                 else:
                     self.send_header('Transfer-Encoding', 'chunked')
                 self.end_headers()
-                if declared:
-                    self.wfile.write(payload)
-                else:
+                sent = 0
+                try:
                     step = 65536
-                    for i in range(0, len(payload), step):
-                        chunk = payload[i:i+step]
-                        self.wfile.write(b'%X\\r\\n' % len(chunk) + chunk + b'\\r\\n')
-                    self.wfile.write(b'0\\r\\n\\r\\n')
+                    if declared:
+                        for i in range(0, len(payload), step):
+                            chunk = payload[i:i+step]
+                            self.wfile.write(chunk); self.wfile.flush()
+                            sent += len(chunk)
+                    else:
+                        for i in range(0, len(payload), step):
+                            chunk = payload[i:i+step]
+                            self.wfile.write(b'%X\\r\\n' % len(chunk) + chunk + b'\\r\\n')
+                            self.wfile.flush()
+                            sent += len(chunk)
+                        self.wfile.write(b'0\\r\\n\\r\\n')
+                except Exception:
+                    pass  # client hung up mid-transfer — that is the point
+                open(sys.argv[5], 'w').write(str(sent))
             def log_message(self, *a): pass
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(sys.argv[4])
@@ -200,7 +242,7 @@ final class LocalTLSServer {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.python3!)
-        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", "\(port)", pemPath]
+        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", "\(port)", pemPath, sentURL.path]
         p.standardOutput = errHandle
         p.standardError = errHandle
         do { try p.run() } catch { print("SERVER-SPAWN-FAILED \(error)"); return }

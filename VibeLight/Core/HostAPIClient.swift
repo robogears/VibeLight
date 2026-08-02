@@ -296,9 +296,22 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let task = session.dataTask(with: request)
-                holder.store(task)
                 delegate.begin(task: task, cap: Self.responseByteCap, continuation: continuation)
+                // resume() BEFORE handing the task to the holder. A task
+                // cancelled while still suspended is not guaranteed to deliver
+                // didCompleteWithError, and that delegate callback is the only
+                // thing that resumes the continuation — so cancelling an
+                // un-resumed task could hang this await forever. Starting it
+                // first means every cancel lands on a running task, which always
+                // completes. `begin` precedes both so no callback can arrive
+                // before its continuation is registered.
                 task.resume()
+                holder.store(task, onAlreadyCancelled: {
+                    // Cancellation beat us to it: the task is running now, and
+                    // cancelling it will produce a completion. Belt and braces —
+                    // if it somehow doesn't, fail the continuation ourselves.
+                    delegate.failIfStillPending(task, with: CancellationError())
+                })
             }
         } onCancel: {
             // Swift-level cancellation (the caller's Task went away) must tear
@@ -315,12 +328,15 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private var task: URLSessionTask?
         private var cancelled = false
 
-        func store(_ task: URLSessionTask) {
+        func store(_ task: URLSessionTask, onAlreadyCancelled: () -> Void = {}) {
             lock.lock()
             let alreadyCancelled = cancelled
             self.task = task
             lock.unlock()
-            if alreadyCancelled { task.cancel() }
+            if alreadyCancelled {
+                task.cancel()
+                onAlreadyCancelled()
+            }
         }
 
         func cancel() {
@@ -502,7 +518,15 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         /// plain "unreachable", while sticky would keep blaming the certificate
         /// long after the host simply went to sleep. Callers snapshot the count
         /// before their request and compare after, so each one sees exactly the
-        /// rejections its own attempt caused.
+        /// rejections that happened DURING its own attempt.
+        ///
+        /// Not per-request: the counter is per-session, so a concurrent box-art
+        /// fetch rejecting on the pin during a /serverinfo attempt is still
+        /// attributed to that attempt. For a host presenting a mismatched cert
+        /// that is the same verdict either way; it is only wrong for a record
+        /// whose two addresses now point at different machines. Narrowing it
+        /// further needs per-task attribution from the challenge callback, which
+        /// URLSession does not give us directly.
         private var pinRejections = 0
 
         var pinRejectionCount: Int {
@@ -519,6 +543,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             pendingLock.lock()
             pending[ObjectIdentifier(task)] = Pending(cap: cap, continuation: continuation)
             pendingLock.unlock()
+        }
+
+        /// Fails a task's continuation if it is still pending. Used only to
+        /// guarantee forward progress when a cancellation races task start-up;
+        /// a no-op once the normal delegate path has finished the task.
+        func failIfStillPending(_ task: URLSessionTask, with error: any Error) {
+            finish(task, .failure(error))
         }
 
         /// Resumes the continuation at most once and forgets the task.

@@ -94,7 +94,8 @@ enum IOSKeychainIdentity {
     /// `errSecNotAvailable`, anything unforeseen — is treated as "cannot tell",
     /// because guessing wrong in that direction is unrecoverable for the user
     /// and guessing wrong the other way costs one relaunch.
-    static func classify(certStatus: OSStatus, keyStatus: OSStatus) -> Lookup {
+    static func classify(certStatus: OSStatus, keyStatus: OSStatus,
+                         deviceUnlocked: @autoclosure () -> Bool = isDeviceUnlocked()) -> Lookup {
         if certStatus == errSecSuccess && keyStatus == errSecSuccess {
             return .found(cert: Data(), key: Data())   // payload filled by the caller
         }
@@ -103,10 +104,50 @@ enum IOSKeychainIdentity {
         for status in [certStatus, keyStatus] where status != errSecSuccess && status != errSecItemNotFound {
             return .unavailable(status)
         }
-        // Everything that failed, failed with errSecItemNotFound. Either there
-        // is nothing here (first run) or exactly one half survives — a
-        // half-formed identity is unusable and generatePEMs' deleteAll clears it.
-        return .absent
+        // Both halves say not-found: genuinely nothing here. Safe to generate.
+        if certStatus == errSecItemNotFound && keyStatus == errSecItemNotFound { return .absent }
+
+        // ONE half answered and the other said not-found. That is NOT proof the
+        // missing half doesn't exist. The keychain does not return
+        // errSecInteractionNotAllowed for an item whose protection class is
+        // currently unavailable — it OMITS it from the search, so the caller
+        // sees errSecItemNotFound. And these two items had mismatched
+        // accessibility before the fix in this same commit (the cert defaulted
+        // to WhenUnlocked, the key was AfterFirstUnlock), so on a locked device
+        // the cert vanishes from the search while the key answers — exactly this
+        // shape, and reading it as .absent would run deleteAll on a real,
+        // host-trusted key. That is the very bug this file was changed to fix.
+        //
+        // Only a device we can PROVE is unlocked lets a not-found be taken at
+        // face value; the probe below is what distinguishes a genuine orphan
+        // (a crash between creating the key and adding the cert) from an item
+        // that is merely out of reach right now.
+        return deviceUnlocked() ? .absent : .unavailable(errSecInteractionNotAllowed)
+    }
+
+    /// Round-trips a throwaway `WhenUnlocked` item to prove the device is
+    /// unlocked *right now*.
+    ///
+    /// `WhenUnlocked` is the strictest ordinary class, so if an item written
+    /// under it can be read back, nothing in our keychain is being hidden by the
+    /// lock state — which makes an `errSecItemNotFound` for the cert or key
+    /// trustworthy. Cheap (two keychain calls) and only reached on the rare
+    /// half-answered path.
+    static func isDeviceUnlocked() -> Bool {
+        let probeTag = Data("com.vibelight.client.identity.unlockprobe".utf8)
+        let base: [CFString: Any] = [kSecClass: kSecClassGenericPassword,
+                                     kSecAttrAccount: "vibelight.unlock.probe",
+                                     kSecAttrService: "com.vibelight.probe"]
+        SecItemDelete(base as CFDictionary)
+        var add = base
+        add[kSecValueData] = probeTag
+        add[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlocked
+        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return false }
+        defer { SecItemDelete(base as CFDictionary) }
+        var read = base
+        read[kSecReturnData] = true
+        var out: CFTypeRef?
+        return SecItemCopyMatching(read as CFDictionary, &out) == errSecSuccess
     }
 
     /// Generate a fresh born-in-keychain identity and return its cert PEM.
