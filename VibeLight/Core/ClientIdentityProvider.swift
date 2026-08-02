@@ -52,7 +52,23 @@ final class ClientIdentityProvider: @unchecked Sendable {
         cached = identity
         return identity
         #else
-        let p12URL = try ensureP12()
+        // A cached bundle that no longer imports is not a permanent verdict —
+        // it is a corrupt file. openssl killed mid-write (log out, crash, disk
+        // full) leaves a short or truncated .p12 that `fileExists` happily
+        // accepts, and every host request then fails with "Client identity
+        // unavailable" forever, because the file being there is what stops it
+        // being rebuilt. Rebuild once from the PEMs before giving up.
+        do {
+            return try importIdentity(from: try ensureP12())
+        } catch {
+            try? FileManager.default.removeItem(at: p12CacheURL)
+            return try importIdentity(from: try ensureP12(force: true))
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private func importIdentity(from p12URL: URL) throws -> SecIdentity {
         let p12Data = try Data(contentsOf: p12URL)
 
         var items: CFArray?
@@ -70,8 +86,8 @@ final class ClientIdentityProvider: @unchecked Sendable {
         let secIdentity = identityRef as! SecIdentity
         cached = secIdentity
         return secIdentity
-        #endif
     }
+    #endif
 
     /// The client's private key, for signing during pairing.
     func privateKey() throws -> SecKey {
@@ -102,11 +118,25 @@ final class ClientIdentityProvider: @unchecked Sendable {
             .map { String(format: "%02x", $0) }.joined()
     }
 
-    private func ensureP12() throws -> URL {
+    /// Where the cached bundle for the CURRENT pairing lives.
+    private var p12CacheURL: URL {
+        supportDirectory.appendingPathComponent("client-\(pemFingerprint.prefix(16)).p12")
+    }
+
+    private func ensureP12(force: Bool = false) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
-        let p12URL = supportDirectory.appendingPathComponent("client-\(pemFingerprint.prefix(16)).p12")
-        if fm.fileExists(atPath: p12URL.path) { return p12URL }
+        let p12URL = p12CacheURL
+        // `fileExists` is not "is usable": a truncated bundle from an
+        // interrupted openssl run passes it. Require a plausible size too — a
+        // real RSA-2048 PKCS#12 is ~2.5 KB, and anything under 256 bytes cannot
+        // hold a cert and a key. The caller additionally forces a rebuild when
+        // an existing file fails to import.
+        if !force, let size = try? fm.attributesOfItem(atPath: p12URL.path)[.size] as? Int,
+           size >= 256 {
+            return p12URL
+        }
+        try? fm.removeItem(at: p12URL)
 
         // Stale bundles from prior pairings are useless — clear them.
         if let stale = try? fm.contentsOfDirectory(at: supportDirectory, includingPropertiesForKeys: nil) {
@@ -129,6 +159,17 @@ final class ClientIdentityProvider: @unchecked Sendable {
             try? fm.removeItem(at: keyURL)
         }
 
+        // Pre-create the output 0600 so openssl inherits those permissions
+        // instead of the ambient umask. openssl opens -out with O_TRUNC, which
+        // keeps an existing file's mode, so the bundle is never briefly
+        // world-readable. This is the same race the key file above was hardened
+        // against in SEV-04 — the .p12 holds the same private key and had been
+        // left on write-then-chmod.
+        guard fm.createFile(atPath: p12URL.path, contents: nil,
+                            attributes: [.posixPermissions: 0o600]) else {
+            throw IdentityError.opensslFailed("Could not create the client identity bundle.")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
         process.arguments = [
@@ -144,7 +185,13 @@ final class ClientIdentityProvider: @unchecked Sendable {
         process.standardOutput = Pipe()
         try process.run()
         process.waitUntilExit()
-        guard process.terminationStatus == 0, fm.fileExists(atPath: p12URL.path) else {
+        // The output now always EXISTS (we pre-created it), so existence proves
+        // nothing — check that openssl actually filled it, and clean up the
+        // empty/short husk on failure so the next attempt starts fresh instead
+        // of finding a "cached" bundle that can never import.
+        let written = (try? fm.attributesOfItem(atPath: p12URL.path)[.size]) as? Int ?? 0
+        guard process.terminationStatus == 0, written >= 256 else {
+            try? fm.removeItem(at: p12URL)
             let err = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw IdentityError.opensslFailed(err.trimmingCharacters(in: .whitespacesAndNewlines))
         }

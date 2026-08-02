@@ -507,6 +507,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         return root
     }
 
+    /// Parses a raw `/serverinfo` body. Every field below is host-controlled,
+    /// so this is a trust boundary and gets direct test coverage — this
+    /// entry point exists for that, keeping `XMLNode` file-private.
+    static func parseServerInfo(fromXML data: Data) -> ServerInfo? {
+        XMLNode.parse(data).map(parseServerInfo(from:))
+    }
+
     private static func parseServerInfo(from root: XMLNode) -> ServerInfo {
         func text(_ name: String) -> String? { root.child(name)?.text.trimmed }
         return ServerInfo(
@@ -515,8 +522,16 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             currentGameID: text("currentgame").flatMap(Int.init) ?? 0,
             currentGameUUID: text("currentgameuuid").flatMap { $0.isEmpty ? nil : $0 },
             pairStatus: text("PairStatus") == "1",
-            serverCodecModeSupport: text("ServerCodecModeSupport").flatMap(Int.init) ?? 0,
-            httpsPort: text("HttpsPort").flatMap(Int.init) ?? 47984,
+            // Parsed as Int32, not Int: this reaches moonlight-common-c as an
+            // int32_t, and `Int32(someInt)` TRAPS on anything past 2^31-1. The
+            // host controls this field, so a value like 9999999999 would kill
+            // the app on launch. Int32's failable init rejects it here instead,
+            // and 0 — "no special codec modes" — is the right reading of a
+            // value that cannot be a valid mask anyway.
+            serverCodecModeSupport: text("ServerCodecModeSupport").flatMap(Int32.init).map(Int.init) ?? 0,
+            // Same shape of problem, different consequence: an out-of-range port
+            // would be nonsense, so fall back to the well-known one.
+            httpsPort: text("HttpsPort").flatMap(Int.init).flatMap { (1...65535).contains($0) ? $0 : nil } ?? 47984,
             appVersion: text("appversion") ?? "",
             permissionMask: text("Permission").flatMap(UInt32.init),
             virtualDisplayCapable: text("VirtualDisplayCapable").map { $0 == "true" || $0 == "1" },

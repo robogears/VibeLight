@@ -120,6 +120,23 @@ final class UpdateService {
 
     // MARK: - Download + install
 
+    /// Hard ceiling on how many bytes the download may write: 10% over the
+    /// advertised size, or 500 MB, whichever is larger — but never more than
+    /// 2 GB, so a hostile advertised size (which arrives on the same channel as
+    /// the payload) cannot inflate the cap it is supposed to be constrained by.
+    /// (SEV-11)
+    ///
+    /// The arithmetic has to survive that hostile size too: the value is just a
+    /// number in the release JSON, and `Int64(Double(Int64.max) * 1.1)` traps —
+    /// crashing the app from the exact field this cap exists to distrust. Widen
+    /// in Double, check the product lands inside Int64, then let min() cap it.
+    nonisolated static func byteCap(forAdvertisedSize expectedSize: Int64) -> Int64 {
+        let inflated = Double(expectedSize) * 1.1
+        let headroom: Int64 = (inflated.isFinite && inflated < Double(Int64.max))
+            ? Int64(inflated) : Int64.max
+        return min(max(headroom, 500_000_000), 2_000_000_000)
+    }
+
     /// "Update Now": download + verify the new build, then stop at
     /// `.readyToInstall` so the user chooses when to restart.
     func downloadAndInstall() async {
@@ -480,13 +497,10 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
     private var movedFile: URL?
 
     private init(expectedSize: Int64, onProgress: @escaping @Sendable (Double) -> Void) {
-        // Hard ceiling so a tampered/oversized asset can't fill the disk:
-        // 10% over the advertised size, or 500 MB, whichever is larger — but
-        // never more than 2 GB, so a hostile advertised size (on the same channel
-        // as the payload) can't inflate the cap itself. (SEV-11)
-        self.byteCap = min(max(Int64(Double(expectedSize) * 1.1), 500_000_000), 2_000_000_000)
+        self.byteCap = UpdateService.byteCap(forAdvertisedSize: expectedSize)
         self.onProgress = onProgress
     }
+
 
     static func download(_ url: URL, expectedSize: Int64,
                          onProgress: @escaping @MainActor (Double) -> Void) async throws -> URL {

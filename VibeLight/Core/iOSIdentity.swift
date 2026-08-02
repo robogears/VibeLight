@@ -27,17 +27,91 @@ enum IOSKeychainIdentity {
 
     // MARK: - Public
 
+    /// What a keychain lookup actually told us.
+    ///
+    /// The distinction is load-bearing: `generatePEMs()` starts by deleting
+    /// everything, so treating "the keychain could not answer right now" the
+    /// same as "there is no identity" DESTROYS a working, host-trusted identity
+    /// and silently unpairs every computer. Only `absent` may lead to
+    /// generation.
+    enum Lookup: Equatable {
+        /// Both items came back. Safe to use.
+        case found(cert: Data, key: Data)
+        /// The keychain positively reported "no such item". Safe to generate.
+        case absent
+        /// The keychain refused to answer — locked device, missing entitlement,
+        /// authentication failure. The identity may well still be there.
+        /// NEVER generate on this; retry later instead.
+        case unavailable(OSStatus)
+    }
+
     /// The cert PEM if our identity already lives in the keychain (both the
     /// permanent key and the cert must be present to assemble an identity).
     /// The private-key PEM is intentionally empty: on iOS the key never leaves
     /// the keychain — signing goes through the assembled `SecIdentity`.
-    static func loadPEMs() -> (cert: Data, key: Data)? {
-        guard let cert = copyCertificate(), copyKey() != nil else { return nil }
-        let der = SecCertificateCopyData(cert) as Data
-        return (Data(pem(fromCertDER: der).utf8), Data())
+    static func loadPEMs() -> Lookup {
+        var certRef: CFTypeRef?
+        let certStatus = SecItemCopyMatching([
+            kSecClass: kSecClassCertificate,
+            kSecAttrLabel: certLabel,
+            kSecReturnRef: true,
+        ] as CFDictionary, &certRef)
+
+        var keyRef: CFTypeRef?
+        let keyStatus = SecItemCopyMatching([
+            kSecClass: kSecClassKey,
+            kSecAttrApplicationTag: keyTag,
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecReturnRef: true,
+        ] as CFDictionary, &keyRef)
+
+        switch classify(certStatus: certStatus, keyStatus: keyStatus) {
+        case .unavailable(let status):
+            return .unavailable(status)
+        case .absent:
+            return .absent
+        case .found:
+            // classify only reports .found when both statuses were success, so
+            // both refs are present. Belt and braces: if a ref is somehow nil,
+            // report unavailable rather than absent — never destroy on a
+            // surprise.
+            guard let certRef, keyRef != nil else { return .unavailable(errSecInternalError) }
+            let cert = certRef as! SecCertificate
+            migrateAccessibilityIfNeeded()
+            let der = SecCertificateCopyData(cert) as Data
+            return .found(cert: Data(pem(fromCertDER: der).utf8), key: Data())
+        }
+    }
+
+    /// Pure decision table over the two lookup statuses — the whole safety
+    /// property of this file lives here, so it is separated out and tested.
+    ///
+    /// The rule is deliberately asymmetric: **only** an explicit
+    /// `errSecItemNotFound` from both queries counts as "there is no identity".
+    /// Every other status — `errSecInteractionNotAllowed` (device locked, and
+    /// with it the classic case of launching before the first unlock after a
+    /// reboot), `errSecMissingEntitlement`, `errSecAuthFailed`,
+    /// `errSecNotAvailable`, anything unforeseen — is treated as "cannot tell",
+    /// because guessing wrong in that direction is unrecoverable for the user
+    /// and guessing wrong the other way costs one relaunch.
+    static func classify(certStatus: OSStatus, keyStatus: OSStatus) -> Lookup {
+        if certStatus == errSecSuccess && keyStatus == errSecSuccess {
+            return .found(cert: Data(), key: Data())   // payload filled by the caller
+        }
+        // A non-success status that is NOT "not found" means the keychain could
+        // not answer. Report the first such status.
+        for status in [certStatus, keyStatus] where status != errSecSuccess && status != errSecItemNotFound {
+            return .unavailable(status)
+        }
+        // Everything that failed, failed with errSecItemNotFound. Either there
+        // is nothing here (first run) or exactly one half survives — a
+        // half-formed identity is unusable and generatePEMs' deleteAll clears it.
+        return .absent
     }
 
     /// Generate a fresh born-in-keychain identity and return its cert PEM.
+    ///
+    /// Destructive by design — call ONLY after `loadPEMs()` returned `.absent`.
     static func generatePEMs() -> (cert: Data, key: Data)? {
         deleteAll()  // never leave a half-formed identity behind
         guard let key = createPermanentKey(),
@@ -87,8 +161,29 @@ enum IOSKeychainIdentity {
             kSecClass: kSecClassCertificate,
             kSecValueRef: cert,
             kSecAttrLabel: certLabel,
+            // Match the private key's accessibility (createPermanentKey). Left
+            // unset, a keychain item defaults to kSecAttrAccessibleWhenUnlocked
+            // — STRICTER than the key — so on a locked device the cert lookup
+            // failed while the key succeeded. That mismatch both broke identity
+            // assembly whenever the screen was locked and produced the
+            // half-answered lookup that used to trigger regeneration.
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
         ] as CFDictionary, nil)
         return status == errSecSuccess || status == errSecDuplicateItem
+    }
+
+    /// One-time repair for identities created before the cert carried an
+    /// explicit accessibility (they got the stricter `WhenUnlocked` default).
+    /// Runs on the success path only, so it can never widen access to an item
+    /// we failed to read.
+    private static func migrateAccessibilityIfNeeded() {
+        let flag = "vibelight.ios.certAccessibilityMigrated"
+        guard !UserDefaults.standard.bool(forKey: flag) else { return }
+        let status = SecItemUpdate(
+            [kSecClass: kSecClassCertificate, kSecAttrLabel: certLabel] as CFDictionary,
+            [kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock] as CFDictionary)
+        // Only latch on success: a failed migration should be retried next launch.
+        if status == errSecSuccess { UserDefaults.standard.set(true, forKey: flag) }
     }
 
     private static func copyCertificate() -> SecCertificate? {

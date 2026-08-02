@@ -18,11 +18,32 @@ enum IdentityStore {
         // user always self-generates (SecKeyCreateRandomKey + swift-certificates),
         // and the identity lives in the keychain across launches. See iOSIdentity.
         let id = uniqueID()
-        if let pems = IOSKeychainIdentity.loadPEMs() ?? IOSKeychainIdentity.generatePEMs() {
+        switch IOSKeychainIdentity.loadPEMs() {
+        case .found(let cert, let key):
             usingGeneratedIdentity = true
-            return ClientIdentity(certificatePEM: pems.cert, privateKeyPEM: pems.key, uniqueID: id)
+            return ClientIdentity(certificatePEM: cert, privateKeyPEM: key, uniqueID: id)
+
+        case .absent:
+            // Genuinely nothing in the keychain — first run, or a half-formed
+            // identity that cannot assemble either way. Safe to generate.
+            if let pems = IOSKeychainIdentity.generatePEMs() {
+                usingGeneratedIdentity = true
+                return ClientIdentity(certificatePEM: pems.cert, privateKeyPEM: pems.key, uniqueID: id)
+            }
+            return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
+
+        case .unavailable(let status):
+            // The keychain could not answer — classically a launch before the
+            // first unlock after a reboot. The identity is probably sitting
+            // right there. Generating would call deleteAll() and destroy it,
+            // unpairing every computer with no way back except re-pairing each
+            // one by PIN. Returning an empty identity instead costs the user a
+            // relaunch and nothing else: ClientIdentityProvider.secIdentity()
+            // re-queries the keychain lazily and caches only on success, so the
+            // app recovers on its own once the device is unlocked.
+            keychainUnavailableStatus = status
+            return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
         }
-        return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
         #else
         // VibeLight is SEPARATE from Moonlight. It used to prefer the identity
         // out of Moonlight's plist ("zero setup" for existing Moonlight users),
@@ -53,6 +74,13 @@ enum IdentityStore {
     /// Moonlight was found) — used to tailor the empty state. Set once during
     /// resolve() on the main actor at startup.
     nonisolated(unsafe) static var usingGeneratedIdentity = false
+
+    /// Non-nil when the keychain refused to hand back the identity at startup
+    /// (iOS only). The identity was deliberately NOT regenerated — see
+    /// `resolve()`. Callers can use this to explain the state instead of
+    /// showing a bare "client identity unavailable", and a relaunch after the
+    /// device is unlocked clears it.
+    nonisolated(unsafe) static var keychainUnavailableStatus: OSStatus?
 
     // MARK: - Storage
 

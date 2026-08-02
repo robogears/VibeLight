@@ -170,9 +170,14 @@ final class InProcessStreamEngine: StreamEngine {
                 appVersion: info.appVersion.isEmpty ? "7.1.431.0" : info.appVersion,
                 gfeVersion: nil,
                 rtspUrl: sessionUrl,
-                codecModeSupport: Int32(info.serverCodecModeSupport),
-                width: Int32(effective.width), height: Int32(effective.height),
-                fps: Int32(effective.fps), bitrateKbps: Int32(effective.bitrateKbps),
+                // Every one of these crosses into int32_t. `Int32(x)` traps on
+                // overflow, so nothing that came off the wire or out of
+                // persisted settings gets converted that way — clamp instead.
+                // (HostAPIClient already narrows serverCodecModeSupport at the
+                // parse boundary; this is the second line of defence.)
+                codecModeSupport: Int32(clamping: info.serverCodecModeSupport),
+                width: Int32(clamping: effective.width), height: Int32(clamping: effective.height),
+                fps: Int32(clamping: effective.fps), bitrateKbps: Int32(clamping: effective.bitrateKbps),
                 // Hardcoded H.264 SDR: the iOS in-process decode path only
                 // handles H.264 today. HEVC/HDR are on the roadmap
                 // (docs/STREAMING-STATUS.md) and NOT wired to the
