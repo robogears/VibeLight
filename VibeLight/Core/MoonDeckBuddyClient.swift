@@ -35,6 +35,7 @@ final class MoonDeckBuddyClient: Sendable {
 
     enum MDError: Error, LocalizedError, Equatable {
         case offline                     // couldn't reach MoonDeckBuddy at all
+        case certChanged                 // TLS pin mismatch — Buddy reinstalled (or MITM)
         case apiVersionTooOld(Int)       // buddy older than we support
         case unauthorized                // 401 — this client isn't paired
         case http(Int)                   // other non-2xx
@@ -45,6 +46,8 @@ final class MoonDeckBuddyClient: Sendable {
             switch self {
             case .offline:
                 return "Couldn't reach MoonDeckBuddy. Make sure it's installed and running on the PC, and the PC is awake."
+            case .certChanged:
+                return "MoonDeckBuddy's security certificate changed — it was probably reinstalled or updated on the PC. Pair it again to continue."
             case .apiVersionTooOld(let v):
                 return "MoonDeckBuddy is too old (API v\(v)); VibeLight needs v\(MoonDeckBuddyClient.minSupportedAPIVersion) or newer. Update MoonDeckBuddy on the PC."
             case .unauthorized:
@@ -200,6 +203,17 @@ final class MoonDeckBuddyClient: Sendable {
         do {
             (data, response) = try await session.data(for: req)
         } catch {
+            // Our own PinnedTrust rejecting a mismatched cert surfaces as
+            // URLError.cancelled. Folding that into "offline" was a lie with a
+            // dead-end attached: the PC is right there, the message says it
+            // isn't, and since the old pin still gated every later attempt
+            // (including re-pairing), Restart PC could never work again after a
+            // Buddy reinstall. Name the real condition so the caller can offer
+            // the real remedy.
+            if let urlError = error as? URLError, urlError.code == .cancelled,
+               !(error is CancellationError) {
+                throw MDError.certChanged
+            }
             throw MDError.offline
         }
         if let http = response as? HTTPURLResponse {

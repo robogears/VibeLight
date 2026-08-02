@@ -8,7 +8,24 @@ cd "$(dirname "$0")/.."
 command -v xcodegen >/dev/null || { echo "xcodegen missing: brew install xcodegen"; exit 1; }
 
 xcodegen generate
-xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Release build | grep -E 'error|BUILD' || true
+# `| grep … || true` swallowed xcodebuild's exit status (a pipeline reports the
+# LAST command's status, and `|| true` buried what was left) — so a failed build
+# printed its errors and the script cheerfully installed the previous, stale
+# binary as if it were the new one.
+#
+# Read zsh's $pipestatus on the line IMMEDIATELY after the pipeline: any command
+# in between (even `:`) replaces it. grep legitimately exits 1 when it matches
+# nothing, so only element 1 — xcodebuild's own status — decides.
+set +e
+xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Release build \
+    | grep -E 'error|BUILD'
+build_status=(${pipestatus[@]})
+set -e
+if [[ ${build_status[1]} -ne 0 ]]; then
+    echo "Build FAILED (xcodebuild exit ${build_status[1]}) — not installing."
+    echo "The copy already in /Applications is unchanged."
+    exit 1
+fi
 
 APP="$(xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Release -showBuildSettings 2>/dev/null | awk '/ BUILT_PRODUCTS_DIR/{print $3; exit}')/VibeLight.app"
 [[ -d "$APP" ]] || { echo "Build product not found at $APP"; exit 1; }

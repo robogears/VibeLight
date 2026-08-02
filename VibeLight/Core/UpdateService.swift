@@ -102,6 +102,12 @@ final class UpdateService {
         case .downloading, .installing: return
         default: break
         }
+        // The launch check is the natural moment to clear last session's
+        // leftovers — but never while THIS session holds a staged bundle
+        // (readyToInstall) or is about to produce one.
+        if silent, stagedApp == nil {
+            Self.sweepStaleArtifacts()
+        }
         phase = .checking
         do {
             if let release = try await Self.fetchLatest(),
@@ -152,16 +158,45 @@ final class UpdateService {
             return
         }
         phase = .downloading(0)
+        var zipURL: URL?
         do {
-            let zipURL = try await Downloader.download(release.assetURL, expectedSize: release.assetSize) { [weak self] fraction in
+            let zip = try await Downloader.download(release.assetURL, expectedSize: release.assetSize) { [weak self] fraction in
                 if case .downloading = self?.phase { self?.phase = .downloading(fraction) }
             }
+            zipURL = zip
             phase = .installing  // "verifying"
-            try await Self.verifyChecksum(zipURL: zipURL, sha256URL: release.sha256URL)
-            stagedApp = try Self.unpackAndValidate(zipURL: zipURL, expectedVersion: release.version)
+            try await Self.verifyChecksum(zipURL: zip, sha256URL: release.sha256URL)
+            // Detached: ditto extracts a ~100 MB bundle and codesign hashes every
+            // file in it — seconds of work that used to run ON the main actor,
+            // freezing the whole launcher (spinning beachball, dead controller
+            // input) for the duration. The helpers are nonisolated pure
+            // functions over their arguments, so the hop is safe.
+            let version = release.version
+            stagedApp = try await Task.detached(priority: .userInitiated) {
+                try Self.unpackAndValidate(zipURL: zip, expectedVersion: version)
+            }.value
             phase = .readyToInstall
         } catch {
+            // A checksum mismatch used to leave the ~40 MB zip in temp — and
+            // since these paths are the ones that RECUR (each retry downloads
+            // again), the leftovers compounded. unpackAndValidate cleans its own
+            // extraction dir; the zip is ours to clean.
+            if let zipURL { try? FileManager.default.removeItem(at: zipURL) }
             phase = .failed(Self.message(for: error))
+        }
+    }
+
+    /// Deletes update artifacts from earlier RUNS of the app: a zip whose
+    /// checksum failed right before a crash, or a staged bundle the user
+    /// downloaded and then never pressed Restart on (quit instead). Everything
+    /// this class writes to temp is namespaced "vibelight-update-", so the sweep
+    /// can't touch anything else. Called from the silent launch check.
+    nonisolated private static func sweepStaleArtifacts() {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: fm.temporaryDirectory, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where entry.lastPathComponent.hasPrefix("vibelight-update-") {
+            try? fm.removeItem(at: entry)
         }
     }
 
@@ -170,13 +205,19 @@ final class UpdateService {
     func installStagedUpdate() {
         guard let newApp = stagedApp else { return }
         phase = .installing
-        do {
-            try Self.stageRelaunch(replacing: installDestination, with: newApp)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        let destination = installDestination
+        Task {
+            do {
+                // Off-main for the same reason as unpackAndValidate — this spawns
+                // the relauncher and touches the filesystem.
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.stageRelaunch(replacing: destination, with: newApp)
+                }.value
+                try? await Task.sleep(for: .milliseconds(400))
                 NSApp.terminate(nil)
+            } catch {
+                phase = .failed(Self.message(for: error))
             }
-        } catch {
-            phase = .failed(Self.message(for: error))
         }
     }
 
@@ -209,7 +250,11 @@ final class UpdateService {
         // ship process always publishes "…-arm64.zip". A generic ".zip" fallback
         // could select a wrong-arch or mis-named (but TLS-valid) asset that still
         // passes identity/version/codesign checks. (audit QOL-any-zip-arch-fallback)
-        let asset = assets.first { ($0["name"] as? String)?.contains("-arm64.zip") == true }
+        // hasSuffix, not contains: the ship process also publishes
+        // "…-arm64.zip.sha256" right beside the zip, and contains() matches that
+        // sidecar too — whichever the API listed first would have been
+        // "downloaded" as the update and failed at the checksum/unzip stage.
+        let asset = assets.first { ($0["name"] as? String)?.hasSuffix("-arm64.zip") == true }
         guard let asset,
               let urlString = asset["browser_download_url"] as? String,
               let assetURL = validatedAssetURL(urlString) else {
@@ -329,7 +374,7 @@ final class UpdateService {
 
     // MARK: - Unpack + validate
 
-    private static func unpackAndValidate(zipURL: URL, expectedVersion: String) throws -> URL {
+    nonisolated private static func unpackAndValidate(zipURL: URL, expectedVersion: String) throws -> URL {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("vibelight-update-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -366,7 +411,7 @@ final class UpdateService {
 
     /// Writes a self-contained relauncher, launches it detached, and returns.
     /// Paths are passed as argv (never string-baked) so spaces/quotes are safe.
-    private static func stageRelaunch(replacing dest: URL, with newApp: URL) throws {
+    nonisolated private static func stageRelaunch(replacing dest: URL, with newApp: URL) throws {
         let script = """
         #!/bin/bash
         # VibeLight self-updater relauncher. Args: <old-pid> <new-app> <dest>.
@@ -430,7 +475,7 @@ final class UpdateService {
     // MARK: - Helpers
 
     @discardableResult
-    private static func runTool(_ path: String, _ args: [String]) throws -> String {
+    nonisolated private static func runTool(_ path: String, _ args: [String]) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
@@ -544,6 +589,16 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
+        // "Finished downloading" is not "got the update": GitHub answers a
+        // rate-limit or a pulled asset with 403/404 and an HTML/JSON error page,
+        // and URLSession downloads that error body just as happily. Accepting it
+        // here handed the ERROR PAGE to the checksum/unzip stage as if it were
+        // the zip — failing later, with a misleading "corrupt download" story.
+        if let http = downloadTask.response as? HTTPURLResponse, http.statusCode != 200 {
+            continuation?.resume(throwing: UpdateError.http(http.statusCode))
+            continuation = nil
+            return
+        }
         // The temp file is deleted right after this returns — move it now.
         let dest = FileManager.default.temporaryDirectory
             .appendingPathComponent("vibelight-update-\(UUID().uuidString).zip")

@@ -644,7 +644,21 @@ final class AppState {
         // AddedHost carries a pinned pairing cert whose loss forces re-pairing.
         guard let data = UserDefaults.standard.data(forKey: addedHostsKey),
               let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else { return [] }
-        return arr.compactMap(\.value)
+        var hosts = arr.compactMap(\.value)
+        // Heal uuid collisions left by older builds: when the same PC was saved
+        // at two addresses (LAN + Tailscale), both records could end up carrying
+        // the same learned uuid, and rebuildHosts then de-duped one out of the
+        // LIST while its record stayed in storage — a computer that is invisible
+        // yet un-re-addable. Strip the uuid from the later records; they fall
+        // back to the synthetic `added:<ip>` id and become visible (and
+        // removable) again. upgradeAddedHost refuses to create new collisions.
+        var seenUUIDs = Set<String>()
+        for i in hosts.indices {
+            if let uuid = hosts[i].uuid {
+                if seenUUIDs.contains(uuid) { hosts[i].uuid = nil } else { seenUUIDs.insert(uuid) }
+            }
+        }
+        return hosts
     }
 
     private func persistAddedHosts() {
@@ -895,9 +909,23 @@ final class AppState {
                 rebuildFocus()
             } catch {
                 guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
-                if let mdError = error as? MoonDeckBuddyClient.MDError, case .offline = mdError {
+                switch error as? MoonDeckBuddyClient.MDError {
+                case .offline:
                     moonDeckPairing?.status = .offline
-                } else {
+                case .certChanged:
+                    // The Buddy on the PC presents a different cert than the one
+                    // pinned at the last pairing — a reinstall/update, normally.
+                    // Pairing is the user's explicit act of (re)establishing
+                    // trust, so this is the ONE place the old pin may be
+                    // dropped: forget it, mark unpaired, and the next attempt
+                    // trust-on-first-use captures the new cert. Without this
+                    // the stale pin gated re-pairing itself, and Restart PC was
+                    // dead for good after any Buddy reinstall.
+                    updateMoonDeckConfig(for: host) { $0.pinnedCert = nil; $0.paired = false }
+                    moonDeck.setExpectedCert(nil, forHost: addr)
+                    moonDeckPairing?.status = .failed(
+                        "MoonDeckBuddy was reinstalled or updated on the PC. Try pairing again — the new certificate will be trusted from now on.")
+                default:
                     moonDeckPairing?.status = .failed((error as? LocalizedError)?.errorDescription ?? "Pairing failed.")
                 }
                 rebuildFocus()
@@ -965,7 +993,17 @@ final class AppState {
         persistAddedHosts()
         rebuildHosts()
         if let host = hosts.first(where: { $0.manualAddress == ip }) {
-            selectHost(host.id)  // re-probe now that it's paired
+            // Re-probe now that it's paired — directly. This used to route
+            // through selectHost(host.id), whose `guard id != selectedHostID`
+            // swallowed the whole call in the NORMAL case: the host being paired
+            // is almost always the selected one, so the refresh this line
+            // existed for never ran, and the UI sat on the unpaired 401 state
+            // until something else happened to refresh.
+            if host.id == selectedHostID {
+                Task { await refreshSelectedHost() }
+            } else {
+                selectHost(host.id)
+            }
         }
     }
 
@@ -1028,7 +1066,17 @@ final class AppState {
     private func upgradeAddedHost(ip: String, uuid: String?, name: String?, mac: Data? = nil) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         var changed = false
-        if let uuid, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
+        // Refuse a learned uuid that another saved record already carries: the
+        // same PC saved at two addresses (LAN + Tailscale) reports one uuid from
+        // both, and adopting it on the second record gave two entries the same
+        // id — rebuildHosts then silently dropped one, leaving a computer that
+        // was invisible but still stored, so it couldn't be removed OR re-added.
+        // Keeping the synthetic `added:<ip>` id keeps the entry visible; the
+        // user sees the duplicate and can delete whichever they don't want.
+        let uuidTaken = uuid.map { u in
+            addedHosts.contains { $0.ip != ip && $0.uuid == u }
+        } ?? false
+        if let uuid, !uuidTaken, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
         if let name, !name.isEmpty, addedHosts[i].name == ip { addedHosts[i].name = name; changed = true }
         if let mac, addedHosts[i].mac != mac { addedHosts[i].mac = mac; changed = true }
         if changed {
@@ -1036,8 +1084,16 @@ final class AppState {
             let keepID = selectedHostID
             rebuildHosts()
             // The id may have changed (added:<ip> → uuid); re-point selection.
-            if let match = hosts.first(where: { $0.manualAddress == ip }) { selectedHostID = match.id }
-            else { selectedHostID = keepID }
+            // The fallback must be validated: restoring an id that rebuildHosts
+            // no longer produces left selectedHost nil — a blank home screen
+            // with every host healthy.
+            if let match = hosts.first(where: { $0.manualAddress == ip }) {
+                selectedHostID = match.id
+            } else if hosts.contains(where: { $0.id == keepID }) {
+                selectedHostID = keepID
+            } else {
+                selectedHostID = hosts.first?.id
+            }
         }
     }
 
@@ -1059,12 +1115,25 @@ final class AppState {
         guard session.phase == .idle else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        // Staleness identity for the guards below. The captured id is MUTABLE:
+        // for an added-by-IP host, upgradeAddedHost() (called mid-flight, below)
+        // swaps the synthetic `added:<ip>` id for the host's real uuid. Comparing
+        // the post-upgrade selection against the pre-upgrade capture by id alone
+        // therefore read the SAME host refreshing itself as "user switched
+        // hosts" — and threw away the first applist a newly-added host ever
+        // fetched. Same physical host = same id OR same manual address.
+        func selectionStillThisHost() -> Bool {
+            guard let now = selectedHost else { return false }
+            if now.id == host.id { return true }
+            if let ip = host.manualAddress, now.manualAddress == ip { return true }
+            return false
+        }
         do {
             let (info, address) = try await api.serverInfo(for: host)
             // The user can switch hosts (or a stream can start) during the
             // await; don't clobber the new selection's state with this stale
             // response — the same guard runs again after the applist await.
-            guard selectedHost?.id == host.id, session.phase == .idle else { return }
+            guard selectionStillThisHost(), session.phase == .idle else { return }
             serverInfo = info
             hostAddress = address
             hostError = nil
@@ -1084,7 +1153,7 @@ final class AppState {
                 upgradeAddedHost(ip: ip, uuid: info.hostUUID, name: info.hostname, mac: info.macAddress)
             }
             let fresh = try await api.appList(for: host, at: address)
-            guard selectedHost?.id == host.id, session.phase == .idle else { return }
+            guard selectionStillThisHost(), session.phase == .idle else { return }
             apps = displayApps(from: fresh)
         } catch let error as HostAPIError {
             serverInfo = nil
@@ -1410,6 +1479,10 @@ final class AppState {
         // immediately via HomeView.onAppear.
         onboardingStep = nil
         intro.reset()   // guarantee a fresh, un-played deal-in
+        // Same focus rule as restartSetup: the wizard's sections must leave the
+        // engine the moment the wizard leaves the screen.
+        rebuildFocus()
+        if focus.focusedItemID == nil { focus.focusFirst() }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.1))
             self?.intro.begin(protected: true)   // plays out fully — no accidental skip
@@ -1428,6 +1501,13 @@ final class AppState {
         screen = .home
         overlay = nil
         onboardingStep = .welcome
+        // Every other screen/overlay transition funnels through helpers that
+        // rebuild the focus tree; this one is reachable only FROM Settings, so
+        // skipping the rebuild left the engine holding the settings sections
+        // while the home screen rendered — the invariant "never hold focusable
+        // IDs no view renders" broken in both directions.
+        rebuildFocus()
+        if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
     /// Touch: focus a specific quality control on the wizard's quality step.

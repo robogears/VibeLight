@@ -69,15 +69,42 @@ enum AppRelocator {
         echo "=== $(date) relocate src=$SRC dest=$DEST ==="
         for i in $(seq 1 150); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.2; done
         mkdir -p "$(dirname "$DEST")"
-        [ -e "$DEST" ] && rm -rf "$DEST"
-        if ! ditto "$SRC" "$DEST"; then echo "copy failed"; open "$SRC"; rm -f "$0"; exit 1; fi
+
+        # Move the existing install ASIDE rather than deleting it. This used to
+        # `rm -rf "$DEST"` and only then copy: a ditto that failed midway (disk
+        # full, permissions, an interrupted relocate) left the user with NO app
+        # at the destination and only the source to fall back on — and when the
+        # source IS being removed, with nothing at all. The backup is deleted
+        # only after the new copy verifies and launches.
+        BAK=""
+        if [ -e "$DEST" ]; then
+          BAK="$DEST.vibelight-bak"
+          rm -rf "$BAK"
+          if ! mv "$DEST" "$BAK"; then echo "could not set aside existing install"; open "$SRC"; rm -f "$0"; exit 1; fi
+        fi
+
+        restore() {
+          echo "restoring previous install"
+          rm -rf "$DEST"
+          [ -n "$BAK" ] && mv "$BAK" "$DEST" && open "$DEST" && return 0
+          open "$SRC"
+        }
+
+        if ! ditto "$SRC" "$DEST"; then echo "copy failed"; restore; rm -f "$0"; exit 1; fi
         xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
-        codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+        # A moved bundle's seal is invalid until re-signed, and an unsigned
+        # bundle is "damaged" to Gatekeeper — so unlike the cosmetic xattr strip,
+        # a re-sign failure here is fatal and must roll back, not be swallowed.
+        if ! codesign --force --deep --sign - "$DEST"; then echo "re-sign failed"; restore; rm -f "$0"; exit 1; fi
+        if ! codesign --verify --deep "$DEST"; then echo "verify failed"; restore; rm -f "$0"; exit 1; fi
+
         if open "$DEST"; then
-          # Only delete the original once the moved copy actually launched.
+          # The new copy launched: NOW it is safe to drop the backup, and only
+          # then the original.
+          [ -n "$BAK" ] && rm -rf "$BAK"
           if [ "$REMOVE_SRC" = "1" ] && [ "$SRC" != "$DEST" ]; then rm -rf "$SRC"; fi
         else
-          open "$SRC"
+          restore
         fi
         rm -f "$0"
         """

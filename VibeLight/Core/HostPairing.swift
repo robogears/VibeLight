@@ -28,9 +28,18 @@ final class HostPairing: @unchecked Sendable {
     }
 
     /// Generates a fresh 4-digit PIN for the user to type on the host.
+    ///
+    /// Rejection sampling, not `% 10000`. 16 random bits cover 0…65535, which is
+    /// 6.5536 spans of 10000 — so a plain modulo made PINs 0000–5535 about 20%
+    /// more likely than 5536–9999. The PIN is what binds this pairing to this
+    /// user, so it should be flat. Discarding the short tail costs one extra
+    /// draw ~15% of the time and nothing else.
     static func generatePIN() -> String {
-        let n = Int(GameStreamCrypto.randomBytes(2).reduce(0) { ($0 << 8) | Int($1) }) % 10000
-        return String(format: "%04d", n)
+        let limit = 60000   // largest multiple of 10000 that fits in 16 bits
+        while true {
+            let n = GameStreamCrypto.randomBytes(2).reduce(0) { ($0 << 8) | Int($1) }
+            if n < limit { return String(format: "%04d", n % 10000) }
+        }
     }
 
     // MARK: - Handshake

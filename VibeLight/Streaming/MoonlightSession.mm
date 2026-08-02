@@ -560,7 +560,16 @@ static int startCodeLen(const uint8_t *p, int len) {
     CMBlockBufferRef bb = NULL;
     if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, avcc.length, kCFAllocatorDefault,
                                            NULL, 0, avcc.length, 0, &bb) != noErr) return DR_NEED_IDR;
-    CMBlockBufferReplaceDataBytes(avcc.bytes, bb, 0, avcc.length);
+    // Checked, like the create above it: on an allocation failure this leaves
+    // the block buffer UNFILLED, and enqueueing that garbage while returning
+    // DR_OK marks the frame consumed in the depacketizer. If the frame was the
+    // IDR, nothing ever re-requests a keyframe and the picture stays black until
+    // the user disconnects by hand (the Limelight.h contract this file follows
+    // everywhere else: return DR_NEED_IDR from every submit-failure path).
+    if (CMBlockBufferReplaceDataBytes(avcc.bytes, bb, 0, avcc.length) != noErr) {
+        CFRelease(bb);
+        return DR_NEED_IDR;
+    }
 
     CMSampleBufferRef sb = NULL;
     size_t sampleSize = avcc.length;

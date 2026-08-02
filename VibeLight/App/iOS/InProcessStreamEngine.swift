@@ -149,9 +149,16 @@ final class InProcessStreamEngine: StreamEngine {
             // Host already streaming → /resume (Sunshine rejects /launch while
             // any session is active; a DIFFERENT running app is reconciled
             // upstream in AppState before we're called).
+            //
+            // Use the model's own rule (`runningAppID`, which requires state ==
+            // .busy) rather than reading currentGameID alone. A host that is
+            // FREE can still report a non-zero currentgame — it's the last app
+            // it ran, and Sunshine doesn't always clear it — so `!= 0` on its
+            // own sent /resume to a host with nothing to resume, which fails
+            // instead of just launching the game.
             let extraParams = MoonlightSession.launchUrlQueryParameters()
             let sessionUrl: String?
-            if info.currentGameID != 0 {
+            if info.runningAppID != nil {
                 sessionUrl = try await api.resume(
                     app: app, on: host, at: address, settings: effective,
                     rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)

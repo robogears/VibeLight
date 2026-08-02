@@ -66,11 +66,14 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                 // does our own pin-mismatch rejection) — only genuine Swift
                 // cancellation should escape here.
                 if Task.isCancelled { throw CancellationError() }
-                // A non-task .cancelled means OUR delegate rejected the TLS
-                // handshake (pin mismatch) — the host is alive but presenting
-                // a different cert than we paired with. Remember it: "re-pair"
-                // is actionable, "offline" is a lie.
-                if error.code == .cancelled { sawPinRejection = true }
+                // Ask the delegate whether IT rejected the handshake on the
+                // pin, rather than reading that into URLError.cancelled — which
+                // also covers a session invalidated mid-request and other
+                // internal cancellations, and turned those into a spurious
+                // "certificate changed — pair it again".
+                if (session.delegate as? MTLSDelegate)?.consumePinRejection() == true {
+                    sawPinRejection = true
+                }
                 // .timedOut = the socket opened but no reply arrived. Anything
                 // else (cannotConnectToHost, cannotFindHost, notConnectedToInternet)
                 // is a genuine "nothing there", i.e. asleep/offline/wrong network.
@@ -482,6 +485,27 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private let pendingLock = NSLock()
         private var pending: [ObjectIdentifier: Pending] = [:]
 
+        /// Set when THIS delegate rejected a server cert for failing the pin.
+        ///
+        /// Callers used to infer a pin rejection from `URLError.cancelled`, but
+        /// that code covers several unrelated things — a session invalidated
+        /// mid-flight, an internally-cancelled task — so an ordinary hiccup got
+        /// reported to the user as "this computer's certificate changed, pair it
+        /// again". The delegate is the only thing that actually knows, so it
+        /// says so directly. Read-and-clear; guarded by the same lock.
+        private var pinRejected = false
+
+        func consumePinRejection() -> Bool {
+            pendingLock.lock(); defer { pendingLock.unlock() }
+            let value = pinRejected
+            pinRejected = false
+            return value
+        }
+
+        private func notePinRejection() {
+            pendingLock.lock(); pinRejected = true; pendingLock.unlock()
+        }
+
         func begin(task: URLSessionTask, cap: Int,
                    continuation: CheckedContinuation<(Data, URLResponse), any Error>) {
             pendingLock.lock()
@@ -613,6 +637,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                     completionHandler(.useCredential, URLCredential(trust: trust))
                 } else {
                     logger.error("TLS certificate for \(self.hostLabel, privacy: .public) does not match the pinned pairing certificate; rejecting connection.")
+                    notePinRejection()
                     completionHandler(.cancelAuthenticationChallenge, nil)
                 }
 
