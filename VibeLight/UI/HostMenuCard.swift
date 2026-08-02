@@ -222,12 +222,9 @@ private struct PairingPanel: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                     HStack(spacing: 12) {
-                        // Identity = POSITION, not the digit. `id: \.self` over
-                        // characters gives two "7"s in one PIN the same identity
-                        // — undefined-behaviour territory for ForEach (console
-                        // "ID occurs multiple times" warnings, and duplicate
-                        // digits can render collapsed or animate wrongly). A
-                        // 4-digit PIN repeats a digit about half the time.
+                        // Identity = position, not the digit: `id: \.self` over
+                        // characters gives two identical digits the same ID
+                        // (duplicate-ID warnings, collapsed/mis-animated tiles).
                         ForEach(Array(pairing.pin.enumerated()), id: \.offset) { _, digit in
                             Text(String(digit))
                                 .font(.system(size: 40, weight: .black, design: .rounded))

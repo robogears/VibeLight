@@ -96,7 +96,7 @@ enum AppRelocator {
         # bundle is "damaged" to Gatekeeper — so unlike the cosmetic xattr strip,
         # a re-sign failure here is fatal and must roll back, not be swallowed.
         if ! codesign --force --deep --sign - "$DEST"; then echo "re-sign failed"; restore; rm -f "$0"; exit 1; fi
-        if ! codesign --verify --deep "$DEST"; then echo "verify failed"; restore; rm -f "$0"; exit 1; fi
+        if ! codesign --verify --deep --strict "$DEST"; then echo "verify failed"; restore; rm -f "$0"; exit 1; fi
 
         # By here the copy is complete, re-signed and VERIFIED — it is a good
         # install. A failing `open` at this point is a LaunchServices hiccup (it
@@ -119,26 +119,14 @@ enum AppRelocator {
           if [ -n "$BAK" ]; then
             rm -rf "$DEST.previous" && mv "$BAK" "$DEST.previous" 2>/dev/null || rm -rf "$BAK"
           fi
-          open "$SRC" 2>/dev/null || open "$DEST" 2>/dev/null || true
+          open "$SRC" 2>/dev/null || open "$DEST" 2>/dev/null
         fi
         rm -f "$0"
         """
-        let fm = FileManager.default
-        let scriptURL = fm.temporaryDirectory.appendingPathComponent("vibelight-relocate-\(UUID().uuidString).sh")
-        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [
-            scriptURL.path,
+        try UpdateService.launchDetachedScript(script, prefix: "vibelight-relocate", args: [
             String(ProcessInfo.processInfo.processIdentifier),
             src.path, dest.path, removeSrc ? "1" : "0",
-        ]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
+        ])
     }
 }
 #else

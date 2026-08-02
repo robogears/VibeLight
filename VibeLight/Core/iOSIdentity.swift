@@ -97,7 +97,7 @@ enum IOSKeychainIdentity {
     static func classify(certStatus: OSStatus, keyStatus: OSStatus,
                          deviceUnlocked: @autoclosure () -> Bool = isDeviceUnlocked()) -> Lookup {
         if certStatus == errSecSuccess && keyStatus == errSecSuccess {
-            return .found(cert: Data(), key: Data())   // payload filled by the caller
+            return .found(cert: Data(), key: Data())   // placeholder — loadPEMs builds the real .found from the refs
         }
         // A non-success status that is NOT "not found" means the keychain could
         // not answer. Report the first such status.
@@ -107,21 +107,14 @@ enum IOSKeychainIdentity {
         // Both halves say not-found: genuinely nothing here. Safe to generate.
         if certStatus == errSecItemNotFound && keyStatus == errSecItemNotFound { return .absent }
 
-        // ONE half answered and the other said not-found. That is NOT proof the
-        // missing half doesn't exist. The keychain does not return
-        // errSecInteractionNotAllowed for an item whose protection class is
-        // currently unavailable — it OMITS it from the search, so the caller
-        // sees errSecItemNotFound. And these two items had mismatched
-        // accessibility before the fix in this same commit (the cert defaulted
-        // to WhenUnlocked, the key was AfterFirstUnlock), so on a locked device
-        // the cert vanishes from the search while the key answers — exactly this
-        // shape, and reading it as .absent would run deleteAll on a real,
-        // host-trusted key. That is the very bug this file was changed to fix.
-        //
-        // Only a device we can PROVE is unlocked lets a not-found be taken at
-        // face value; the probe below is what distinguishes a genuine orphan
-        // (a crash between creating the key and adding the cert) from an item
-        // that is merely out of reach right now.
+        // ONE half answered and the other said not-found — NOT proof of absence:
+        // the keychain OMITS items whose protection class is currently
+        // unavailable instead of returning errSecInteractionNotAllowed, so a
+        // real item can read as not-found (the pre-fix cert/key accessibility
+        // mismatch — see addCertificate — produced exactly this shape, and
+        // calling it .absent ran deleteAll on a live, host-trusted key). Only a
+        // device the probe below proves unlocked lets not-found mean a genuine
+        // orphan (a crash between creating the key and adding the cert).
         return deviceUnlocked() ? .absent : .unavailable(errSecInteractionNotAllowed)
     }
 
@@ -134,13 +127,12 @@ enum IOSKeychainIdentity {
     /// trustworthy. Cheap (two keychain calls) and only reached on the rare
     /// half-answered path.
     static func isDeviceUnlocked() -> Bool {
-        let probeTag = Data("com.vibelight.client.identity.unlockprobe".utf8)
         let base: [CFString: Any] = [kSecClass: kSecClassGenericPassword,
                                      kSecAttrAccount: "vibelight.unlock.probe",
                                      kSecAttrService: "com.vibelight.probe"]
         SecItemDelete(base as CFDictionary)
         var add = base
-        add[kSecValueData] = probeTag
+        add[kSecValueData] = Data("probe".utf8)
         add[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlocked
         guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return false }
         defer { SecItemDelete(base as CFDictionary) }
@@ -225,29 +217,6 @@ enum IOSKeychainIdentity {
             [kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock] as CFDictionary)
         // Only latch on success: a failed migration should be retried next launch.
         if status == errSecSuccess { UserDefaults.standard.set(true, forKey: flag) }
-    }
-
-    private static func copyCertificate() -> SecCertificate? {
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: certLabel,
-            kSecReturnRef: true,
-        ] as CFDictionary, &out)
-        guard status == errSecSuccess, let out else { return nil }
-        return (out as! SecCertificate)
-    }
-
-    private static func copyKey() -> SecKey? {
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
-            kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
-            kSecAttrKeyType: kSecAttrKeyTypeRSA,
-            kSecReturnRef: true,
-        ] as CFDictionary, &out)
-        guard status == errSecSuccess, let out else { return nil }
-        return (out as! SecKey)
     }
 
     private static func deleteAll() {

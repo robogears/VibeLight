@@ -14,12 +14,9 @@ final class GameStreamCryptoVerifyTests: XCTestCase {
 
     private var privateKey: SecKey!
     private var certPEM: Data!
-    /// A second, unrelated identity — the "impostor".
-    private var otherCertPEM: Data!
 
     override func setUpWithError() throws {
         (privateKey, certPEM) = try Self.makeIdentity(commonName: "GameStream Test Host")
-        (_, otherCertPEM) = try Self.makeIdentity(commonName: "Someone Else")
     }
 
     // MARK: - The property that matters
@@ -32,6 +29,7 @@ final class GameStreamCryptoVerifyTests: XCTestCase {
 
     func testASignatureFromADifferentKeyIsRejected() throws {
         // The impostor case: right message, valid signature, wrong signer.
+        let (_, otherCertPEM) = try Self.makeIdentity(commonName: "Someone Else")
         let message = Data("challenge-from-the-client".utf8)
         let signature = try XCTUnwrap(GameStreamCrypto.sign(message, privateKey: privateKey))
         XCTAssertFalse(GameStreamCrypto.verify(message, signature: signature,

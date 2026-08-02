@@ -196,7 +196,7 @@ actor ArtworkStore: ArtworkProviding {
     func pruneOrphanedCaches(liveHostIDs: Set<String>) {
         let root = Self.cacheRootURL()
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+            at: root, includingPropertiesForKeys: []) else { return }
         // Directory names are safeComponent(hostID), so compare in that space
         // rather than against the raw IDs.
         let live = Set(liveHostIDs.map(Self.safeComponent))
@@ -339,10 +339,6 @@ actor ArtworkStore: ArtworkProviding {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Reads pixel dimensions from the image header via ImageIO. NSImage is
-    /// deliberately avoided: it's AppKit and has no business on this actor's
-    /// cooperative-pool threads; CGImageSource parses the header without
-    /// decoding pixels.
     /// Widest/tallest box art we will accept, and the total-pixel ceiling.
     ///
     /// Real GameStream box art is 300×400-ish; SteamGridDB's largest grids are
@@ -361,6 +357,10 @@ actor ArtworkStore: ArtworkProviding {
         return size.width * size.height <= maxArtPixels
     }
 
+    /// Reads pixel dimensions from the image header via ImageIO. NSImage is
+    /// deliberately avoided: it's AppKit and has no business on this actor's
+    /// cooperative-pool threads; CGImageSource parses the header without
+    /// decoding pixels.
     private nonisolated static func pixelSize(of data: Data) -> (width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

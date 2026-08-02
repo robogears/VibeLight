@@ -419,12 +419,9 @@ final class StreamSessionManager: StreamEngine {
         address: String, rawAppName: String,
         settings: StreamSettings, generation gen: UInt64
     ) throws {
-        // Fail with something the user can act on. resolveStreamBinary returns
-        // its last candidate when nothing exists — a path inside the developer's
-        // home — so letting Process.run() report it produced
-        //   The file "Moonlight" doesn't exist.
-        // which names a binary VibeLight no longer uses, at a path that only
-        // exists on a dev machine, for a component that ships INSIDE the app.
+        // resolveStreamBinary returns its last candidate even when nothing
+        // exists (a dev-machine path), so Process.run()'s own error would name
+        // a meaningless path. Fail with something the user can act on instead.
         guard FileManager.default.isExecutableFile(atPath: moonlightBinary.path) else {
             throw StreamSessionError.helperMissing
         }
@@ -483,14 +480,9 @@ final class StreamSessionManager: StreamEngine {
         let outHandle = stdoutPipe.fileHandleForReading
         stdoutTask = Task { [weak self] in
             do {
-                // NOT `.lines`. AsyncLineSequence ends a line on the full
-                // Unicode set — LF, CR, NEL (U+0085), LS (U+2028), PS (U+2029) —
-                // but the helper writes exactly one status per `\n` and only
-                // neutralises the ASCII ones. Host-supplied app names flow into
-                // those lines, so an app named "Game<U+2028>@VL STARTED" would
-                // arrive here as TWO lines, the second a forged STARTED that
-                // makes us show a live stream that never began. Splitting on
-                // `\n` alone matches what the helper actually framed.
+                // NOT `.lines` — see NewlineDelimitedLines: AsyncLineSequence
+                // splits on Unicode separators (U+2028 etc.) that host-supplied
+                // app names can carry, letting a name forge a second @VL line.
                 for try await line in outHandle.bytes.newlineDelimitedLines {
                     guard let self, self.isCurrent(gen) else { return }
                     self.handleStatusLine(line)
@@ -848,9 +840,9 @@ struct NewlineDelimitedLines<Base: AsyncSequence>: AsyncSequence where Base.Elem
                     if overflowed { continue }   // drop the truncated line, resync
                     return Self.decode(buffer)
                 }
+                if overflowed { continue }   // draining a runaway line — don't re-buffer it
                 if buffer.count >= NewlineDelimitedLines.maxLineBytes {
-                    // Stop accumulating; keep draining until the next newline
-                    // so the following lines still parse.
+                    // Stop accumulating; drain until the next newline so later lines parse.
                     overflowed = true
                     buffer.removeAll(keepingCapacity: true)
                     continue

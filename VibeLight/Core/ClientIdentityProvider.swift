@@ -61,7 +61,6 @@ final class ClientIdentityProvider: @unchecked Sendable {
         do {
             return try importIdentity(from: try ensureP12())
         } catch {
-            try? FileManager.default.removeItem(at: p12CacheURL)
             return try importIdentity(from: try ensureP12(force: true))
         }
         #endif
@@ -123,17 +122,21 @@ final class ClientIdentityProvider: @unchecked Sendable {
         supportDirectory.appendingPathComponent("client-\(pemFingerprint.prefix(16)).p12")
     }
 
+    /// Below this a file cannot possibly hold a cert + key (a real RSA-2048
+    /// PKCS#12 is ~2.5 KB) — shared by the cache check and openssl verification.
+    private static let minPlausibleP12Bytes = 256
+
     private func ensureP12(force: Bool = false) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
         let p12URL = p12CacheURL
         // `fileExists` is not "is usable": a truncated bundle from an
-        // interrupted openssl run passes it. Require a plausible size too — a
-        // real RSA-2048 PKCS#12 is ~2.5 KB, and anything under 256 bytes cannot
-        // hold a cert and a key. The caller additionally forces a rebuild when
-        // an existing file fails to import.
+        // interrupted openssl run passes it. Require a plausible size too —
+        // anything under `minPlausibleP12Bytes` cannot hold a cert and a key.
+        // The caller additionally forces a rebuild when an existing file fails
+        // to import.
         if !force, let size = try? fm.attributesOfItem(atPath: p12URL.path)[.size] as? Int,
-           size >= 256 {
+           size >= Self.minPlausibleP12Bytes {
             return p12URL
         }
         try? fm.removeItem(at: p12URL)
@@ -190,7 +193,7 @@ final class ClientIdentityProvider: @unchecked Sendable {
         // empty/short husk on failure so the next attempt starts fresh instead
         // of finding a "cached" bundle that can never import.
         let written = (try? fm.attributesOfItem(atPath: p12URL.path)[.size]) as? Int ?? 0
-        guard process.terminationStatus == 0, written >= 256 else {
+        guard process.terminationStatus == 0, written >= Self.minPlausibleP12Bytes else {
             try? fm.removeItem(at: p12URL)
             let err = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw IdentityError.opensslFailed(err.trimmingCharacters(in: .whitespacesAndNewlines))

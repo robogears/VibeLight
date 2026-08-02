@@ -33,15 +33,10 @@ added="$(git diff --cached --unified=0 --no-color | grep -E '^\+[^+]' || true)"
 # literals this repo actually contains. Anything left is suspect.
 #
 # An EXPLICIT LIST, not subnet carve-outs. The first version excused two whole
-# /24s — 512 addresses — one of which is the default LAN of most consumer
-# routers, so the very people this hook protects were the ones whose real host
-# IP it waved through. (The comment justifying that carve-out also called the
-# subnet "RFC5737-style". It isn't: RFC 5737's documentation prefixes are
-# 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24. It is ordinary RFC1918
-# space, which is precisely why it must not be excused wholesale.)
-#
-# The placeholders in the tree are a small closed set, so list them and nothing
-# more. Adding a new one is a deliberate edit here, which is the point.
+# /24s — one of them the default LAN of most consumer routers — so the very
+# addresses this hook protects were the ones it waved through. The placeholders
+# in the tree are a small closed set, so list them and nothing more; adding one
+# is a deliberate edit here, which is the point.
 #
 #   192.168.1.10 / .20 / .255   docs/research/gamestream-api.md, the "enter a
 #                               valid IP" hint, the WoL broadcast comment

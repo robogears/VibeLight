@@ -267,30 +267,19 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     private static let responseByteCap = 16 * 1024 * 1024
 
     /// Byte-capped replacement for `session.data(for:)`, enforced *during* the
-    /// transfer rather than after it.
-    ///
-    /// Two earlier shapes both had a hole. `session.data(for:)` + a size check
-    /// afterwards buffers the entire body first, so a host that lies about (or
-    /// omits) Content-Length can make us hold hundreds of megabytes before we
-    /// object — the timeout bounds the duration, not the memory. Draining
-    /// `bytes(for:)` a byte at a time did abort mid-transfer, but was about an
-    /// order of magnitude slower on the box-art path, so it was reverted.
-    ///
-    /// This runs the request as a data task and accumulates the delegate's
-    /// chunks: the cap is checked on every chunk and on the declared length, and
-    /// the task is cancelled the moment it's exceeded. Chunk granularity means
-    /// no per-byte overhead, so it keeps the buffered path's speed while
-    /// actually bounding memory.
+    /// transfer: the delegate checks the cap on the declared Content-Length and
+    /// on every received chunk, cancelling the task the moment it's exceeded.
+    /// Both simpler shapes had a hole — `data(for:)` + a post-hoc size check
+    /// buffers a lying/omitted-length body whole (hundreds of MB in memory),
+    /// and a per-byte `bytes(for:)` drain was ~an order of magnitude slower on
+    /// the box-art path. Chunk granularity keeps the buffered read's speed
+    /// while actually bounding memory.
     private func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
         guard let delegate = session.delegate as? MTLSDelegate else {
-            // Defensive: every session this class builds carries an MTLSDelegate.
-            // If that ever stops being true, fall back to the buffered read with
-            // a post-hoc check rather than silently dropping the cap.
-            let (data, response) = try await session.data(for: request)
-            if data.count > Self.responseByteCap {
-                throw HostAPIError.malformedResponse("host response too large (\(data.count) bytes)")
-            }
-            return (data, response)
+            // Unreachable: session(for:) installs an MTLSDelegate on every
+            // session this class builds. Fail closed rather than fall back to
+            // a read that buffers the whole body before checking the cap.
+            throw HostAPIError.malformedResponse("internal error: session has no MTLSDelegate")
         }
         let holder = TaskHolder()
         return try await withTaskCancellationHandler {
@@ -306,12 +295,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                 // completes. `begin` precedes both so no callback can arrive
                 // before its continuation is registered.
                 task.resume()
-                holder.store(task, onAlreadyCancelled: {
-                    // Cancellation beat us to it: the task is running now, and
-                    // cancelling it will produce a completion. Belt and braces —
-                    // if it somehow doesn't, fail the continuation ourselves.
-                    delegate.failIfStillPending(task, with: CancellationError())
-                })
+                holder.store(task)
             }
         } onCancel: {
             // Swift-level cancellation (the caller's Task went away) must tear
@@ -328,15 +312,18 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private var task: URLSessionTask?
         private var cancelled = false
 
-        func store(_ task: URLSessionTask, onAlreadyCancelled: () -> Void = {}) {
+        func store(_ task: URLSessionTask) {
             lock.lock()
             let alreadyCancelled = cancelled
             self.task = task
             lock.unlock()
-            if alreadyCancelled {
-                task.cancel()
-                onAlreadyCancelled()
-            }
+            // Cancellation beat us to it. boundedData calls resume() before
+            // store, so this cancel lands on a running task and
+            // didCompleteWithError resolves the await — the same guarantee
+            // cancel() below relies on. The catch sites normalize the resulting
+            // URLError.cancelled into CancellationError via Task.isCancelled,
+            // which is true here by construction.
+            if alreadyCancelled { task.cancel() }
         }
 
         func cancel() {
@@ -498,35 +485,24 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             let cap: Int
             var buffer = Data()
             var response: URLResponse?
-            var continuation: CheckedContinuation<(Data, URLResponse), any Error>?
+            let continuation: CheckedContinuation<(Data, URLResponse), any Error>
         }
         private let pendingLock = NSLock()
         private var pending: [ObjectIdentifier: Pending] = [:]
 
-        /// How many server certs THIS delegate has rejected for failing the pin.
+        /// How many server certs THIS delegate has rejected for failing the pin
+        /// — the ground truth callers consult instead of inferring a rejection
+        /// from `URLError.cancelled` (which also covers ordinary internal
+        /// cancellations; see serverInfo).
         ///
-        /// Callers used to infer a pin rejection from `URLError.cancelled`, but
-        /// that code covers several unrelated things — a session invalidated
-        /// mid-flight, an internally-cancelled task — so an ordinary hiccup got
-        /// reported to the user as "this computer's certificate changed, pair it
-        /// again". The delegate is the only thing that actually knows.
-        ///
-        /// A monotonic COUNTER, deliberately, rather than a read-and-clear flag
-        /// or a sticky bool. One session is shared by every request to a host,
-        /// and box-art fetches run concurrently with /serverinfo: read-and-clear
-        /// let an artwork request swallow the rejection so serverinfo reported a
-        /// plain "unreachable", while sticky would keep blaming the certificate
-        /// long after the host simply went to sleep. Callers snapshot the count
-        /// before their request and compare after, so each one sees exactly the
-        /// rejections that happened DURING its own attempt.
-        ///
-        /// Not per-request: the counter is per-session, so a concurrent box-art
-        /// fetch rejecting on the pin during a /serverinfo attempt is still
-        /// attributed to that attempt. For a host presenting a mismatched cert
-        /// that is the same verdict either way; it is only wrong for a record
-        /// whose two addresses now point at different machines. Narrowing it
-        /// further needs per-task attribution from the challenge callback, which
-        /// URLSession does not give us directly.
+        /// A monotonic counter, not a read-and-clear or sticky flag: the session
+        /// is shared by concurrent requests (box art alongside /serverinfo), so
+        /// callers snapshot before and compare after to see exactly the
+        /// rejections during their own attempt. Per-session, not per-task —
+        /// URLSession's challenge callback gives no per-task attribution, so a
+        /// concurrent request's rejection is (acceptably) blamed on whichever
+        /// attempt is in flight; that is only wrong for a host record whose
+        /// addresses point at different machines.
         private var pinRejections = 0
 
         var pinRejectionCount: Int {
@@ -545,19 +521,12 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             pendingLock.unlock()
         }
 
-        /// Fails a task's continuation if it is still pending. Used only to
-        /// guarantee forward progress when a cancellation races task start-up;
-        /// a no-op once the normal delegate path has finished the task.
-        func failIfStillPending(_ task: URLSessionTask, with error: any Error) {
-            finish(task, .failure(error))
-        }
-
         /// Resumes the continuation at most once and forgets the task.
         private func finish(_ task: URLSessionTask, _ result: Result<(Data, URLResponse), any Error>) {
             pendingLock.lock()
             let entry = pending.removeValue(forKey: ObjectIdentifier(task))
             pendingLock.unlock()
-            entry?.continuation?.resume(with: result)
+            entry?.continuation.resume(with: result)
         }
 
         private func tooLarge(_ bytes: Int) -> any Error {
@@ -570,13 +539,11 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             let id = ObjectIdentifier(dataTask)
             pendingLock.lock()
             let cap = pending[id]?.cap
-            if pending[id] != nil {
-                pending[id]?.response = response
-                // New response headers mean a new body. URLSession follows
-                // redirects on this task, and a 3xx that carried a body would
-                // otherwise leave those bytes prepended to the real one.
-                pending[id]?.buffer.removeAll(keepingCapacity: true)
-            }
+            pending[id]?.response = response
+            // New response headers mean a new body. URLSession follows
+            // redirects on this task, and a 3xx that carried a body would
+            // otherwise leave those bytes prepended to the real one.
+            pending[id]?.buffer.removeAll(keepingCapacity: true)
             pendingLock.unlock()
 
             // An honestly-declared oversize is rejected before a single body
@@ -592,16 +559,18 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             let id = ObjectIdentifier(dataTask)
             pendingLock.lock()
-            guard var entry = pending[id] else { pendingLock.unlock(); return }
-            entry.buffer.append(data)
-            let overCap = entry.buffer.count > entry.cap
-            let total = entry.buffer.count
-            pending[id] = entry
+            guard let cap = pending[id]?.cap else { pendingLock.unlock(); return }
+            // Append through the subscript's modify accessor — in place, no
+            // CoW copy of the accumulated body on every chunk (copy-out /
+            // append / copy-back memcpy'd the whole buffer so far each time:
+            // O(n²) bytes over a transfer).
+            pending[id]?.buffer.append(data)
+            let total = pending[id]?.buffer.count ?? 0
             pendingLock.unlock()
 
             // A host that lied about (or omitted) Content-Length is caught here,
             // one chunk past the cap — not after the whole body is in memory.
-            if overCap {
+            if total > cap {
                 dataTask.cancel()
                 finish(dataTask, .failure(tooLarge(total)))
             }

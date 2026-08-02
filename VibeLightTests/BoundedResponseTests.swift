@@ -37,7 +37,7 @@ final class BoundedResponseTests: XCTestCase {
                    macAddress: nil, serverCertPEM: nil, apps: [])
     }
 
-    private func client() throws -> HostAPIClient {
+    private func client() -> HostAPIClient {
         let identity = IdentityStore.resolve(moonlightIdentity: nil)
         return HostAPIClient(identityProvider: ClientIdentityProvider(identity: identity))
     }
@@ -45,12 +45,12 @@ final class BoundedResponseTests: XCTestCase {
     // MARK: - The path must still work
 
     func testNormalResponseStillParses() async throws {
-        server.serve(.body(Data("""
+        server.serve(Data("""
             <?xml version="1.0"?>
             <root status_code="200"><hostname>Test PC</hostname>\
             <currentgame>0</currentgame><PairStatus>1</PairStatus>\
             <ServerCodecModeSupport>259</ServerCodecModeSupport></root>
-            """.utf8), declaredLength: true))
+            """.utf8), declaredLength: true)
 
         let (info, address) = try await client().serverInfo(for: host())
         XCTAssertEqual(info.hostname, "Test PC")
@@ -64,7 +64,7 @@ final class BoundedResponseTests: XCTestCase {
     func testOversizedBodyWithHonestContentLengthIsRejected() async throws {
         // 20 MB, declared. Should be refused from the response headers alone,
         // before any body byte is read.
-        server.serve(.body(Data(repeating: 0x41, count: 20 * 1024 * 1024), declaredLength: true))
+        server.serve(Data(repeating: 0x41, count: 20 * 1024 * 1024), declaredLength: true)
 
         do {
             _ = try await client().serverInfo(for: host())
@@ -84,7 +84,7 @@ final class BoundedResponseTests: XCTestCase {
     func testOversizedBodyWithNoContentLengthIsRejectedMidTransfer() async throws {
         // Chunked, no declared length — the case the old post-hoc check could
         // not catch, because the body was fully buffered before it ran.
-        server.serve(.body(Data(repeating: 0x42, count: 20 * 1024 * 1024), declaredLength: false))
+        server.serve(Data(repeating: 0x42, count: 20 * 1024 * 1024), declaredLength: false)
 
         do {
             _ = try await client().serverInfo(for: host())
@@ -104,8 +104,8 @@ final class BoundedResponseTests: XCTestCase {
         // 8 MB of XML: comfortably under 16 MB, and proves the cap does not fire
         // early on a large-but-legal body (the box-art path can be chunky).
         let filler = String(repeating: "x", count: 8 * 1024 * 1024)
-        server.serve(.body(Data("<root status_code=\"200\"><hostname>Big</hostname><pad>\(filler)</pad></root>".utf8),
-                           declaredLength: true))
+        server.serve(Data("<root status_code=\"200\"><hostname>Big</hostname><pad>\(filler)</pad></root>".utf8),
+                     declaredLength: true)
 
         let (info, _) = try await client().serverInfo(for: host())
         XCTAssertEqual(info.hostname, "Big")
@@ -118,10 +118,6 @@ final class BoundedResponseTests: XCTestCase {
 /// delegate rather than a URLProtocol stub (a stub would bypass the very
 /// callbacks under test).
 final class LocalTLSServer {
-    enum Payload {
-        case body(Data, declaredLength: Bool)
-    }
-
     static let python3: String? = {
         for path in ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
         where FileManager.default.isExecutableFile(atPath: path) { return path }
@@ -166,8 +162,8 @@ final class LocalTLSServer {
     /// Waits briefly for the count to land: when the client aborts mid-transfer
     /// the client's error surfaces immediately, while the server only notices
     /// on its next blocked write — so reading straight away races it.
-    func bytesServed(timeout: TimeInterval = 5) -> Int? {
-        let deadline = Date().addingTimeInterval(timeout)
+    func bytesServed() -> Int? {
+        let deadline = Date().addingTimeInterval(5)
         repeat {
             if let text = try? String(contentsOf: sentURL, encoding: .utf8),
                let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -185,10 +181,9 @@ final class LocalTLSServer {
         return String(decoding: d, as: UTF8.self)
     }
 
-    func serve(_ payload: Payload) {
-        guard case .body(let data, let declared) = payload else { return }
+    func serve(_ data: Data, declaredLength: Bool) {
         try? data.write(to: payloadURL)
-        start(declaredLength: declared)
+        start(declaredLength: declaredLength)
         waitUntilListening()
     }
 

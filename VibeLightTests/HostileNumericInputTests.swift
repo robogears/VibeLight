@@ -28,8 +28,6 @@ final class HostileNumericInputTests: XCTestCase {
             let info = serverInfo("<ServerCodecModeSupport>\(hostile)</ServerCodecModeSupport>")
             XCTAssertEqual(info.serverCodecModeSupport, 0,
                            "\(hostile) is not a valid codec mask — expected the 'no modes' fallback")
-            // The conversion the engine performs must now be total.
-            XCTAssertEqual(Int32(clamping: info.serverCodecModeSupport), 0)
         }
     }
 
@@ -64,6 +62,12 @@ final class HostileNumericInputTests: XCTestCase {
         for hostile: Int64 in [.max, .max / 2, 9_000_000_000_000_000_000] {
             let cap = UpdateService.byteCap(forAdvertisedSize: hostile)
             XCTAssertEqual(cap, 2_000_000_000, "a hostile size must land on the 2 GB ceiling")
+        }
+        // The negative direction used to trap at Int64(inflated) too; it must
+        // land on the floor, not crash.
+        for hostile: Int64 in [.min, .min + 1, .min / 2] {
+            XCTAssertEqual(UpdateService.byteCap(forAdvertisedSize: hostile), 500_000_000,
+                           "a hostile negative size must land on the 500 MB floor")
         }
     }
 

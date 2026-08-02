@@ -203,20 +203,14 @@ final class MoonDeckBuddyClient: Sendable {
         do {
             (data, response) = try await session.data(for: req)
         } catch {
-            // Our own PinnedTrust rejecting a mismatched cert surfaces as
-            // URLError.cancelled. Folding that into "offline" was a lie with a
-            // dead-end attached: the PC is right there, the message says it
-            // isn't, and since the old pin still gated every later attempt
-            // (including re-pairing), Restart PC could never work again after a
-            // Buddy reinstall. Name the real condition so the caller can offer
-            // the real remedy.
-            // NOTE: this still INFERS the pin rejection from URLError.cancelled,
-            // which is the same guess HostAPIClient stopped making — PinnedTrust
-            // has no channel to report through. It is acceptable only because
-            // every caller checks Task.isCancelled first (AppState), so the one
-            // other producer of .cancelled cannot reach the destructive
-            // "forget the pin" branch. Give PinnedTrust a counter like
-            // MTLSDelegate's if this grows another caller.
+            // PinnedTrust rejecting a mismatched cert surfaces as
+            // URLError.cancelled — report .certChanged so callers can offer
+            // re-pairing instead of a false "offline". This INFERS the pin
+            // rejection (PinnedTrust has no reporting channel); safe only
+            // because every caller (AppState) checks Task.isCancelled before
+            // acting on the error, so a real cancellation can't reach the
+            // destructive forget-the-pin branch. Give PinnedTrust a counter
+            // like MTLSDelegate's if callers grow.
             if let urlError = error as? URLError, urlError.code == .cancelled {
                 throw MDError.certChanged
             }

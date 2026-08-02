@@ -103,13 +103,10 @@ final class UpdateService {
         default: break
         }
         // The launch check is the natural moment to clear last session's
-        // leftovers — but never while THIS session holds a staged bundle
-        // (readyToInstall) or is about to produce one.
+        // leftovers — never while THIS session holds (or is about to produce) a
+        // staged bundle. Detached: recursively deleting a ~100 MB staged bundle
+        // on the main actor would freeze the launcher.
         if silent, stagedApp == nil {
-            // Detached: the leftover it exists to clear is a ~100 MB staged
-            // bundle (thousands of files), and a recursive delete of that on the
-            // main actor is exactly the freeze this same commit moved
-            // unpackAndValidate off-main to avoid.
             Task.detached(priority: .utility) { Self.sweepStaleArtifacts() }
         }
         phase = .checking
@@ -137,14 +134,12 @@ final class UpdateService {
     /// (SEV-11)
     ///
     /// The arithmetic has to survive that hostile size too: the value is just a
-    /// number in the release JSON, and `Int64(Double(Int64.max) * 1.1)` traps —
-    /// crashing the app from the exact field this cap exists to distrust. Widen
-    /// in Double, check the product lands inside Int64, then let min() cap it.
+    /// number in the release JSON, and `Int64(Double(hostile) * 1.1)` traps once
+    /// the product leaves Int64's range — in either direction (the first guard
+    /// here checked only the upper bound, so Int64.min still trapped). Clamp in
+    /// Double BEFORE converting; the clamped value always fits.
     nonisolated static func byteCap(forAdvertisedSize expectedSize: Int64) -> Int64 {
-        let inflated = Double(expectedSize) * 1.1
-        let headroom: Int64 = (inflated.isFinite && inflated < Double(Int64.max))
-            ? Int64(inflated) : Int64.max
-        return min(max(headroom, 500_000_000), 2_000_000_000)
+        Int64(min(max(Double(expectedSize) * 1.1, 500_000_000), 2_000_000_000))
     }
 
     /// "Update Now": download + verify the new build, then stop at
@@ -175,9 +170,8 @@ final class UpdateService {
             // freezing the whole launcher (spinning beachball, dead controller
             // input) for the duration. The helpers are nonisolated pure
             // functions over their arguments, so the hop is safe.
-            let version = release.version
             stagedApp = try await Task.detached(priority: .userInitiated) {
-                try Self.unpackAndValidate(zipURL: zip, expectedVersion: version)
+                try Self.unpackAndValidate(zipURL: zip, expectedVersion: release.version)
             }.value
             phase = .readyToInstall
         } catch {
@@ -449,7 +443,7 @@ final class UpdateService {
         # Re-sign is MANDATORY (moving + de-quarantining invalidated the seal).
         # If it — or the verify — fails, roll back; the backup still exists.
         if ! codesign --force --deep --sign - "$DEST"; then echo "re-sign failed"; rollback; fi
-        if ! codesign --verify --strict "$DEST"; then echo "verify failed"; rollback; fi
+        if ! codesign --verify --deep --strict "$DEST"; then echo "verify failed"; rollback; fi
         # Verified good: only now is it safe to drop the backup + source.
         [ -n "$BAK" ] && rm -rf "$BAK"
         rm -rf "$NEW_APP"
@@ -457,23 +451,28 @@ final class UpdateService {
         open "$DEST" || { sleep 1; open "$DEST"; }
         cleanup
         """
+        try Self.launchDetachedScript(script, prefix: "vibelight-relaunch", args: [
+            String(ProcessInfo.processInfo.processIdentifier), newApp.path, dest.path,
+        ])
+    }
+
+    /// Writes a detached `/bin/bash` script to temp (0755) and launches it with
+    /// `args`, stdio nulled. Shared by the updater relauncher and AppRelocator —
+    /// both hand off a self-deleting script that must outlive our process
+    /// (orphaned to launchd when we quit; the script's own `trap` keeps it alive).
+    nonisolated static func launchDetachedScript(_ script: String, prefix: String, args: [String]) throws {
         let fm = FileManager.default
-        let scriptURL = fm.temporaryDirectory.appendingPathComponent("vibelight-relaunch-\(UUID().uuidString).sh")
+        let scriptURL = fm.temporaryDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString).sh")
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [
-            scriptURL.path,
-            String(ProcessInfo.processInfo.processIdentifier),
-            newApp.path,
-            dest.path,
-        ]
+        process.arguments = [scriptURL.path] + args
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try process.run()  // orphaned to launchd when we quit; trap keeps it alive
+        try process.run()
     }
 
     // MARK: - Helpers
@@ -549,7 +548,6 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         self.byteCap = UpdateService.byteCap(forAdvertisedSize: expectedSize)
         self.onProgress = onProgress
     }
-
 
     static func download(_ url: URL, expectedSize: Int64,
                          onProgress: @escaping @MainActor (Double) -> Void) async throws -> URL {

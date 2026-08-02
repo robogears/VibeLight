@@ -654,9 +654,7 @@ final class AppState {
         // removable) again. upgradeAddedHost refuses to create new collisions.
         var seenUUIDs = Set<String>()
         for i in hosts.indices {
-            if let uuid = hosts[i].uuid {
-                if seenUUIDs.contains(uuid) { hosts[i].uuid = nil } else { seenUUIDs.insert(uuid) }
-            }
+            if let uuid = hosts[i].uuid, !seenUUIDs.insert(uuid).inserted { hosts[i].uuid = nil }
         }
         return hosts
     }
@@ -1073,10 +1071,10 @@ final class AppState {
         // was invisible but still stored, so it couldn't be removed OR re-added.
         // Keeping the synthetic `added:<ip>` id keeps the entry visible; the
         // user sees the duplicate and can delete whichever they don't want.
-        let uuidTaken = uuid.map { u in
-            addedHosts.contains { $0.ip != ip && $0.uuid == u }
-        } ?? false
-        if let uuid, !uuidTaken, addedHosts[i].uuid != uuid { addedHosts[i].uuid = uuid; changed = true }
+        if let uuid, addedHosts[i].uuid != uuid,
+           !addedHosts.contains(where: { $0.ip != ip && $0.uuid == uuid }) {
+            addedHosts[i].uuid = uuid; changed = true
+        }
         if let name, !name.isEmpty, addedHosts[i].name == ip { addedHosts[i].name = name; changed = true }
         if let mac, addedHosts[i].mac != mac { addedHosts[i].mac = mac; changed = true }
         if changed {
@@ -1388,6 +1386,13 @@ final class AppState {
     /// all gray turns Select into a lottery).
     private func presentOverlay(_ newOverlay: Overlay) {
         overlay = newOverlay
+        refreshFocus()
+    }
+
+    /// Rebuild the focus tree and guarantee something is focused — the shared
+    /// tail of screen/overlay transitions. Sites that force a specific target
+    /// use `focusFirst()` / `focusFirstSettingRow()` directly instead.
+    private func refreshFocus() {
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
@@ -1481,8 +1486,7 @@ final class AppState {
         intro.reset()   // guarantee a fresh, un-played deal-in
         // Same focus rule as restartSetup: the wizard's sections must leave the
         // engine the moment the wizard leaves the screen.
-        rebuildFocus()
-        if focus.focusedItemID == nil { focus.focusFirst() }
+        refreshFocus()
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.1))
             self?.intro.begin(protected: true)   // plays out fully — no accidental skip
@@ -1506,8 +1510,7 @@ final class AppState {
         // skipping the rebuild left the engine holding the settings sections
         // while the home screen rendered — the invariant "never hold focusable
         // IDs no view renders" broken in both directions.
-        rebuildFocus()
-        if focus.focusedItemID == nil { focus.focusFirst() }
+        refreshFocus()
     }
 
     /// Touch: focus a specific quality control on the wizard's quality step.
