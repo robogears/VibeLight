@@ -1096,13 +1096,47 @@ final class AppState {
 
     /// Filters host pseudo-apps out of the library (permission placeholder,
     /// terminate entries, unnamed apps) and hides Moonlight-hidden ones.
+    /// Order: most recently LAUNCHED first (what you play lives at the front of
+    /// the shelf), then the host's own idx/name order for everything untouched.
     private func displayApps(from raw: [StreamApp]) -> [StreamApp] {
-        raw.filter { app in
+        let hostID = selectedHostID ?? ""
+        return raw.filter { app in
             guard app.id != 114514, !app.isHidden else { return false }
             let name = app.name.lowercased()
             return !name.isEmpty && name != "terminate" && !name.hasPrefix("terminate ")
         }
-        .sorted { ($0.idx ?? Int.max, $0.name) < ($1.idx ?? Int.max, $1.name) }
+        .sorted { a, b in
+            let la = recentLaunches["\(hostID)|\(appKey(a))"] ?? .distantPast
+            let lb = recentLaunches["\(hostID)|\(appKey(b))"] ?? .distantPast
+            if la != lb { return la > lb }
+            return (a.idx ?? Int.max, a.name) < (b.idx ?? Int.max, b.name)
+        }
+    }
+
+    // MARK: - Launch recency (shelf order)
+
+    private static let recentLaunchesKey = "vibelight.recentLaunches"
+
+    /// Last-launch time per "hostID|appKey". Host-scoped so numeric app ids
+    /// can't collide across computers. Loaded once; persisted on every record.
+    @ObservationIgnored private lazy var recentLaunches: [String: Date] = {
+        guard let data = UserDefaults.standard.data(forKey: Self.recentLaunchesKey),
+              let raw = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        return raw.mapValues { Date(timeIntervalSince1970: $0) }
+    }()
+
+    private func recordLaunch(of app: StreamApp, on host: StreamHost) {
+        recentLaunches["\(host.id)|\(appKey(app))"] = Date()
+        // Cap the history so a decade of launches can't grow the blob unbounded:
+        // keep the newest 128 entries (a shelf shows far fewer than that).
+        if recentLaunches.count > 128 {
+            let keep = recentLaunches.sorted { $0.value > $1.value }.prefix(128)
+            recentLaunches = Dictionary(uniqueKeysWithValues: Array(keep))
+        }
+        let raw = recentLaunches.mapValues { $0.timeIntervalSince1970 }
+        if let data = try? JSONEncoder().encode(raw) {
+            UserDefaults.standard.set(data, forKey: Self.recentLaunchesKey)
+        }
     }
 
     func selectHost(_ id: String) {
@@ -1816,6 +1850,10 @@ final class AppState {
     /// (the user already chose to close what's running).
     private func forceLaunch(_ app: StreamApp) {
         guard let host = selectedHost else { return }
+        // Recency for the shelf order: recorded NOW, applied on the next shelf
+        // rebuild (post-stream refresh) — resorting the array mid-launch would
+        // yank the tile out from under the animation the user is looking at.
+        recordLaunch(of: app, on: host)
         presentOverlay(.sessionHUD)
         Task {
             await session.launch(app: app, on: host, settings: settings)

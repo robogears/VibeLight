@@ -280,10 +280,26 @@ private struct AppShelf: View {
                     }
                 }
                 .padding(.leading, 72)
-                // Leave room on the right for the always-present preset rail so
-                // tiles don't scroll under it.
-                .padding(.trailing, 260)
+                // End-rest padding: at max scroll the LAST tile must park fully
+                // left of where the edge dissolve begins (see the mask below),
+                // or it would sit half-faded with nowhere further to scroll.
+                .padding(.trailing, 380)
                 .padding(.vertical, 40) // headroom for the focus scale/glow
+            }
+            // Edge dissolve: the preset rail overlays the trailing ~292pt
+            // (252 rail + 40 margin), and a long shelf scrolls straight through
+            // that column. Masking the VIEWPORT dissolves tiles to nothing just
+            // before the rail so the two never visually collide — the tvOS shelf
+            // treatment, and cheaper than a blur at the iPad's 120Hz. Fixed pt
+            // widths (not fractions) so the fade hugs the rail on every screen.
+            .mask {
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 90)
+                    Color.clear.frame(width: 285)
+                }
             }
             .onChange(of: state.focus.focusedItemID) { _, new in
                 guard let new, new.hasPrefix("app:") else { return }
