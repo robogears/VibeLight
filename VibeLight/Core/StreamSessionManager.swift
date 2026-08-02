@@ -474,7 +474,15 @@ final class StreamSessionManager: StreamEngine {
         let outHandle = stdoutPipe.fileHandleForReading
         stdoutTask = Task { [weak self] in
             do {
-                for try await line in outHandle.bytes.lines {
+                // NOT `.lines`. AsyncLineSequence ends a line on the full
+                // Unicode set — LF, CR, NEL (U+0085), LS (U+2028), PS (U+2029) —
+                // but the helper writes exactly one status per `\n` and only
+                // neutralises the ASCII ones. Host-supplied app names flow into
+                // those lines, so an app named "Game<U+2028>@VL STARTED" would
+                // arrive here as TWO lines, the second a forged STARTED that
+                // makes us show a live stream that never began. Splitting on
+                // `\n` alone matches what the helper actually framed.
+                for try await line in outHandle.bytes.newlineDelimitedLines {
                     guard let self, self.isCurrent(gen) else { return }
                     self.handleStatusLine(line)
                 }
@@ -484,9 +492,11 @@ final class StreamSessionManager: StreamEngine {
         let handle = stderrPipe.fileHandleForReading
         stderrTask = Task { [weak self] in
             // Async bytes end at EOF when the child dies; reader failures are
-            // non-fatal because stderr is diagnostics only.
+            // non-fatal because stderr is diagnostics only. Same `\n`-only
+            // framing as stdout: a stderr line becomes the log path we show the
+            // user, so it should not be splittable by host-supplied text either.
             do {
-                for try await line in handle.bytes.lines {
+                for try await line in handle.bytes.newlineDelimitedLines {
                     guard let self, self.isCurrent(gen) else { return }
                     self.recordStderr(line: line)
                 }
@@ -775,4 +785,71 @@ final class StreamSessionManager: StreamEngine {
     }
 
     private func isCurrent(_ gen: UInt64) -> Bool { gen == generation }
+}
+
+// MARK: - Framing the helper's status protocol
+
+/// A byte stream split on `\n` and nothing else.
+///
+/// Foundation's `AsyncLineSequence` ends a line on every separator Unicode
+/// recognises — LF, CR, CRLF, NEL (U+0085), LS (U+2028), PS (U+2029). That is
+/// correct for reading human text and wrong for reading a framed protocol: the
+/// helper frames one `@VL` status per `\n`, and the *contents* of those lines
+/// include host-supplied app names. Any richer notion of "line" on this side
+/// lets a name carrying U+2028 split one status into two, handing the second
+/// half to `handleStatusLine` as if the helper had sent it.
+///
+/// Splitting on exactly the byte the writer used removes the mismatch. A
+/// trailing CR is trimmed so a CRLF writer still parses, and an over-long line
+/// is discarded rather than buffered forever — a helper that never emits `\n`
+/// must not be able to grow this buffer without bound.
+struct NewlineDelimitedLines<Base: AsyncSequence>: AsyncSequence where Base.Element == UInt8 {
+    typealias Element = String
+
+    /// Generous next to real status lines (tens of bytes) and to the longest
+    /// plausible app name, but small enough that a runaway writer is harmless.
+    static var maxLineBytes: Int { 64 * 1024 }
+
+    let base: Base
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var base: Base.AsyncIterator
+        var buffer: [UInt8] = []
+        var overflowed = false
+
+        mutating func next() async throws -> String? {
+            while let byte = try await base.next() {
+                guard byte != UInt8(ascii: "\n") else {
+                    defer { buffer.removeAll(keepingCapacity: true); overflowed = false }
+                    if overflowed { continue }   // drop the truncated line, resync
+                    return Self.decode(buffer)
+                }
+                if buffer.count >= NewlineDelimitedLines.maxLineBytes {
+                    // Stop accumulating; keep draining until the next newline
+                    // so the following lines still parse.
+                    overflowed = true
+                    buffer.removeAll(keepingCapacity: true)
+                    continue
+                }
+                buffer.append(byte)
+            }
+            // EOF with a partial trailing line (no final newline).
+            guard !buffer.isEmpty, !overflowed else { return nil }
+            defer { buffer.removeAll(keepingCapacity: true) }
+            return Self.decode(buffer)
+        }
+
+        private static func decode(_ bytes: [UInt8]) -> String {
+            var bytes = bytes
+            if bytes.last == UInt8(ascii: "\r") { bytes.removeLast() }
+            return String(decoding: bytes, as: UTF8.self)
+        }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator { AsyncIterator(base: base.makeAsyncIterator()) }
+}
+
+extension AsyncSequence where Element == UInt8 {
+    /// See `NewlineDelimitedLines` — deliberately not `.lines`.
+    var newlineDelimitedLines: NewlineDelimitedLines<Self> { NewlineDelimitedLines(base: self) }
 }
