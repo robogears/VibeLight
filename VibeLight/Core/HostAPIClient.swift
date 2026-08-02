@@ -261,19 +261,70 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     /// and box art well under a megabyte; 16 MB is far above any legit response.
     private static let responseByteCap = 16 * 1024 * 1024
 
-    /// Byte-capped replacement for `session.data(for:)`. Reads in ONE buffered
-    /// pass (fast — a per-byte `bytes(for:)` drain was ~an order of magnitude
-    /// slower on the box-art path) and rejects an over-cap response two ways: an
-    /// honestly-oversized declared Content-Length, and the delivered byte count.
-    /// The per-request timeout bounds a lying/omitted-length trickle, so we trade
-    /// the streaming mid-transfer abort for the buffered-read speed — a fine deal
-    /// when XML replies are a few KB and box art is well under a MB (cap 16 MB).
+    /// Byte-capped replacement for `session.data(for:)`, enforced *during* the
+    /// transfer rather than after it.
+    ///
+    /// Two earlier shapes both had a hole. `session.data(for:)` + a size check
+    /// afterwards buffers the entire body first, so a host that lies about (or
+    /// omits) Content-Length can make us hold hundreds of megabytes before we
+    /// object — the timeout bounds the duration, not the memory. Draining
+    /// `bytes(for:)` a byte at a time did abort mid-transfer, but was about an
+    /// order of magnitude slower on the box-art path, so it was reverted.
+    ///
+    /// This runs the request as a data task and accumulates the delegate's
+    /// chunks: the cap is checked on every chunk and on the declared length, and
+    /// the task is cancelled the moment it's exceeded. Chunk granularity means
+    /// no per-byte overhead, so it keeps the buffered path's speed while
+    /// actually bounding memory.
     private func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
-        let (data, response) = try await session.data(for: request)
-        if response.expectedContentLength > Int64(Self.responseByteCap) || data.count > Self.responseByteCap {
-            throw HostAPIError.malformedResponse("host response too large (\(data.count) bytes)")
+        guard let delegate = session.delegate as? MTLSDelegate else {
+            // Defensive: every session this class builds carries an MTLSDelegate.
+            // If that ever stops being true, fall back to the buffered read with
+            // a post-hoc check rather than silently dropping the cap.
+            let (data, response) = try await session.data(for: request)
+            if data.count > Self.responseByteCap {
+                throw HostAPIError.malformedResponse("host response too large (\(data.count) bytes)")
+            }
+            return (data, response)
         }
-        return (data, response)
+        let holder = TaskHolder()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: request)
+                holder.store(task)
+                delegate.begin(task: task, cap: Self.responseByteCap, continuation: continuation)
+                task.resume()
+            }
+        } onCancel: {
+            // Swift-level cancellation (the caller's Task went away) must tear
+            // the transfer down too, not merely stop awaiting it — otherwise the
+            // download keeps running and keeps filling the buffer.
+            holder.cancel()
+        }
+    }
+
+    /// Bridges Swift task cancellation to a URLSessionTask that may not exist
+    /// yet at the moment cancellation arrives.
+    private final class TaskHolder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: URLSessionTask?
+        private var cancelled = false
+
+        func store(_ task: URLSessionTask) {
+            lock.lock()
+            let alreadyCancelled = cancelled
+            self.task = task
+            lock.unlock()
+            if alreadyCancelled { task.cancel() }
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            let task = self.task
+            lock.unlock()
+            task?.cancel()
+        }
     }
 
     /// Cheap, read-only endpoints (serverinfo, applist, appasset, cancel) answer
@@ -399,7 +450,8 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     /// URLSession invokes these callbacks nonisolated on its own queue, so
     /// everything held here is immutable; SecIdentity is a thread-safe CF
     /// type, hence @unchecked rather than checked Sendable (NSObject parent).
-    private final class MTLSDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private final class MTLSDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate,
+                                      @unchecked Sendable {
         private let identity: SecIdentity
         private let pinnedCertDER: Data?
         private let hostLabel: String
@@ -414,6 +466,91 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             self.pinnedCertDER = pinnedCertDER
             self.hostLabel = hostLabel
             self.logger = logger
+        }
+
+        // MARK: - Byte-capped body accumulation
+
+        /// One in-flight request. `begin` is called from the caller's thread
+        /// while the delegate callbacks arrive on the session's serial queue, so
+        /// this registry gets its own lock rather than relying on that queue.
+        private struct Pending {
+            let cap: Int
+            var buffer = Data()
+            var response: URLResponse?
+            var continuation: CheckedContinuation<(Data, URLResponse), any Error>?
+        }
+        private let pendingLock = NSLock()
+        private var pending: [ObjectIdentifier: Pending] = [:]
+
+        func begin(task: URLSessionTask, cap: Int,
+                   continuation: CheckedContinuation<(Data, URLResponse), any Error>) {
+            pendingLock.lock()
+            pending[ObjectIdentifier(task)] = Pending(cap: cap, continuation: continuation)
+            pendingLock.unlock()
+        }
+
+        /// Resumes the continuation at most once and forgets the task.
+        private func finish(_ task: URLSessionTask, _ result: Result<(Data, URLResponse), any Error>) {
+            pendingLock.lock()
+            let entry = pending.removeValue(forKey: ObjectIdentifier(task))
+            pendingLock.unlock()
+            entry?.continuation?.resume(with: result)
+        }
+
+        private func tooLarge(_ bytes: Int) -> any Error {
+            HostAPIError.malformedResponse("host response too large (\(bytes) bytes)")
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                        didReceive response: URLResponse,
+                        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
+            let id = ObjectIdentifier(dataTask)
+            pendingLock.lock()
+            let cap = pending[id]?.cap
+            if pending[id] != nil { pending[id]?.response = response }
+            pendingLock.unlock()
+
+            // An honestly-declared oversize is rejected before a single body
+            // byte is read.
+            if let cap, response.expectedContentLength > Int64(cap) {
+                completionHandler(.cancel)
+                finish(dataTask, .failure(tooLarge(Int(clamping: response.expectedContentLength))))
+                return
+            }
+            completionHandler(.allow)
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            let id = ObjectIdentifier(dataTask)
+            pendingLock.lock()
+            guard var entry = pending[id] else { pendingLock.unlock(); return }
+            entry.buffer.append(data)
+            let overCap = entry.buffer.count > entry.cap
+            let total = entry.buffer.count
+            pending[id] = entry
+            pendingLock.unlock()
+
+            // A host that lied about (or omitted) Content-Length is caught here,
+            // one chunk past the cap — not after the whole body is in memory.
+            if overCap {
+                dataTask.cancel()
+                finish(dataTask, .failure(tooLarge(total)))
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+            pendingLock.lock()
+            let entry = pending[ObjectIdentifier(task)]
+            pendingLock.unlock()
+            guard let entry else { return }   // already finished (cap breach)
+
+            if let error {
+                finish(task, .failure(error))
+            } else if let response = entry.response ?? task.response {
+                finish(task, .success((entry.buffer, response)))
+            } else {
+                finish(task, .failure(HostAPIError.malformedResponse("no response from host")))
+            }
         }
 
         // Both the session-level and task-level variants funnel to one

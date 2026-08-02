@@ -185,6 +185,26 @@ actor ArtworkStore: ArtworkProviding {
             at: Self.cacheRootURL().appendingPathComponent(Self.safeComponent(hostUUID), isDirectory: true))
     }
 
+    /// Deletes cache directories belonging to hosts that no longer exist.
+    ///
+    /// `invalidate(hostUUID:)` handles the host you explicitly remove, but a
+    /// directory is also orphaned whenever a host's identity changes underneath
+    /// us — a re-pair, a Sunshine reinstall, an added-by-IP host being upgraded
+    /// to its real UUID. Nothing else in this class ever deletes, so without a
+    /// sweep the cache only grows. Called once at startup with the live host
+    /// set; cheap (one shallow directory listing).
+    func pruneOrphanedCaches(liveHostIDs: Set<String>) {
+        let root = Self.cacheRootURL()
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+        // Directory names are safeComponent(hostID), so compare in that space
+        // rather than against the raw IDs.
+        let live = Set(liveHostIDs.map(Self.safeComponent))
+        for entry in entries where !live.contains(entry.lastPathComponent) {
+            try? FileManager.default.removeItem(at: entry)
+        }
+    }
+
     // MARK: - Alias table
 
     /// Maps known utility/launcher apps to designed tiles, matched on the
@@ -240,7 +260,13 @@ actor ArtworkStore: ArtworkProviding {
 
         // Undecodable bytes (truncated transfer, host bug): treat as a
         // transient failure rather than caching garbage the UI can't render.
-        guard Self.pixelSize(of: data) != nil else {
+        // The DIMENSIONS matter as much as the byte count: a 16 MB byte cap
+        // says nothing about decoded size, and PNG/JPEG both compress a flat
+        // image to almost nothing — a 30000×30000 tile is a few hundred KB on
+        // the wire and ~3.6 GB once decoded. Worse, it would be cached, so
+        // every subsequent launch re-decodes it. Read the header (no decode)
+        // and refuse anything that couldn't be real box art.
+        guard let size = Self.pixelSize(of: data), Self.isPlausibleArtSize(size) else {
             recentFailures[key] = Date()
             return fallback(for: fileURL)
         }
@@ -317,6 +343,24 @@ actor ArtworkStore: ArtworkProviding {
     /// deliberately avoided: it's AppKit and has no business on this actor's
     /// cooperative-pool threads; CGImageSource parses the header without
     /// decoding pixels.
+    /// Widest/tallest box art we will accept, and the total-pixel ceiling.
+    ///
+    /// Real GameStream box art is 300×400-ish; SteamGridDB's largest grids are
+    /// 1920×2880. 8192 per side with a 40-megapixel budget leaves enormous room
+    /// for legitimate art (a 5000×8000 poster passes) while refusing the
+    /// decompression bombs — at 4 bytes per pixel, 40 MP is ~160 MB decoded,
+    /// which is the most a single tile may ever cost us.
+    nonisolated static let maxArtDimension = 8192
+    nonisolated static let maxArtPixels = 40_000_000
+
+    nonisolated static func isPlausibleArtSize(_ size: (width: Int, height: Int)) -> Bool {
+        guard size.width > 0, size.height > 0,
+              size.width <= maxArtDimension, size.height <= maxArtDimension
+        else { return false }
+        // Multiplied only after both sides are bounded, so this cannot overflow.
+        return size.width * size.height <= maxArtPixels
+    }
+
     private nonisolated static func pixelSize(of data: Data) -> (width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

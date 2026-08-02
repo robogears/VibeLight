@@ -325,6 +325,13 @@ final class AppState {
         importedHosts = []   // hosts come from VibeLight's own store only
         addedHosts = Self.loadAddedHosts()
         rebuildHosts()
+        // Sweep box-art directories belonging to hosts that are gone. Removal
+        // is handled at the point of removal, but a host's identity can also
+        // change underneath us (re-pair, Sunshine reinstall, an added-by-IP
+        // entry learning its real UUID), and each of those orphans a directory
+        // nothing would ever delete.
+        let liveHostIDs = Set(hosts.map(\.id))
+        Task { [artwork] in await artwork.pruneOrphanedCaches(liveHostIDs: liveHostIDs) }
         // Reopen on the last-used PC if it's still around (by id, or by its
         // stable address if the id's representation changed); else the first host.
         let savedHostID = UserDefaults.standard.string(forKey: Self.selectedHostKey)
@@ -999,6 +1006,12 @@ final class AppState {
     func removeAddedHost(_ host: StreamHost) {
         addedHosts.removeAll { $0.ip == host.manualAddress || "added:\($0.ip)" == host.id }
         persistAddedHosts()
+        // Forget the box art too. ArtworkStore.invalidate has always been the
+        // "host went away" hook, but nothing called it — so removing a computer
+        // left its whole cache directory behind forever, and a host whose UUID
+        // later changed (re-pair, reinstall) orphaned another one. Cache growth
+        // here is unbounded by design otherwise: nothing else deletes.
+        Task { [artwork, id = host.id] in await artwork.invalidate(hostUUID: id) }
         let wasSelected = selectedHostID == host.id
         rebuildHosts()
         if wasSelected {
