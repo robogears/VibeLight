@@ -32,7 +32,7 @@ enum IdentityStore {
             }
             return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
 
-        case .unavailable(let status):
+        case .unavailable:
             // The keychain could not answer — classically a launch before the
             // first unlock after a reboot. The identity is probably sitting
             // right there. Generating would call deleteAll() and destroy it,
@@ -41,7 +41,6 @@ enum IdentityStore {
             // relaunch and nothing else: ClientIdentityProvider.secIdentity()
             // re-queries the keychain lazily and caches only on success, so the
             // app recovers on its own once the device is unlocked.
-            keychainUnavailableStatus = status
             return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
         }
         #else
@@ -74,13 +73,6 @@ enum IdentityStore {
     /// Moonlight was found) — used to tailor the empty state. Set once during
     /// resolve() on the main actor at startup.
     nonisolated(unsafe) static var usingGeneratedIdentity = false
-
-    /// Non-nil when the keychain refused to hand back the identity at startup
-    /// (iOS only). The identity was deliberately NOT regenerated — see
-    /// `resolve()`. Callers can use this to explain the state instead of
-    /// showing a bare "client identity unavailable", and a relaunch after the
-    /// device is unlocked clears it.
-    nonisolated(unsafe) static var keychainUnavailableStatus: OSStatus?
 
     // MARK: - Storage
 
