@@ -29,27 +29,52 @@ warn()  { echo "  ⚠ $1"; }
 added="$(git diff --cached --unified=0 --no-color | grep -E '^\+[^+]' || true)"
 [ -z "$added" ] && exit 0
 
-# Drop lines the author explicitly marked, then drop the documentation
-# placeholders this project has standardized on. Anything left is suspect.
+# Drop lines the author explicitly marked, then drop the exact placeholder
+# literals this repo actually contains. Anything left is suspect.
 #
-#   192.168.1.*      the RFC5737-style example subnet used throughout docs
-#   10.0.0.0 / *.0.0 bare network addresses (a range, not a host)
-#   100.64.0.*       the CGNAT range's own base + the test fixtures' fake host
+# An EXPLICIT LIST, not subnet carve-outs. The first version excused two whole
+# /24s — 512 addresses — one of which is the default LAN of most consumer
+# routers, so the very people this hook protects were the ones whose real host
+# IP it waved through. (The comment justifying that carve-out also called the
+# subnet "RFC5737-style". It isn't: RFC 5737's documentation prefixes are
+# 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24. It is ordinary RFC1918
+# space, which is precisely why it must not be excused wholesale.)
+#
+# The placeholders in the tree are a small closed set, so list them and nothing
+# more. Adding a new one is a deliberate edit here, which is the point.
+#
+#   192.168.1.10 / .20 / .255   docs/research/gamestream-api.md, the "enter a
+#                               valid IP" hint, the WoL broadcast comment
+#   100.64.0.2                  fake host in HostSelectionPersistenceTests
+#   100.64.0.0, 10.0.0.0, …     bare NETWORK addresses (a range, not a host);
+#                               anchored so they can't swallow a real host's
+#                               leading octets — that hole let a genuine
+#                               private IP commit cleanly
 #   aa:bb:cc:dd:ee:ff / 00:00:00:00:00:00   the doc + "unknown" MACs
-#   x.x.x.255 / .0   broadcast + network suffixes in explanatory prose
 #
-# Every rule is anchored at BOTH ends. Without a trailing boundary the bare
-# network-address rule below matched the leading three octets of any host in
-# that /24 — a real private host IP was rewritten to `<placeholder>.N` and
-# sailed past the RFC1918 check below, which is the entire thing this hook
-# exists to stop. (Writing that example out literally trips this very guard;
-# that is the escape hatch working, not a bug.)
-candidates="$(grep -v 'topology-ok' <<<"$added" \
-  | sed -E 's/(^|[^0-9.])192\.168\.1\.[0-9]{1,3}([^0-9.]|$)/\1<placeholder>\2/g;
-            s/(^|[^0-9.])100\.64\.0\.[0-9]{1,3}([^0-9.]|$)/\1<placeholder>\2/g;
-            s/(^|[^0-9.])(10|172\.16|192\.168)\.0\.0([^0-9.]|$)/\1<placeholder>\3/g;
-            s/(^|[^0-9.])([0-9]{1,3}\.){3}(255|0)([^0-9.]|$)/\1<placeholder>\4/g;
-            s/(aa:bb:cc:dd:ee:ff|00:00:00:00:00:00)/<placeholder>/gI')"
+# Anything else on those subnets is treated as real and blocked; use the
+# `topology-ok` line marker for a one-off.
+marked="$(grep -v 'topology-ok' <<<"$added" || true)"
+candidates="$(sed -E 's/(^|[^0-9.])192\.168\.1\.(10|20|255)([^0-9.]|$)/\1<placeholder>\3/g;
+                      s/(^|[^0-9.])100\.64\.0\.2([^0-9.]|$)/\1<placeholder>\2/g;
+                      s/(^|[^0-9.])(10\.0\.0\.0|172\.16\.0\.0|192\.168\.0\.0|100\.64\.0\.0)([^0-9.]|$)/\1<placeholder>\3/g;
+                      s/(aa:bb:cc:dd:ee:ff|00:00:00:00:00:00)/<placeholder>/gI' <<<"$marked")"
+sed_status=$?
+
+# FAIL CLOSED. A sanitizer that errors produces an EMPTY candidate set, and an
+# empty set matches nothing — so every check below silently passes and the hook
+# waves through the very thing it exists to catch. That is exactly what a stray
+# backreference to a group that no longer existed did here: one typo turned the
+# guard off completely while still exiting 0. Never trust silence from the
+# sanitizer; prove it ran and produced output.
+if [ "$sed_status" -ne 0 ] || { [ -n "$marked" ] && [ -z "$candidates" ]; }; then
+  echo "  ✖ pre-commit: the topology sanitizer failed to run (sed exit $sed_status)."
+  echo ""
+  echo "pre-commit: refusing to commit — the guard could not check this diff, and"
+  echo "  a guard that cannot check must not approve. Fix scripts/git-hooks/pre-commit"
+  echo "  (or bypass deliberately with --no-verify if you have checked by hand)."
+  exit 1
+fi
 
 # RFC1918 LAN ranges.
 if grep -Eq '(^|[^0-9.])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})' <<<"$candidates"; then
