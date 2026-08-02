@@ -8,7 +8,7 @@ import Foundation
 /// expire (so unicast dies), VPNs carry only unicast (so broadcast dies), and
 /// WoL relays listen on odd ports. Targets:
 /// - addresses: global broadcast, each up interface's IPv4 subnet broadcast
-///   (e.g. 192.168.50.255), and every known host address — hostnames resolved
+///   (e.g. 192.168.1.255), and every known host address — hostnames resolved
 ///   via DNS, numeric literals fast-pathed
 /// - ports: 9 (standard WoL), 47009 (Moonlight Internet Hosting Tool relay),
 ///   and the GFE/Sunshine service ports offset by the host's HTTP base port

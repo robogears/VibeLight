@@ -30,7 +30,11 @@ Local.xcconfig
 # Secrets / local
 *.pem
 *.key
-CLAUDE.local.md
+# Real network topology (IPs, hostnames, WoL MACs) lives ONLY in a *.local.md
+# file. Glob, not a literal name: every agent tool wants its own filename
+# (CLAUDE.local.md, Codex.local.md, AGENTS.local.md …) and a literal list would
+# silently miss the next one. This repo is public — see scripts/git-hooks/pre-commit.
+*.local.md
 
 # iOS streaming deps (rebuild with scripts/ios/build-deps.sh)
 ThirdParty/ios/
