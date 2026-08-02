@@ -55,8 +55,10 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         // a stuck service, not a sleeping PC. Tracked separately so the UI can say
         // so instead of lying with "asleep" (and offering a pointless wake).
         var sawTimeout = false
+        let delegate = session.delegate as? MTLSDelegate
         for candidate in candidates {
             let data: Data
+            let pinRejectionsBefore = delegate?.pinRejectionCount ?? 0
             do {
                 let request = try makeRequest(
                     address: candidate.host, port: candidate.port - httpsPortOffset, path: "/serverinfo")
@@ -71,7 +73,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                 // also covers a session invalidated mid-request and other
                 // internal cancellations, and turned those into a spurious
                 // "certificate changed — pair it again".
-                if (session.delegate as? MTLSDelegate)?.consumePinRejection() == true {
+                if let delegate, delegate.pinRejectionCount > pinRejectionsBefore {
                     sawPinRejection = true
                 }
                 // .timedOut = the socket opened but no reply arrived. Anything
@@ -485,25 +487,31 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         private let pendingLock = NSLock()
         private var pending: [ObjectIdentifier: Pending] = [:]
 
-        /// Set when THIS delegate rejected a server cert for failing the pin.
+        /// How many server certs THIS delegate has rejected for failing the pin.
         ///
         /// Callers used to infer a pin rejection from `URLError.cancelled`, but
         /// that code covers several unrelated things — a session invalidated
         /// mid-flight, an internally-cancelled task — so an ordinary hiccup got
         /// reported to the user as "this computer's certificate changed, pair it
-        /// again". The delegate is the only thing that actually knows, so it
-        /// says so directly. Read-and-clear; guarded by the same lock.
-        private var pinRejected = false
+        /// again". The delegate is the only thing that actually knows.
+        ///
+        /// A monotonic COUNTER, deliberately, rather than a read-and-clear flag
+        /// or a sticky bool. One session is shared by every request to a host,
+        /// and box-art fetches run concurrently with /serverinfo: read-and-clear
+        /// let an artwork request swallow the rejection so serverinfo reported a
+        /// plain "unreachable", while sticky would keep blaming the certificate
+        /// long after the host simply went to sleep. Callers snapshot the count
+        /// before their request and compare after, so each one sees exactly the
+        /// rejections its own attempt caused.
+        private var pinRejections = 0
 
-        func consumePinRejection() -> Bool {
+        var pinRejectionCount: Int {
             pendingLock.lock(); defer { pendingLock.unlock() }
-            let value = pinRejected
-            pinRejected = false
-            return value
+            return pinRejections
         }
 
         private func notePinRejection() {
-            pendingLock.lock(); pinRejected = true; pendingLock.unlock()
+            pendingLock.lock(); pinRejections += 1; pendingLock.unlock()
         }
 
         func begin(task: URLSessionTask, cap: Int,
@@ -531,7 +539,13 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
             let id = ObjectIdentifier(dataTask)
             pendingLock.lock()
             let cap = pending[id]?.cap
-            if pending[id] != nil { pending[id]?.response = response }
+            if pending[id] != nil {
+                pending[id]?.response = response
+                // New response headers mean a new body. URLSession follows
+                // redirects on this task, and a 3xx that carried a body would
+                // otherwise leave those bytes prepended to the real one.
+                pending[id]?.buffer.removeAll(keepingCapacity: true)
+            }
             pendingLock.unlock()
 
             // An honestly-declared oversize is rejected before a single body
