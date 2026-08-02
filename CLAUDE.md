@@ -38,7 +38,7 @@ moonlight-common-c C core for iOS.
   "Info [0-9].plist" -delete`.
 
 Swift 6 strict concurrency is ON everywhere. macOS 15+ / iOS 17+ targets. No
-sandbox on macOS (we exec the stream helper and read Moonlight's plist).
+sandbox on macOS (we exec the stream helper).
 
 **macOS streaming helper**: our moonlight-qt fork at
 `~/Documents/vibelight-moonlight-helper` (chromeless, headless `@VL` protocol,
@@ -79,14 +79,18 @@ iOS `iOSPlatformChrome`).
 
 **Host protocol** (Vibepollo host = Sunshine → Apollo → Vibepollo fork):
 - v1 talks ONLY to the GameStream API: HTTPS 47984 with mTLS. The client identity
-  is either **reused** from `~/Library/Preferences/com.moonlight-stream.Moonlight.plist`
-  (zero-setup for existing Moonlight users, no re-pairing) OR, for a user without
-  Moonlight, **VibeLight's own generated identity** — and VibeLight can **pair a
-  new host in-app** (add-by-IP → PIN, the full 5-phase NvPairingManager handshake:
-  `Core/IdentityStore`, `HostPairing`, `GameStreamCrypto`, `UI/HostMenuCard`). So
-  Moonlight is no longer required to add a computer. On iOS the identity is
+  is **always VibeLight's own** — generated on first launch, stored under
+  Application Support, mirrored into VibeLight's own helper domain. v0.2.0 cut
+  the old "reuse Moonlight's plist" path entirely: it put VibeLight's pairings
+  inside another app's file, so installing/resetting/removing Moonlight changed
+  them underneath us. **Do not reintroduce it.** Hosts are added and paired
+  in-app (add-by-IP → PIN, the full 5-phase NvPairingManager handshake:
+  `Core/IdentityStore`, `HostPairing`, `GameStreamCrypto`, `UI/HostMenuCard`);
+  Moonlight need not be installed at all. On iOS the identity is
   born-in-keychain (`Core/iOSIdentity.swift`, `SecKeyCreateRandomKey` +
-  swift-certificates; needs the `keychain-access-groups` entitlement).
+  swift-certificates; needs the `keychain-access-groups` entitlement) — and a
+  keychain that merely *fails to answer* must never be read as "no identity",
+  because regeneration deletes the real one and unpairs every host.
 - The Vibepollo REST API on 47990 (Basic/Bearer auth) is a v2 optional tier.
 - Errors arrive as XML `<root status_code="401">` over a *successful* TLS
   handshake — always parse the attribute, never expect TLS-level rejection.

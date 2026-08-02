@@ -42,12 +42,12 @@ VibeLight is the shell Moonlight never had.
   focus engine (43 unit tests) makes every shelf, tile, setting, and dialog fully
   navigable by controller — the thing macOS SwiftUI can't do on its own. The
   keyboard feeds the exact same engine.
-- **Pair in-app, or import from Moonlight.** Add a computer by IP and pair it
-  right inside VibeLight (enter the PIN on your host's web UI) — the full
-  GameStream handshake, no Moonlight required. Already use Moonlight? VibeLight
-  also imports your existing setup — hosts, apps, the client certificate/key, and
-  your stream defaults — straight from `com.moonlight-stream.Moonlight.plist`, so
-  **there's nothing to re-pair or reconfigure.**
+- **Pair in-app — Moonlight not required.** Add a computer by IP and pair it
+  right inside VibeLight (enter the PIN on your host's web UI): the full
+  GameStream handshake, done here. VibeLight keeps **its own** client identity
+  and its own computer list, so installing, resetting, or deleting Moonlight
+  can't change VibeLight underneath you. Moonlight doesn't need to be installed
+  at all.
 - **Chromeless embedded streaming engine.** Streaming runs through
   `StreamHelper.app`, a headless fork of moonlight-qt bundled inside VibeLight. It
   shows no Moonlight UI, keeps no Dock icon (`LSUIElement` agent), never pops a
@@ -104,9 +104,9 @@ VibeLight is the shell Moonlight never had.
   **iPad / iPhone on iOS 17+** (built from source or sideloaded — see Install).
 - A **Sunshine-family host** on your gaming PC: **Sunshine**, **Apollo**, or
   **Vibepollo**. VibeLight talks the GameStream API these expose.
-- **[Moonlight](https://moonlight-stream.org) is optional.** VibeLight can pair
-  your PC itself (add-by-IP → PIN). If you already run Moonlight, VibeLight
-  imports its hosts + pairing for zero setup — but it's no longer required.
+- **[Moonlight](https://moonlight-stream.org) is not needed.** VibeLight pairs
+  your PC itself (add-by-IP → PIN) and keeps its own identity and computer list.
+  Running Moonlight alongside it is fine; the two share nothing.
 
 ---
 

@@ -66,11 +66,10 @@ final class StreamSessionManager: StreamEngine {
         self.moonlightBinary = moonlightBinary
     }
 
-    /// Prefers our chromeless headless helper over stock Moonlight, checking
-    /// (1) the copy embedded in VibeLight.app (production), then (2) the local
-    /// fork dev build, then (3) stock Moonlight as a last resort. The helper
-    /// speaks the `@VL` status protocol and hides its own UI; stock Moonlight
-    /// still works but shows chrome and can hang on dialogs.
+    /// Locates VibeLight's chromeless streaming helper: (1) the copy embedded in
+    /// VibeLight.app (production), else (2) the local fork dev build. There is
+    /// no third fallback — see below. The helper speaks the `@VL` status
+    /// protocol and shows no UI of its own.
     static func resolveStreamBinary() -> URL {
         let fm = FileManager.default
         let candidates = [
@@ -420,6 +419,16 @@ final class StreamSessionManager: StreamEngine {
         address: String, rawAppName: String,
         settings: StreamSettings, generation gen: UInt64
     ) throws {
+        // Fail with something the user can act on. resolveStreamBinary returns
+        // its last candidate when nothing exists — a path inside the developer's
+        // home — so letting Process.run() report it produced
+        //   The file "Moonlight" doesn't exist.
+        // which names a binary VibeLight no longer uses, at a path that only
+        // exists on a dev machine, for a component that ships INSIDE the app.
+        guard FileManager.default.isExecutableFile(atPath: moonlightBinary.path) else {
+            throw StreamSessionError.helperMissing
+        }
+
         let process = Process()
         process.executableURL = moonlightBinary
         process.arguments = Self.streamArguments(address: address, rawAppName: rawAppName, settings: settings)
@@ -785,6 +794,21 @@ final class StreamSessionManager: StreamEngine {
     }
 
     private func isCurrent(_ gen: UInt64) -> Bool { gen == generation }
+}
+
+/// Failures that belong to VibeLight's own streaming plumbing, phrased for the
+/// person looking at them rather than for a stack trace.
+enum StreamSessionError: LocalizedError {
+    /// The bundled streaming helper isn't where it should be.
+    case helperMissing
+
+    var errorDescription: String? {
+        switch self {
+        case .helperMissing:
+            "VibeLight's streaming helper is missing from the app. Reinstall VibeLight — "
+                + "download the latest release and drag it to Applications again."
+        }
+    }
 }
 
 // MARK: - Framing the helper's status protocol
