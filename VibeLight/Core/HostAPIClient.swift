@@ -37,6 +37,25 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         let session: URLSession
     }
 
+    /// Whether the cached session for this host is currently pinned. Test seam
+    /// for the stale-snapshot guard in `session(for:)` — the security property
+    /// is "a pinned session is never replaced by an unpinned one", and that is
+    /// only checkable from outside if the pin state is observable.
+    func isSessionPinned(hostID: String) -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = sessions[hostID] else { return nil }
+        return entry.pinnedCertDER != nil
+    }
+
+    /// Builds (or returns) this host's session without issuing a request — the
+    /// other half of the test seam above, so the pin-durability property can be
+    /// exercised without a live host.
+    @discardableResult
+    func warmSession(for host: StreamHost) throws -> URLSession {
+        try session(for: host)
+    }
+
     init(identityProvider: ClientIdentityProvider, defaults: UserDefaults = .standard) {
         self.identityProvider = identityProvider
         self.defaults = defaults
@@ -415,8 +434,21 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
 
         lock.lock()
         defer { lock.unlock() }
-        if let entry = sessions[host.id], entry.pinnedCertDER == pinnedDER {
-            return entry.session
+        if let entry = sessions[host.id] {
+            if entry.pinnedCertDER == pinnedDER { return entry.session }
+            // A pin is only ever ADDED (savePairedHost) or REPLACED by a
+            // re-pair — nothing in the app ever clears one back to nil. So an
+            // incoming nil against a stored pin cannot mean "this host was
+            // unpaired"; it means the CALLER is holding a StreamHost value it
+            // captured before pairing finished (e.g. a refresh that started
+            // pre-pair and resumed after its first await). Rebuilding from that
+            // stale copy would swap the pinned session for a trust-on-first-use
+            // one and store it — silently unpinning the host until a current
+            // copy happens to come through. Keep the pinned session instead.
+            if pinnedDER == nil {
+                logger.notice("ignoring a stale unpinned snapshot of \(host.name, privacy: .public); keeping the pinned session")
+                return entry.session
+            }
         }
         sessions[host.id]?.session.invalidateAndCancel()
 
