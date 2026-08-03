@@ -190,17 +190,24 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
 
     func windowWillMiniaturize(_ notification: Notification) {
         exitImmersiveChrome()  // a hidden Dock would hide the minimized window
+        // Stop holding the display awake for a window nobody can see. The
+        // assertion was taken once at window creation and never released for the
+        // process lifetime, so a launcher minimised in the background kept the
+        // Mac's display from sleeping indefinitely.
+        preventSleep(false)
     }
 
     func windowDidDeminiaturize(_ notification: Notification) {
         syncChromeToWindowState()   // immersive only if it's back to filling the screen
         NSApp.activate()
+        preventSleep(true)          // visible again — hold the display awake
     }
 
     /// Release the mouse-moved monitor when the window goes away, mirroring
     /// ControllerManager.stop(). Benign today (window close terminates the app)
     /// but prevents a dangling monitor if the window is ever recreated. (SEV-09)
     func windowWillClose(_ notification: Notification) {
+        preventSleep(false)   // never outlive the window it was taken for
         if let buttonRevealMonitor {
             NSEvent.removeMonitor(buttonRevealMonitor)
             self.buttonRevealMonitor = nil

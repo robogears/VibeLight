@@ -88,7 +88,11 @@ private struct WelcomeStep: View {
         .onAppear {
             guard !started else { return }   // onAppear can fire twice — run once
             started = true
-            state.beginOnboardingSession()   // snapshot preset state for step-skipping
+            // Idempotent per session: Welcome is re-entered by pressing Back
+            // from Theme, and re-snapshotting there flipped onboardingHadPresets
+            // AFTER the wizard seeded Preset 1 — silently skipping the Quality
+            // and Presets steps on the way forward.
+            state.beginOnboardingSessionIfNeeded()
             Task { @MainActor in
                 // Let the background breathe on its own first — a beat of calm
                 // before anything appears.

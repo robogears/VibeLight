@@ -23,8 +23,8 @@ IOS_MIN=17.0
 # To bump a dependency: change the tag, then regenerate the SHA with
 #   git ls-remote https://github.com/<repo> refs/tags/<tag>^{}
 # (the `^{}` peels the annotated tag to the commit `git rev-parse HEAD` reports).
-MBEDTLS_TAG=v3.6.2
-MBEDTLS_SHA=107ea89daaefb9867ea9121002fbbdf926780e98
+MBEDTLS_TAG=v3.6.7
+MBEDTLS_SHA=068ff080b369adfac81509f9b57b2afabaf82dc5
 OPUS_TAG=v1.5.2
 OPUS_SHA=ddbe48383984d56acd9e1ab6a090c54ca6b735a6
 
@@ -44,7 +44,9 @@ if [[ -d "$FORK/src" ]]; then
   cp "$FORK/nanors/deps/obl/"*.h "$FORK/nanors/deps/obl/"*.c "$CORE/nanors/deps/obl/"
   rsync -a --delete "$FORK/nanors/deps/simde/" "$CORE/nanors/deps/simde/"
   cp "$FORK/LICENSE" "$CORE/" 2>/dev/null || true
+  vendored=1
 else
+  vendored=0
   echo "⚠️  fork not at $FORK — MoonlightCore source not vendored (edit \$FORK)"
 fi
 
@@ -103,5 +105,17 @@ build_lib opus https://github.com/xiph/opus "$OPUS_TAG" "$OPUS_SHA" \
   -- libopus.a include opus
 
 echo ""
+if [[ "${vendored:-0}" != "1" ]]; then
+  # Do NOT print "done" and exit 0 after silently skipping the vendoring step:
+  # $FORK is a path that exists only on the maintainer's machine, so on any
+  # other clone this script used to look like it succeeded and the iOS build
+  # then failed much later with a confusing missing-header error.
+  echo "=== INCOMPLETE ==="
+  echo "moonlight-common-c was NOT vendored — the iOS build WILL fail."
+  echo "Set \$FORK (line 36) to your moonlight-common-c checkout, or clone"
+  echo "robogears/vibelight-moonlight-helper next to this repo, then re-run."
+  ls -d "$OUT"/*.xcframework 2>/dev/null || true
+  exit 1
+fi
 echo "=== done ==="
 ls -d "$OUT"/*.xcframework

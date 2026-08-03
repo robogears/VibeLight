@@ -16,12 +16,40 @@ struct RootView: View {
         if case .streaming = state.session.phase { return true }
         return false
     }
+
     #endif
+
+    /// True when an opaque stream is covering the launcher on THIS screen — so
+    /// the launcher (and its animated background) can stop drawing. False when a
+    /// TV owns the video, because then the iPad still shows the companion panel.
+    ///
+    /// Always false on macOS: there the stream is a separate helper window and
+    /// the window coordinator hides the launcher outright, so nothing is
+    /// rendering underneath in the first place.
+    private var isStreamCovering: Bool {
+        #if os(iOS)
+        guard isStreamingPhase else { return false }
+        let onTV = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
+        return !onTV
+        #else
+        return false
+        #endif
+    }
 
     var body: some View {
         GeometryReader { geo in
             let scale = Self.uiScale(for: geo.size)
+            // On iOS the stream is an OVERLAY, so the launcher underneath is
+            // never unmounted — and seven of the ten background themes
+            // (including the default) animate every display frame. That kept a
+            // full-screen animation compositing at 120 Hz behind an opaque
+            // stream, burning GPU and battery for pixels nobody can see.
+            // Rendering an empty placeholder instead keeps the view identity
+            // (so the 0.45 s cross-fade below still animates) while dropping
+            // the work to nothing.
             LauncherContent()
+                .opacity(isStreamCovering ? 0 : 1)
+                .allowsHitTesting(!isStreamCovering)
                 // Lay the whole UI out in a virtual canvas (real size ÷ scale),
                 // then scale it to fill the screen from the top-leading corner
                 // (GeometryReader anchors its child there). On a normal Mac scale

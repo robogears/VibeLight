@@ -31,6 +31,11 @@ targets:
         excludes:
           - "App/iOS/**"      # iOS SwiftUI shell + iOS-only seam conformers
           - "Streaming/**"    # in-process engine bridge (iOS-only for now)
+          # Generated plists live at this path's root; without these excludes
+          # XcodeGen classifies them as RESOURCES and copies them into the macOS
+          # bundle (an iOS Info.plist shipping inside a Mac app).
+          - "iOS-Info.plist"
+          - "Dev-Info.plist"
     info:
       path: VibeLight/Info.plist
       properties:
@@ -75,8 +80,10 @@ targets:
         excludes:
           - "App/iOS/**"
           - "Streaming/**"
+          - "iOS-Info.plist"
+          - "Info.plist"
     info:
-      path: VibeLight/Info.plist
+      path: VibeLight/Dev-Info.plist
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

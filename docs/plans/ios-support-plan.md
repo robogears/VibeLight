@@ -295,7 +295,7 @@ observes. `AppState.windowCoordinator` becomes `AppState.chrome: PlatformChrome`
 macOS `project.yml` already sets `NSAppTransportSecurity.NSAllowsArbitraryLoads =
 true` (needed because GameStream hosts are self-signed and our TLS delegate does
 byte-exact pinning stronger than CA trust). **The same key is required in the iOS
-target's Info.plist.** On iOS, `NSAllowsArbitraryLoads` + `NSAllowsLocalNetworking`
+target's Info.plist.** On iOS, `NSAllowsArbitraryLoads` ONLY (**NOT** `NSAllowsLocalNetworking` — see below)
 plus the **Local Network privacy permission** (`NSLocalNetworkUsageDescription`,
 already present) and a **Bonjour usage** entry if we ever mDNS-discover. Without
 these the mTLS handshake to `<HOST_IP>:47984` / `192.168.x` dies before our

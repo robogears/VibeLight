@@ -618,9 +618,17 @@ private struct MoonDeckSetupCard: View {
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 360)
             }
-            VStack(spacing: 12) {
-                OverlayButton(id: "moondeck:restart", title: "Restart PC Now", symbol: "restart", destructive: true)
-                OverlayButton(id: "moondeck:done", title: "Done", symbol: "checkmark")
+            // Same in-flight treatment the confirm card gives: two cards written
+            // from one template handled `moonDeckRestarting` differently, so
+            // restarting from HERE showed live buttons with nothing happening
+            // while the request was already away.
+            if state.moonDeckRestarting {
+                ProgressView().controlSize(.large).tint(Theme.accent).frame(height: 96)
+            } else {
+                VStack(spacing: 12) {
+                    OverlayButton(id: "moondeck:restart", title: "Restart PC Now", symbol: "restart", destructive: true)
+                    OverlayButton(id: "moondeck:done", title: "Done", symbol: "checkmark")
+                }
             }
 
         default:   // initial / failed / offline

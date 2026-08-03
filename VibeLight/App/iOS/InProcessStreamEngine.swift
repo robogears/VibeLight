@@ -448,11 +448,20 @@ final class InProcessStreamEngine: StreamEngine {
                 // snapshot stays latched in the game otherwise.
                 self?.reconcileSlots()
             }
+            cm.onPadConnected = { [weak self] in
+                // A pad that arrives DURING a stream never went through the
+                // setup above, so its PS/Home, Share and Options presses kept
+                // being eaten by iOS instead of reaching the game. Re-apply to
+                // the whole roster (the call is idempotent per pad).
+                self?.setSystemGestures(disabled: true)
+                self?.reconcileSlots()
+            }
         } else if cm.streamForwarder != nil {
             releaseHeldKeys()            // no keys stuck down in the game on leave
             cm.streamForwarder = nil
             cm.keyboardForwarder = nil
             cm.onPadDisconnected = nil
+            cm.onPadConnected = nil
             cancelQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
         }

@@ -211,8 +211,10 @@ VibeLight is a **shell + engine split**, decided after deep research (see
   signals + exit code — never a linked library (this is load-bearing for
   licensing).
 - `resolveStreamBinary()` prefers the **embedded** helper, then a local **fork
-  dev build**, then falls back to **stock Moonlight** (which still works, just
-  with chrome).
+  dev build**. There is deliberately **no stock-Moonlight fallback**: stock
+  Moonlight reads a different preferences domain, so it would stream with an
+  identity VibeLight never paired — presenting as "not paired" while looking
+  like a VibeLight bug. Missing helper = a clear, fixable error instead.
 
 ### Host protocol
 
@@ -316,7 +318,7 @@ QML runtime into the copy (so it launches anywhere, not just on the build
 machine), strips extended attributes, and signs inside-out into
 `Contents/Helpers/StreamHelper.app`. `install-app.sh` calls it automatically after
 a Release build, and warns (rather than fails) if the fork isn't built — VibeLight
-then falls back to the dev build or stock Moonlight.
+then falls back to the dev build (there is no stock-Moonlight fallback).
 
 ---
 

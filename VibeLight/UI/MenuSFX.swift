@@ -76,7 +76,11 @@ final class MenuSFX {
             return
         }
         guard let buffer = buffers[effect] else { return }
-        if !engineStarted {
+        // Liveness, not a latch. The old `engineStarted` flag was set once and
+        // never re-checked, but on iOS the stream engine takes the audio session
+        // (setCategory(.playback)) and stops this engine underneath us — so
+        // every menu sound went permanently silent after the first stream.
+        if !engine.isRunning {
             do {
                 try engine.start()
                 engineStarted = true
@@ -96,14 +100,20 @@ final class MenuSFX {
     /// a per-segment exponential decay envelope and a 3 ms attack to avoid clicks.
     private static func blip(segments: [(hz: Double, duration: Double)],
                              gain: Float, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let totalFrames = AVAudioFrameCount(segments.reduce(0) { $0 + $1.duration } * sampleRate)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames),
+        // Capacity comes from the SAME per-segment integer counts the write loop
+        // emits. Summing the durations first and converting once rounds
+        // differently from converting each segment, so the loop could emit more
+        // frames than were allocated and write past the end of an unchecked raw
+        // Float pointer.
+        let counts = segments.map { Int($0.duration * sampleRate) }
+        let totalFrames = AVAudioFrameCount(counts.reduce(0, +))
+        guard totalFrames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames),
               let samples = buffer.floatChannelData?[0] else { return nil }
         buffer.frameLength = totalFrames
 
         var frame = 0
-        for segment in segments {
-            let frames = Int(segment.duration * sampleRate)
+        for (segment, frames) in zip(segments, counts) {
             let attackFrames = min(Int(0.003 * sampleRate), frames)
             for i in 0..<frames {
                 let t = Double(i) / sampleRate

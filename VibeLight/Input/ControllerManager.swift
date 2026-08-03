@@ -69,6 +69,11 @@ final class ControllerManager {
     /// stream engine uses this to send a neutral snapshot so the host doesn't
     /// keep the vanished pad's last buttons/sticks latched.
     @ObservationIgnored var onPadDisconnected: (@MainActor () -> Void)?
+    /// Fired after a pad CONNECTS and the roster has been rebuilt. The stream
+    /// engine uses it to apply per-pad setup (disabling the iOS system gestures
+    /// so PS/Home, Share and Options reach the game) to a controller that
+    /// arrived after the stream had already started.
+    @ObservationIgnored var onPadConnected: (@MainActor () -> Void)?
 
     /// Stream passthrough. While non-nil, launcher navigation is fully unwired
     /// (no focus moves, no haptics, no chords) and every state change on any
@@ -208,6 +213,7 @@ final class ControllerManager {
         // assumeIsolated inside `observe` is always valid.
         observe(.GCControllerDidConnect) { [weak self] in
             self?.refreshControllers()
+            self?.onPadConnected?()
         }
         observe(.GCControllerDidDisconnect) { [weak self] in
             // A direction held on the vanished pad would never deliver its

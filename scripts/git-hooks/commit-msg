@@ -1,0 +1,62 @@
+#!/bin/bash
+# VibeLight commit-MESSAGE guard: keep private network topology out of the
+# PUBLIC repo's commit log.
+#
+# The pre-commit hook beside this one inspects staged FILE CONTENT only. A
+# commit message is published just as permanently — it shows on the GitHub
+# commit page, in `git log`, and in every clone — and two existing messages in
+# this repo's history carry real topology straight past the file-content guard
+# because nothing ever looked at them.
+#
+# Enabled by the same setting as its sibling:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Same allowlist and the same `topology-ok` escape hatch as pre-commit; see that
+# file for why the allowlist is an explicit list of literals rather than subnet
+# carve-outs.
+
+set -u
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+fail=0
+block() { echo "  ✖ $1"; fail=1; }
+
+# Ignore comment lines git strips anyway, and honour a per-line opt-out.
+body="$(grep -v '^#' "$msg_file" | grep -v 'topology-ok' || true)"
+[ -z "$body" ] && exit 0
+
+candidates="$(sed -E 's/(^|[^0-9.])192\.168\.1\.(10|20|255)([^0-9.]|$)/\1<placeholder>\3/g;
+                      s/(^|[^0-9.])100\.64\.0\.2([^0-9.]|$)/\1<placeholder>\2/g;
+                      s/(^|[^0-9.])(10\.0\.0\.0|172\.16\.0\.0|192\.168\.0\.0|100\.64\.0\.0)([^0-9.]|$)/\1<placeholder>\3/g;
+                      s/(aa:bb:cc:dd:ee:ff|00:00:00:00:00:00)/<placeholder>/gI' <<<"$body")"
+sed_status=$?
+
+# Fail CLOSED, exactly like pre-commit: a sanitizer that errors produces an
+# empty candidate set, and an empty set matches nothing — which would turn the
+# guard off while still exiting 0.
+if [ "$sed_status" -ne 0 ] || { [ -n "$body" ] && [ -z "$candidates" ]; }; then
+  echo "  ✖ commit-msg: the topology sanitizer failed to run (sed exit $sed_status)."
+  echo ""
+  echo "commit-msg: refusing to commit — the guard could not check this message."
+  exit 1
+fi
+
+if grep -Eq '(^|[^0-9.])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})' <<<"$candidates"; then
+  block "the commit message contains a private LAN IP (RFC1918)"
+fi
+if grep -Eq '(^|[^0-9.])100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}' <<<"$candidates"; then
+  block "the commit message contains a Tailscale-range IP (100.64.0.0/10)"
+fi
+if grep -Eiq '(^|[^0-9a-f:.-])([0-9a-f]{2}[:-]){5}[0-9a-f]{2}([^0-9a-f:.-]|$)' <<<"$candidates"; then
+  block "the commit message contains a MAC address"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "commit-msg: refusing to write private network topology into a public"
+  echo "  commit log. Reword the message, or add  topology-ok  to that line if"
+  echo "  it really is an example. Bypass: git commit --no-verify"
+  exit 1
+fi
+exit 0

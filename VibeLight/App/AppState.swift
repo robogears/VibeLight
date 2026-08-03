@@ -506,6 +506,20 @@ final class AppState {
         persistPresets()
     }
 
+    /// Ask before wiping a preset. Every entry point (controller slot menu and
+    /// the right-click context menu) routes through here; `clearSlot` is the
+    /// unguarded action the confirm calls.
+    func requestClearSlot(_ i: Int) {
+        guard presets.indices.contains(i), presets[i] != nil else { return }
+        presentOverlay(.confirmClearPreset(i))
+    }
+
+    /// True when the focused settings row OPENS something (rather than cycling a
+    /// value), so a pointer tap can route the same semantic event Select does.
+    func settingsRowOpens(_ row: SettingsRow) -> Bool {
+        row.isAction || row == .resolution
+    }
+
     func clearSlot(_ i: Int) {
         guard presets.indices.contains(i) else { return }
         presets[i] = nil
@@ -1579,6 +1593,11 @@ final class AppState {
             sections = [FocusSection(id: "rename", kind: .vList,
                                      itemIDs: ["rename:set", "rename:cancel"])]
         case .moonDeckSetup:
+            // Locked while a restart is in flight, matching confirmRestartPC —
+            // otherwise the card renders a ProgressView while the focus engine
+            // still holds ids for buttons no view is drawing, breaking the
+            // "never hold a focusable id nothing renders" invariant.
+            if moonDeckRestarting { return }
             let ids: [String]
             switch moonDeckPairing?.status {
             case .some(.connecting), .some(.waiting): ids = ["moondeck:cancel"]
@@ -1697,7 +1716,18 @@ final class AppState {
     private(set) var onboardingHadPresets = false
 
     /// Call when the wizard opens (welcome appears) to snapshot preset state.
-    func beginOnboardingSession() { onboardingHadPresets = hasAnyPreset }
+    /// Snapshot the preset state ONCE per wizard session. Documented as
+    /// "captured once (not live)" so seeding Preset 1 mid-flow doesn't
+    /// retroactively change which steps are skipped — but its only caller ran on
+    /// every appearance of Welcome, which Back re-enters.
+    func beginOnboardingSessionIfNeeded() {
+        guard !onboardingSessionSnapshotted else { return }
+        onboardingSessionSnapshotted = true
+        onboardingHadPresets = hasAnyPreset
+    }
+
+    /// Cleared when a wizard session ends, so the next one snapshots afresh.
+    @ObservationIgnored private var onboardingSessionSnapshotted = false
 
     /// Steps skipped for users who already have presets — they've clearly set up
     /// their quality before, so the stream-quality AND presets-tutorial steps are
@@ -1742,6 +1772,7 @@ final class AppState {
         // (which read as a "jump"). First-launch-only — a normal launch deals in
         // immediately via HomeView.onAppear.
         onboardingStep = nil
+        onboardingSessionSnapshotted = false
         intro.reset()   // guarantee a fresh, un-played deal-in
         // Same focus rule as restartSetup: the wizard's sections must leave the
         // engine the moment the wizard leaves the screen.
@@ -1760,6 +1791,7 @@ final class AppState {
 
     /// Settings ▸ Restart Setup — replay the wizard from the top.
     func restartSetup() {
+        onboardingSessionSnapshotted = false   // a new wizard session snapshots afresh
         onboardingQualityFocus = 0
         screen = .home
         overlay = nil

@@ -450,8 +450,20 @@ static int startCodeLen(const uint8_t *p, int len) {
 - (int)submit:(PDECODE_UNIT)du {
     // Stats accounting first — even frames we end up dropping were received.
     _stats.framesReceived++;
-    if (_lastStatFrameNumber != 0 && du->frameNumber > _lastStatFrameNumber + 1) {
-        _stats.networkDroppedFrames += du->frameNumber - _lastStatFrameNumber - 1;
+    // 64-bit, and sanity-bounded. frameNumber is copied verbatim out of the RTP
+    // header by the depacketizer with no clamp, so a hostile or glitched host
+    // controls both operands: `_lastStatFrameNumber + 1` can overflow int, and
+    // the subtraction can produce a gap of ~2 billion that lands straight in a
+    // HUD counter. Nothing here is load-bearing for decoding — it is a
+    // statistic — so an implausible gap is discarded rather than trusted.
+    if (_lastStatFrameNumber != 0) {
+        int64_t gap = (int64_t)du->frameNumber - (int64_t)_lastStatFrameNumber - 1;
+        // A real network drop is a handful of frames; anything past a few
+        // seconds' worth means the counter wrapped or the host lied.
+        const int64_t kMaxPlausibleGap = 1000;
+        if (gap > 0 && gap <= kMaxPlausibleGap) {
+            _stats.networkDroppedFrames += (uint32_t)gap;
+        }
     }
     _lastStatFrameNumber = du->frameNumber;
     _stats.videoBytes += (uint64_t)du->fullLength;

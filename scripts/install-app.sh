@@ -30,22 +30,36 @@ fi
 APP="$(xcodebuild -project VibeLight.xcodeproj -scheme VibeLight -configuration Release -showBuildSettings 2>/dev/null | awk '/ BUILT_PRODUCTS_DIR/{print $3; exit}')/VibeLight.app"
 [[ -d "$APP" ]] || { echo "Build product not found at $APP"; exit 1; }
 
+# Stage THEN swap. This used to `rm -rf` the existing install and only then
+# attempt the copy, with both commands' stderr sent to /dev/null — so a failure
+# halfway through left no app at all and printed nothing about why.
+install_to() {
+    local dest="$1"
+    ditto "$APP" "$dest.new" || return 1
+    rm -rf "$dest" || { rm -rf "$dest.new"; return 1; }
+    mv "$dest.new" "$dest"
+}
 DEST="/Applications/VibeLight.app"
-if ! rm -rf "$DEST" 2>/dev/null || ! ditto "$APP" "$DEST" 2>/dev/null; then
+if ! install_to "$DEST"; then
+    echo "⚠️  Could not install to /Applications — falling back to ~/Applications."
     DEST="$HOME/Applications/VibeLight.app"   # fallback: no admin rights
     mkdir -p "$HOME/Applications"
-    rm -rf "$DEST"
-    ditto "$APP" "$DEST"
+    install_to "$DEST" || { echo "Install failed."; exit 1; }
 fi
 
 # Remove the build-product copies from DerivedData so Spotlight only ever
 # shows the one real install (otherwise you get "VibeLight — Debug/Release"
 # duplicates alongside the Applications one).
-find "$HOME/Library/Developer/Xcode/DerivedData" -name 'VibeLight.app' -path '*Products*' \
+# Scoped to macOS RELEASE products only: VibeLight-iOS also sets
+# PRODUCT_NAME=VibeLight, so a name-only match happily deleted the iOS device
+# and simulator builds too, forcing a full rebuild after every install.
+find "$HOME/Library/Developer/Xcode/DerivedData" -name 'VibeLight.app' \
+    -path '*/Build/Products/Release/*' -not -path '*iphone*' \
     -exec rm -rf {} + 2>/dev/null || true
 
 # Embed the chromeless streaming helper (skipped with a warning if the fork
-# isn't built — VibeLight then falls back to the dev build or stock Moonlight).
+# isn't built — VibeLight then uses the fork dev build; there is no
+# stock-Moonlight fallback, so a missing helper is a clear error at stream time).
 if ! "$(dirname "$0")/embed-helper.sh" "$DEST"; then
     echo "⚠️  Helper not embedded — VibeLight will use the dev-build/stock fallback."
 fi

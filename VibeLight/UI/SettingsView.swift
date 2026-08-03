@@ -181,7 +181,7 @@ private struct SettingsPresetSlot: View {
         .contextMenu {
             if isFilled {
                 Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
-                Button(role: .destructive) { state.clearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+                Button(role: .destructive) { state.requestClearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
             }
         }
         .animation(Theme.focusSpring, value: isActive)
@@ -267,10 +267,17 @@ private struct SettingsRowView: View {
         .animation(Theme.focusSpring, value: state.value(for: row))
         .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: row.focusID) } }
         .onTapGesture {
-            // Clicking an action row (Software Update) triggers it; value rows
-            // just take focus so the mouse and controller agree.
+            // Rows that OPEN something (Software Update, and Resolution -> the
+            // custom-resolution card) act on a tap; value rows just take focus
+            // so the mouse and controller agree. Resolution used to be
+            // focus-only, which left custom resolution completely unreachable
+            // by touch on iOS.
             state.focus.focus(itemID: row.focusID)
-            if row.isAction { state.performSettingAction(row) }
+            if row.isAction {
+                state.performSettingAction(row)
+            } else if state.settingsRowOpens(row) {
+                state.pointerSelect(row.focusID)
+            }
         }
     }
 }
