@@ -158,7 +158,10 @@ private struct HostRow: View {
             }
             if state.isAddedHost(host) {
                 Button {
-                    state.removeAddedHost(host)
+                    // Confirm first: this erases the pairing certificate (a new
+                    // PIN on the PC to get back) and the box art, and this glyph
+                    // sits inside a row that is itself a tap target.
+                    state.requestRemoveHost(host)
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 14, weight: .semibold))

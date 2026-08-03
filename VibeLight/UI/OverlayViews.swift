@@ -45,6 +45,10 @@ struct OverlayHost: View {
                 CustomResolutionCard()
             case .confirmOverridePreset(let slot):
                 ConfirmOverridePresetCard(slot: slot)
+            case .confirmClearPreset(let slot):
+                ConfirmClearPresetCard(slot: slot)
+            case .confirmRemoveHost(let hostID):
+                ConfirmRemoveHostCard(hostID: hostID)
             case .presetSlotMenu(let slot):
                 PresetSlotMenuCard(slot: slot)
             case .renamePreset(let slot):
@@ -342,6 +346,72 @@ private struct ConfirmOverridePresetCard: View {
             VStack(spacing: 12) {
                 OverlayButton(id: "override:yes", title: "Override", symbol: "square.and.arrow.down.fill")
                 OverlayButton(id: "override:cancel", title: "Cancel", symbol: "xmark")
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+/// Clearing a preset destroys it outright and persists immediately — strictly
+/// more loss than overriding one, which already confirmed. Cancel is focused
+/// first so the destructive action is never the default.
+private struct ConfirmClearPresetCard: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 34)).foregroundStyle(.orange)
+                Text("Clear Preset \(slot + 1)?")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("\u{201C}\(state.presets[slot]?.name ?? "Preset \(slot + 1)")\u{201D} will be emptied. This can't be undone.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "clearpreset:cancel", title: "Keep It", symbol: "xmark")
+                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill")
+            }
+        }
+        .padding(48).frame(width: 460)
+        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+/// Removing a computer erases its pairing certificate and box art. That is one
+/// PIN re-entry away from unrecoverable, and the trash glyph sits inside a row
+/// that is itself a tap target — so it gets a confirm, with Cancel focused.
+private struct ConfirmRemoveHostCard: View {
+    @Environment(AppState.self) private var state
+    let hostID: String
+
+    private var name: String {
+        state.hosts.first { $0.id == hostID }?.name ?? "this computer"
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Image(systemName: "desktopcomputer.trianglebadge.exclamationmark")
+                    .font(.system(size: 34)).foregroundStyle(.orange)
+                Text("Forget \(name)?")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Its pairing will be lost — you'll need to enter a new PIN on the PC to use it again. Saved box art is removed too.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+            }
+            VStack(spacing: 12) {
+                OverlayButton(id: "removehost:cancel", title: "Keep It", symbol: "xmark")
+                OverlayButton(id: "removehost:yes", title: "Forget Computer", symbol: "trash.fill")
             }
         }
         .padding(48).frame(width: 460)

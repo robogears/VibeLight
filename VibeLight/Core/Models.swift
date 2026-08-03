@@ -35,7 +35,11 @@ struct StreamHost: Identifiable, Hashable, Sendable {
 }
 
 /// An app/game exposed by the host.
-struct StreamApp: Identifiable, Hashable, Sendable {
+/// Codable so the last successful app list can be cached per host — the shelf
+/// then survives the PC sleeping instead of going blank. `rawName` round-trips
+/// VERBATIM, zero-width padding included: it is what the launch path must hand
+/// back to the host, and stripping it here would break launching by name.
+struct StreamApp: Identifiable, Hashable, Sendable, Codable {
     let id: Int               // host-side app ID (CRC32 of UUID on Vibepollo; unstable on stock Sunshine)
     let rawName: String       // may contain zero-width ordering hacks from Apollo-family hosts
     var uuid: String?         // Vibepollo/Apollo stable identity — preferred cache/identity key

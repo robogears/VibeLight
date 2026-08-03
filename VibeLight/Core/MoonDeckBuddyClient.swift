@@ -199,19 +199,21 @@ final class MoonDeckBuddyClient: Sendable {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
 
+        // Snapshot before the request so a rejection during THIS request is
+        // distinguishable from one during a concurrent one.
+        let rejectionsBefore = trust.pinRejectionCount
         let data: Data, response: URLResponse
         do {
             (data, response) = try await session.data(for: req)
         } catch {
-            // PinnedTrust rejecting a mismatched cert surfaces as
-            // URLError.cancelled — report .certChanged so callers can offer
-            // re-pairing instead of a false "offline". This INFERS the pin
-            // rejection (PinnedTrust has no reporting channel); safe only
-            // because every caller (AppState) checks Task.isCancelled before
-            // acting on the error, so a real cancellation can't reach the
-            // destructive forget-the-pin branch. Give PinnedTrust a counter
-            // like MTLSDelegate's if callers grow.
-            if let urlError = error as? URLError, urlError.code == .cancelled {
+            // Report .certChanged only when the pin ACTUALLY rejected a
+            // certificate during this request. URLError.cancelled alone is not
+            // proof — ordinary cancellation produces it too, and the caller's
+            // response is to discard the stored pin, which would let an on-path
+            // attacker turn any cancellation into a fresh trust-on-first-use
+            // capture of its own certificate.
+            if let urlError = error as? URLError, urlError.code == .cancelled,
+               trust.pinRejectionCount > rejectionsBefore {
                 throw MDError.certChanged
             }
             throw MDError.offline
@@ -249,6 +251,16 @@ private final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendab
     private let lock = NSLock()
     private var expected: [String: Data] = [:]     // host -> required leaf DER
     private var observedCerts: [String: Data] = [:] // host -> last-seen leaf DER
+    /// How many certificates THIS delegate has rejected for failing the pin —
+    /// the ground truth callers consult instead of inferring a rejection from
+    /// `URLError.cancelled`, which also covers ordinary cancellation. Monotonic:
+    /// callers snapshot before a request and compare after.
+    private var rejections = 0
+
+    var pinRejectionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return rejections
+    }
 
     func setExpected(_ der: Data?, host: String) {
         lock.lock(); defer { lock.unlock() }
@@ -279,6 +291,7 @@ private final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendab
         lock.unlock()
 
         if let pinned, pinned != leafDER {
+            lock.lock(); rejections += 1; lock.unlock()
             completionHandler(.cancelAuthenticationChallenge, nil)  // cert changed — reject
         } else {
             completionHandler(.useCredential, URLCredential(trust: serverTrust))

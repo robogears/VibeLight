@@ -23,6 +23,8 @@ enum Overlay: Equatable {
     case relocate                   // offer to move into /Applications
     case customResolution           // type an arbitrary WxH
     case confirmOverridePreset(Int) // slot already taken — override it?
+    case confirmClearPreset(Int)    // wipe a filled slot — destructive, confirm
+    case confirmRemoveHost(String)  // forget a computer + its pairing — confirm
     case presetSlotMenu(Int)        // rename / clear a filled slot
     case renamePreset(Int)          // type a new preset name
     case moonDeckSetup(String)      // set up / pair MoonDeckBuddy for host id
@@ -134,6 +136,18 @@ final class AppState {
         init(from decoder: any Decoder) throws { value = try? T(from: decoder) }
     }
 
+    /// Decodes any JSON element without caring what it is — used only to COUNT
+    /// how many entries a persisted blob really holds, so a lossy per-element
+    /// decode can tell "the user saved 2 computers and I read 2" from "the user
+    /// saved 2 and I read 1". Without that count, lossy decoding silently
+    /// becomes lossy *deletion* on the next write-back.
+    private struct AnyDecodableElement: Decodable {
+        init(from decoder: any Decoder) throws {
+            // Consume the value in whatever shape it takes; we only need arity.
+            _ = try? decoder.singleValueContainer()
+        }
+    }
+
     /// Live pairing state for the computer manager.
     struct PairingState: Equatable, Sendable {
         var hostID: String
@@ -173,6 +187,10 @@ final class AppState {
     /// credential). Generated once, reused for every host.
     private(set) var moonDeckClientID: String = ""
     private(set) var moonDeckConfigs: [String: MoonDeckConfig] = [:]
+    /// True when the persisted config blob did not fully decode at launch, so
+    /// `moonDeckConfigs` is a PARTIAL view and must never be written back over
+    /// the original. See `persistMoonDeckConfigs`.
+    @ObservationIgnored private var moonDeckConfigsIncomplete = false
     var moonDeckPairing: MoonDeckPairing?
     /// The port field text in the setup overlay.
     var moonDeckPortText: String = String(MoonDeckBuddyClient.defaultPort)
@@ -207,7 +225,19 @@ final class AppState {
     var screen: Screen = .home
     var overlay: Overlay?
     var settings: StreamSettings {
-        didSet { persistSettings() }
+        didSet {
+            persistSettings()
+            // The "this preset is active" marker documents itself as "nil once
+            // settings diverge", but nothing ever cleared it: only clearSlot
+            // did, so every tweak after applying a preset left the rail still
+            // showing that slot as active while the live settings no longer
+            // matched it. Clear it the moment they stop agreeing.
+            if let i = activePresetSlot, presets.indices.contains(i),
+               presets[i]?.settings != settings {
+                activePresetSlot = nil
+                persistPresets()
+            }
+        }
     }
 
     /// The launcher background style (Settings ▸ Themes). Global appearance pref,
@@ -310,6 +340,12 @@ final class AppState {
         // Snap the imported bitrate (e.g. 87500) onto the clean 10 Mbps grid so
         // it reads "90 Mbps", not "87". didSet doesn't fire during init.
         let step = Self.bitrateStep
+        // Clamp FIRST, snap second. `+ step / 2` on a persisted Int traps on
+        // overflow, and JSONDecoder accepts Int.max without complaint — so a
+        // corrupt (or hand-edited) defaults value crashed the app inside init,
+        // before any UI existed, on every launch. Unrecoverable without
+        // deleting preferences.
+        loaded.bitrateKbps = min(max(loaded.bitrateKbps, Self.bitrateMin), Self.bitrateMax)
         loaded.bitrateKbps = min(max(((loaded.bitrateKbps + step / 2) / step) * step,
                                      Self.bitrateMin), Self.bitrateMax)
         settings = loaded
@@ -330,8 +366,15 @@ final class AppState {
         // change underneath us (re-pair, Sunshine reinstall, an added-by-IP
         // entry learning its real UUID), and each of those orphans a directory
         // nothing would ever delete.
-        let liveHostIDs = Set(hosts.map(\.id))
-        Task { [artwork] in await artwork.pruneOrphanedCaches(liveHostIDs: liveHostIDs) }
+        // Never sweep on a partial read: loadAddedHosts returns [] when the
+        // blob is unreadable, and sweeping against an empty live-set deletes
+        // EVERY host's box art. Build the set from the store rather than the
+        // maxHosts-truncated view, so a de-duped-away record's cache survives.
+        if !Self.addedHostsIncomplete {
+            let liveHostIDs = Set(addedHosts.map { $0.uuid ?? "added:\($0.ip)" })
+                .union(hosts.map(\.id))
+            Task { [artwork] in await artwork.pruneOrphanedCaches(liveHostIDs: liveHostIDs) }
+        }
         // Reopen on the last-used PC if it's still around (by id, or by its
         // stable address if the id's representation changed); else the first host.
         let savedHostID = UserDefaults.standard.string(forKey: Self.selectedHostKey)
@@ -343,8 +386,13 @@ final class AppState {
         }
 
         presets = Self.loadPresets()
+        // Range-check AND require the slot to actually hold a preset: after one
+        // fails to decode (FailableDecodable -> nil slot) the saved index could
+        // point at an empty slot, leaving the rail highlighting nothing.
         let savedSlot = UserDefaults.standard.object(forKey: Self.activePresetKey) as? Int
-        activePresetSlot = savedSlot.flatMap { (0..<Self.presetSlotCount).contains($0) ? $0 : nil }
+        activePresetSlot = savedSlot.flatMap {
+            (0..<Self.presetSlotCount).contains($0) && presets[$0] != nil ? $0 : nil
+        }
 
         // MoonDeckBuddy: a stable per-install client id + saved per-host configs.
         if let existing = UserDefaults.standard.string(forKey: Self.moonDeckClientKey), !existing.isEmpty {
@@ -353,9 +401,26 @@ final class AppState {
             moonDeckClientID = UUID().uuidString
             UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
         }
-        if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey),
-           let decoded = try? JSONDecoder().decode([String: FailableDecodable<MoonDeckConfig>].self, from: data) {
-            moonDeckConfigs = decoded.compactMapValues(\.value)   // drop only unreadable entries
+        if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey) {
+            if let decoded = try? JSONDecoder().decode([String: FailableDecodable<MoonDeckConfig>].self, from: data) {
+                moonDeckConfigs = decoded.compactMapValues(\.value)   // drop only unreadable entries
+                // Per-entry failures are survivable, but they still mean the
+                // in-memory map is a partial view — don't let a later write
+                // flatten the ones that didn't read.
+                if decoded.count != moonDeckConfigs.count { moonDeckConfigsIncomplete = true }
+            } else {
+                // TOP-LEVEL decode failure (truncated blob, not an object, the
+                // value type changed shape). FailableDecodable does not protect
+                // this case: the `if let` simply fails and leaves the map empty,
+                // and the very next updateMoonDeckConfig serialises that empty
+                // map back over the key — erasing every host's Buddy pairing
+                // with no log and no UI signal.
+                moonDeckConfigsIncomplete = true
+                let backup = "\(Self.moonDeckConfigsKey).unreadable"
+                if UserDefaults.standard.data(forKey: backup) == nil {
+                    UserDefaults.standard.set(data, forKey: backup)
+                }
+            }
         }
 
         wireCallbacks()
@@ -369,13 +434,38 @@ final class AppState {
 
     private static func loadPresets() -> [StreamPreset?] {
         let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
-        guard let data = UserDefaults.standard.data(forKey: presetsKey),
-              let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data) else { return empty }
+        guard let data = UserDefaults.standard.data(forKey: presetsKey) else {
+            // No v2 blob. Before giving up, adopt the pre-0.1.7 one: presets
+            // moved from a dynamic list to six fixed slots and the key gained a
+            // ".v2" suffix with no migration, so every preset made before that
+            // release has been sitting in defaults unread ever since.
+            return migrateLegacyPresets() ?? empty
+        }
+        guard let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data) else { return empty }
         // A bad or incompatible slot decodes to nil (an empty slot) — preserving
         // slot positions — instead of dropping EVERY preset when one entry can't
         // be read. Normalize to exactly the slot count.
         var slots: [StreamPreset?] = arr.prefix(presetSlotCount).map(\.value)
         while slots.count < presetSlotCount { slots.append(nil) }
+        return slots
+    }
+
+    /// One-shot adoption of the pre-0.1.7 `vibelight.presets` blob into the six
+    /// fixed slots. Returns nil when there is nothing to migrate.
+    private static func migrateLegacyPresets() -> [StreamPreset?]? {
+        let legacyKey = "vibelight.presets"
+        guard let data = UserDefaults.standard.data(forKey: legacyKey),
+              let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data)
+        else { return nil }
+        let recovered = arr.compactMap(\.value)
+        guard !recovered.isEmpty else { return nil }
+        var slots = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
+        for (i, preset) in recovered.prefix(presetSlotCount).enumerated() { slots[i] = preset }
+        if let encoded = try? JSONEncoder().encode(slots) {
+            UserDefaults.standard.set(encoded, forKey: presetsKey)
+            // Leave the legacy key in place: if this migration is ever wrong,
+            // the original is still there to re-read. It is a few hundred bytes.
+        }
         return slots
     }
 
@@ -544,7 +634,15 @@ final class AppState {
             } else {
                 rebuildFocus()
             }
-            Task { await self.refreshSelectedHost() }
+            // refreshSelectedHost bails while the session manager owns host
+            // truth, and this fires with the phase still at .ending — so on the
+            // ordinary end-of-stream path (the .sessionEnded card) it returned
+            // immediately and the shelf stayed stale until the 12 s poll came
+            // round. Refresh when the phase really is idle; the acknowledgement
+            // sites refresh for the card path.
+            if session.phase == .idle {
+                Task { await self.refreshSelectedHost() }
+            }
         }
     }
 
@@ -638,13 +736,39 @@ final class AppState {
 
     private static let addedHostsKey = "vibelight.addedHosts"
 
+    /// Set when the saved-computer blob existed but did not fully decode. While
+    /// this is true the list is INCOMPLETE, so writing it back would erase
+    /// whatever failed to read — see `persistAddedHosts`.
+    @ObservationIgnored private(set) static var addedHostsIncomplete = false
+    /// Where the unreadable blob was copied, so nothing is lost even if the
+    /// decode never starts working.
+    @ObservationIgnored private(set) static var addedHostsBackupKey: String?
+
     private static func loadAddedHosts() -> [AddedHost] {
+        addedHostsIncomplete = false
+        addedHostsBackupKey = nil
+        guard let data = UserDefaults.standard.data(forKey: addedHostsKey) else { return [] }
+
         // Lossy: decode entries one-by-one and keep the good ones, so a single
         // corrupt or schema-incompatible record can't drop the whole list — each
         // AddedHost carries a pinned pairing cert whose loss forces re-pairing.
-        guard let data = UserDefaults.standard.data(forKey: addedHostsKey),
-              let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else { return [] }
+        //
+        // Lossy decoding is only SAFE if losing something is noticed. Count the
+        // elements actually present and compare: any shortfall means this list
+        // is a partial view of what the user saved, and persistAddedHosts must
+        // not overwrite the original with it. The raw bytes are copied aside
+        // first so a record that can't be read today is still recoverable.
+        let present = (try? JSONDecoder().decode([AnyDecodableElement].self, from: data))?.count
+        guard let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else {
+            // The whole blob is unreadable (truncated, not an array, wrong
+            // shape). Do NOT return [] and let the next write flatten it.
+            markAddedHostsIncomplete(rawBlob: data)
+            return []
+        }
         var hosts = arr.compactMap(\.value)
+        if let present, present != hosts.count {
+            markAddedHostsIncomplete(rawBlob: data)
+        }
         // Heal uuid collisions left by older builds: when the same PC was saved
         // at two addresses (LAN + Tailscale), both records could end up carrying
         // the same learned uuid, and rebuildHosts then de-duped one out of the
@@ -659,7 +783,30 @@ final class AppState {
         return hosts
     }
 
+    /// Copies the unreadable blob to a dated one-shot key and latches the
+    /// incomplete flag. Called only from the load path.
+    private static func markAddedHostsIncomplete(rawBlob: Data) {
+        addedHostsIncomplete = true
+        let key = "\(addedHostsKey).unreadable"
+        // One-shot: never overwrite an earlier rescue copy with a later,
+        // possibly already-truncated one.
+        if UserDefaults.standard.data(forKey: key) == nil {
+            UserDefaults.standard.set(rawBlob, forKey: key)
+        }
+        addedHostsBackupKey = key
+    }
+
     private func persistAddedHosts() {
+        // Refuse to write a list we know is partial. Re-encoding only the
+        // survivors over the same key is what turns "one record didn't decode
+        // today" into "that computer's pairing is gone forever" — and it used to
+        // happen within seconds of launch, because the first successful probe
+        // calls upgradeAddedHost, which persists.
+        guard !Self.addedHostsIncomplete else {
+            hostError = "Some saved computers couldn't be read, so the list is not being saved over. "
+                + "Your other computers still work. Nothing was deleted — the original is kept."
+            return
+        }
         if let data = try? JSONEncoder().encode(addedHosts) {
             UserDefaults.standard.set(data, forKey: Self.addedHostsKey)
         }
@@ -698,7 +845,23 @@ final class AppState {
     // MARK: - Pairing
 
     /// Whether this host still needs pairing (no pinned server cert yet).
-    func needsPairing(_ host: StreamHost) -> Bool { !host.isPaired }
+    /// Hosts that answered but refused our client identity — the certificate on
+    /// the PC changed (streaming software reinstalled), or our identity was
+    /// removed from its paired pool. Populated by `refreshSelectedHost`, cleared
+    /// the moment the host answers normally again.
+    @ObservationIgnored private var hostsNeedingRepair: Set<String> = []
+
+    /// True when selecting this computer should start PAIRING rather than just
+    /// switching to it.
+    ///
+    /// "Do we hold a certificate?" was the whole test, which left no way back
+    /// from a certificate that CHANGED: the pin correctly rejected the host and
+    /// the banner correctly said "pair it again", but every pairing entry point
+    /// was gated behind not having a certificate — so the one host that needed
+    /// re-pairing was the one host that could never reach it.
+    func needsPairing(_ host: StreamHost) -> Bool {
+        !host.isPaired || hostsNeedingRepair.contains(host.id)
+    }
 
     func beginPairing(_ host: StreamHost) {
         guard let ip = host.manualAddress ?? host.localAddress ?? host.candidateAddresses.first?.host else { return }
@@ -843,6 +1006,15 @@ final class AppState {
         var cfg = moonDeckConfigs[key] ?? MoonDeckConfig()
         mutate(&cfg)
         moonDeckConfigs[key] = cfg
+        persistMoonDeckConfigs()
+    }
+
+    /// Writes the config map back. Refuses when the load was incomplete — the
+    /// in-memory map is then a partial view, and re-encoding it over the key is
+    /// what would turn "one blob didn't decode" into "every host's Buddy pairing
+    /// is gone". The original bytes are preserved under a `.unreadable` key.
+    private func persistMoonDeckConfigs() {
+        guard !moonDeckConfigsIncomplete else { return }
         if let data = try? JSONEncoder().encode(moonDeckConfigs) {
             UserDefaults.standard.set(data, forKey: Self.moonDeckConfigsKey)
         }
@@ -978,8 +1150,25 @@ final class AppState {
             } catch {
                 moonDeckRestarting = false
                 guard inRestartFlow(for: hostID) else { return }
-                let message = (error as? LocalizedError)?.errorDescription ?? "Restart failed."
                 cancelMoonDeckPairing()
+                // A changed Buddy certificate (or a revoked client) is
+                // RECOVERABLE, but only if we route it back to pairing. Showing
+                // a plain error here was a permanent dead end: requestRestartPC
+                // sends paired hosts to the confirm card, and the only code that
+                // clears a stale pin lives inside beginMoonDeckPairing, which is
+                // reachable only from the setup card that paired hosts never
+                // see. Once Buddy was reinstalled, Restart PC could never work
+                // again — with no forget/re-pair path anywhere in the app.
+                if let md = error as? MoonDeckBuddyClient.MDError,
+                   md == .certChanged || md == .unauthorized {
+                    updateMoonDeckConfig(for: host) { $0.pinnedCert = nil; $0.paired = false }
+                    if let addr = moonDeckConnectAddress(for: host) {
+                        moonDeck.setExpectedCert(nil, forHost: addr)
+                    }
+                    presentOverlay(.moonDeckSetup(hostID))
+                    return
+                }
+                let message = (error as? LocalizedError)?.errorDescription ?? "Restart failed."
                 presentOverlay(.error(message))
             }
         }
@@ -1013,7 +1202,12 @@ final class AppState {
     func addHost() {
         let ip = addHostIP.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ip.isEmpty else { return }
-        guard hosts.count < Self.maxHosts else {
+        // Gate on the STORE, not the visible list. `hosts` is post-de-dupe and
+        // post-`prefix(maxHosts)`, so whenever de-duping hid a record the user
+        // could add past the cap — and anything beyond the 4th was then
+        // invisible, unremovable (the trash button only exists on a rendered
+        // row), and treated as an orphan by the box-art sweep every launch.
+        guard addedHosts.count < Self.maxHosts else {
             addHostError = "You can have at most \(Self.maxHosts) computers."
             return
         }
@@ -1039,6 +1233,13 @@ final class AppState {
         rebuildFocus()
     }
 
+    /// Ask before forgetting a computer — removeAddedHost erases its pairing
+    /// certificate and box art with no undo, and its only trigger is a small
+    /// trash glyph inside a row that is itself tappable.
+    func requestRemoveHost(_ host: StreamHost) {
+        presentOverlay(.confirmRemoveHost(host.id))
+    }
+
     func removeAddedHost(_ host: StreamHost) {
         addedHosts.removeAll { $0.ip == host.manualAddress || "added:\($0.ip)" == host.id }
         persistAddedHosts()
@@ -1048,6 +1249,13 @@ final class AppState {
         // later changed (re-pair, reinstall) orphaned another one. Cache growth
         // here is unbounded by design otherwise: nothing else deletes.
         Task { [artwork, id = host.id] in await artwork.invalidate(hostUUID: id) }
+        // Forget its MoonDeckBuddy pairing too. That map is keyed by ADDRESS and
+        // nothing ever removed an entry, so a removed computer left its pinned
+        // Buddy certificate and `paired` flag behind forever — and re-adding the
+        // same IP silently inherited a stale pin from a machine that may since
+        // have been reinstalled.
+        for candidate in host.candidateAddresses { moonDeckConfigs[candidate.host] = nil }
+        persistMoonDeckConfigs()
         let wasSelected = selectedHostID == host.id
         rebuildHosts()
         if wasSelected {
@@ -1153,6 +1361,10 @@ final class AppState {
             let fresh = try await api.appList(for: host, at: address)
             guard selectionStillThisHost(), session.phase == .idle else { return }
             apps = displayApps(from: fresh)
+            // The host answered normally, so whatever identity trouble we saw
+            // before is over.
+            hostsNeedingRepair.remove(host.id)
+            rememberApps(fresh, for: host)
         } catch let error as HostAPIError {
             serverInfo = nil
             hostAddress = nil
@@ -1164,7 +1376,20 @@ final class AppState {
             } else {
                 hostError = error.localizedDescription
             }
-            apps = displayApps(from: host.apps) // fall back to plist cache
+            // The host is reachable but refuses our identity — remember it so
+            // selecting this computer offers PAIRING again instead of just
+            // switching to it (see needsPairing). Without this the banner tells
+            // the user to pair again and nothing in the UI lets them.
+            switch error {
+            case .hostIdentityChanged, .notAuthorized: hostsNeedingRepair.insert(host.id)
+            default: break
+            }
+            // Fall back to the last app list we actually saw for this host.
+            // This used to read `host.apps`, which is ALWAYS empty in the
+            // shipping app (streamHost(from:) hardcodes `apps: []` and the
+            // Moonlight plist import was removed in v0.2.0) — so the "cache"
+            // was `apps = []`, and any hiccup blanked the whole shelf.
+            apps = displayApps(from: rememberedApps(for: host))
         } catch {
             serverInfo = nil
             hostAddress = nil
@@ -1172,6 +1397,35 @@ final class AppState {
         }
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
+    }
+
+    // MARK: - Last-known app list
+
+    private static let appCacheKey = "vibelight.appCache"
+    /// The last app list each host successfully reported, keyed by host id.
+    /// Restored at launch and after an error so the shelf shows what you had
+    /// instead of going blank the moment the PC sleeps.
+    @ObservationIgnored private lazy var appCache: [String: [StreamApp]] = {
+        guard let data = UserDefaults.standard.data(forKey: Self.appCacheKey),
+              let decoded = try? JSONDecoder().decode([String: FailableDecodable<[StreamApp]>].self, from: data)
+        else { return [:] }
+        return decoded.compactMapValues(\.value)
+    }()
+
+    private func rememberApps(_ list: [StreamApp], for host: StreamHost) {
+        guard !list.isEmpty else { return }
+        appCache[host.id] = list
+        // Bounded: only the hosts that still exist, so a long-lived install
+        // can't accumulate app lists for computers that are long gone.
+        let live = Set(addedHosts.map { $0.uuid ?? "added:\($0.ip)" })
+        appCache = appCache.filter { live.contains($0.key) }
+        if let data = try? JSONEncoder().encode(appCache) {
+            UserDefaults.standard.set(data, forKey: Self.appCacheKey)
+        }
+    }
+
+    private func rememberedApps(for host: StreamHost) -> [StreamApp] {
+        appCache[host.id] ?? host.apps
     }
 
     /// Filters host pseudo-apps out of the library (permission placeholder,
@@ -1271,7 +1525,6 @@ final class AppState {
 
     // MARK: - Focus content
 
-    static let settingsRowIDs = SettingsRow.allCases.map(\.focusID)
 
     private func rebuildFocus() {
         var sections: [FocusSection] = []
@@ -1313,6 +1566,12 @@ final class AppState {
         case .confirmOverridePreset:
             sections = [FocusSection(id: "override", kind: .vList,
                                      itemIDs: ["override:yes", "override:cancel"])]
+        case .confirmClearPreset:
+            sections = [FocusSection(id: "clearpreset", kind: .vList,
+                                     itemIDs: ["clearpreset:cancel", "clearpreset:yes"])]
+        case .confirmRemoveHost:
+            sections = [FocusSection(id: "removehost", kind: .vList,
+                                     itemIDs: ["removehost:cancel", "removehost:yes"])]
         case .presetSlotMenu:
             sections = [FocusSection(id: "slotmenu", kind: .vList,
                                      itemIDs: ["slotmenu:rename", "slotmenu:clear", "slotmenu:cancel"])]
@@ -1628,9 +1887,11 @@ final class AppState {
         }
         switch event {
         case .select:
-            if let id = focus.focusedItemID, id.hasPrefix("host:") {
-                selectHost(String(id.dropFirst(5)))
-            } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
+            // (A `host:`-prefixed branch used to sit here. No view and no
+            // rebuildFocus path has ever emitted that prefix — the home screen
+            // emits `header:*`/`app:*` and the overlay emits `hostmenu:*`, which
+            // does not match. Host switching goes through routeOverlay.)
+            if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
             } else if focus.focusedItemID == "header:power" {
                 wakeSelectedHost()
@@ -1731,10 +1992,12 @@ final class AppState {
                 case "ended:home", nil, .some:
                     session.acknowledgeEnd()
                     dismissOverlay()
+                    Task { await refreshSelectedHost() }
                 }
             case .back:
                 session.acknowledgeEnd()
                 dismissOverlay()
+                Task { await refreshSelectedHost() }
             default:
                 _ = focus.handle(event)
             }
@@ -1822,6 +2085,24 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
+        case .confirmClearPreset(let i):
+            switch event {
+            case .select:
+                if focus.focusedItemID == "clearpreset:yes" { dismissOverlay(); clearSlot(i) }
+                else { dismissOverlay() }
+            case .back: dismissOverlay()
+            default: _ = focus.handle(event)
+            }
+        case .confirmRemoveHost(let hostID):
+            switch event {
+            case .select:
+                if focus.focusedItemID == "removehost:yes",
+                   let host = hosts.first(where: { $0.id == hostID }) {
+                    dismissOverlay(); removeAddedHost(host)
+                } else { dismissOverlay() }
+            case .back: dismissOverlay()
+            default: _ = focus.handle(event)
+            }
         case .confirmOverridePreset(let i):
             switch event {
             case .select:
@@ -1839,7 +2120,11 @@ final class AppState {
             case .select:
                 switch focus.focusedItemID {
                 case "slotmenu:rename": openRename(i)   // replaces this overlay
-                case "slotmenu:clear": dismissOverlay(); clearSlot(i)
+                case "slotmenu:clear":
+                    // Clearing destroys the preset outright and persists
+                    // immediately, while merely OVERWRITING one (which loses
+                    // strictly less) already shows a confirm. Match them.
+                    presentOverlay(.confirmClearPreset(i))
                 default: dismissOverlay()
                 }
             case .back:
@@ -1934,8 +2219,13 @@ final class AppState {
         guard selectedHost != nil else { return }
         // Host already streaming something ELSE → offer to switch instead of
         // erroring out (the engines close the running app on the way in).
-        if let info = serverInfo, info.currentGameID != 0, info.currentGameID != app.id {
-            let runningName = apps.first { $0.id == info.currentGameID }?.name ?? "Another app"
+        // ServerInfo's own rule: currentGameID is only meaningful when state
+        // is .busy, which `runningAppID` encodes. Sunshine does not always clear
+        // currentgame when a session ends, so the raw check offered "Switch to
+        // X?" for a game that had already exited. The iOS engine was fixed to
+        // use runningAppID in this same branch; this copy was missed.
+        if let running = serverInfo?.runningAppID, running != app.id {
+            let runningName = apps.first { $0.id == running }?.name ?? "Another app"
             presentOverlay(.confirmSwitchStream(running: runningName, target: app))
             return
         }
@@ -1983,6 +2273,9 @@ final class AppState {
                 // instead, where remoteQuitRequested suppresses the card.)
                 session.acknowledgeEnd()
                 if case .sessionEnded = overlay { dismissOverlay() }
+                // NOW the phase is idle, so the refresh that onStreamDidEnd
+                // couldn't run can finally happen.
+                Task { await refreshSelectedHost() }
             }
             await refreshSelectedHost()
         }
