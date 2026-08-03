@@ -334,6 +334,8 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored private weak var stickyPad: GCExtendedGamepad?
     /// Diagnostic only — see the guide logging in `forward`.
     @ObservationIgnored private var lastLoggedGuide = false
+    /// EXPERIMENT flag — see the block in `ensureAnnounced`. Temporary.
+    @ObservationIgnored private var announceAsXboxExperiment = false
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -384,7 +386,22 @@ final class InProcessStreamEngine: StreamEngine {
         guard let session else { return false }
         let pad = controller.extendedGamepad
         var type = LiControllerType.unknown
-        if pad is GCXboxGamepad {
+        // EXPERIMENT (guide-button double-press): announce every pad as an Xbox
+        // controller. Device logging proved the GUIDE press leaves the iPad
+        // correctly on the first press, so the double-press is downstream —
+        // announcing a DualSense makes Sunshine create a virtual DS4, and
+        // Steam routes a DS4 "PS" button through PlayStation Configuration
+        // Support rather than the plain guide path. An X360 virtual pad's guide
+        // button is the reliable one-press route into Big Picture.
+        //
+        // Cost if this works: host-side glyphs show Xbox letters instead of PS
+        // shapes (the ON-4 passthrough). That is a preference worth exposing as
+        // a setting — but only once we know it actually fixes the button.
+        // Revert this block to restore true type reporting.
+        if pad != nil { announceAsXboxExperiment = true }
+        if announceAsXboxExperiment {
+            type = LiControllerType.xbox
+        } else if pad is GCXboxGamepad {
             type = LiControllerType.xbox
         } else if pad is GCDualShockGamepad || pad is GCDualSenseGamepad {
             type = LiControllerType.ps
