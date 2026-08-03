@@ -326,8 +326,14 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored private var announcedSlots: Set<UInt8> = []
     /// Holds START down for ≥100 ms after a Menu press: old MFi pads emit an
     /// instantaneous down+up that games otherwise miss.
-    @ObservationIgnored private var menuStickyUntil: ContinuousClock.Instant?
-    @ObservationIgnored private weak var menuStickyPad: GCExtendedGamepad?
+    /// Minimum-hold latches, keyed by the button flag being held. Some buttons
+    /// report an instantaneous down+up that the host never sees as a real press
+    /// (see the latch in `forward`). START has needed this since old MFi pads;
+    /// GUIDE needs it too — that is the "PS button takes two presses" bug.
+    @ObservationIgnored private var stickyUntil: [Int32: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private weak var stickyPad: GCExtendedGamepad?
+    /// Diagnostic only — see the guide logging in `forward`.
+    @ObservationIgnored private var lastLoggedGuide = false
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -573,23 +579,46 @@ final class InProcessStreamEngine: StreamEngine {
         if pad.leftThumbstickButton?.isPressed == true { flags |= 0x0040 }
         if pad.rightThumbstickButton?.isPressed == true { flags |= 0x0080 }
 
-        // Menu minimum-hold: old MFi pads report an instantaneous down+up for
-        // Menu; latch START for 100 ms so games see a real press. A trailing
-        // re-send delivers the release even if no further pad events arrive.
+        // Minimum-hold latch. Some buttons report an instantaneous down+up, and
+        // a press the host observes for ~0 ms is a press it ignores — the button
+        // appears not to work at all, or to need a second, luckier press.
+        //
+        // START has needed this since old MFi pads. GUIDE (PS/Home) has exactly
+        // the same problem and never got the same treatment, which is why
+        // pressing PS once did nothing and pressing it twice opened the Steam
+        // menu: the second press overlapped the first well enough to be seen.
+        //
+        // Latch the flag for 100 ms and schedule a trailing re-send, so the
+        // RELEASE still reaches the host even if no further pad events arrive.
         let now = ContinuousClock.now
-        if pad.buttonMenu.isPressed {
-            if menuStickyUntil == nil {
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(120))
-                    guard let self else { return }
-                    self.menuStickyUntil = nil
-                    if let sticky = self.menuStickyPad { self.forward(sticky) }
+        func latch(_ flag: Int32, pressed: Bool) {
+            if pressed {
+                if stickyUntil[flag] == nil {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .milliseconds(120))
+                        guard let self else { return }
+                        self.stickyUntil[flag] = nil
+                        if let sticky = self.stickyPad { self.forward(sticky) }
+                    }
                 }
+                stickyUntil[flag] = now.advanced(by: .milliseconds(100))
+                stickyPad = pad
+            } else if let until = stickyUntil[flag], now < until, pad === stickyPad {
+                flags |= flag
             }
-            menuStickyUntil = now.advanced(by: .milliseconds(100))
-            menuStickyPad = pad
-        } else if let until = menuStickyUntil, now < until, pad === menuStickyPad {
-            flags |= 0x0010
+        }
+        latch(0x0010, pressed: pad.buttonMenu.isPressed)                 // START
+        latch(0x0400, pressed: pad.buttonHome?.isPressed == true)        // GUIDE
+
+        // Diagnostic for the "PS button needs two presses" report. Logs only on
+        // a GUIDE transition, so it is silent during play. Remove once the
+        // behaviour is confirmed on device.
+        let guideNow = (flags & 0x0400) != 0
+        if guideNow != lastLoggedGuide {
+            lastLoggedGuide = guideNow
+            NSLog("[VibeLight][guide] raw=%@ sent=%@ slot=%d",
+                  (pad.buttonHome?.isPressed == true) ? "down" : "up",
+                  guideNow ? "DOWN" : "up", slot)
         }
 
         // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~2s (with a
