@@ -183,9 +183,13 @@ final class ClientIdentityProvider: @unchecked Sendable {
             "-passout", "pass:\(p12Passphrase)",
             "-name", "VibeLight Client",
         ]
+        // stdout is nulled rather than piped: nothing reads it, and an unread
+        // pipe deadlocks the child once its buffer fills. stderr IS read, but
+        // only after waitUntilExit — safe only because openssl's error output is
+        // far below the buffer size; keep it that way.
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
-        process.standardOutput = Pipe()
+        process.standardOutput = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
         // The output now always EXISTS (we pre-created it), so existence proves

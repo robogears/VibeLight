@@ -116,14 +116,27 @@ enum GameStreamCrypto {
 
     // MARK: - PEM
 
+    /// The FIRST certificate in a PEM, as DER.
+    ///
+    /// This used to concatenate the base64 of EVERY block in the file while
+    /// HostAPIClient's pin parser sliced only the first — so the same stored
+    /// `serverCertPEM` meant two different things to pairing and to pinning. On
+    /// a host that serves a chain, one of them produced garbage. One parser now,
+    /// and `HostAPIClient.derCertificate` defers to it.
     static func pemToDER(_ pem: Data) -> Data? {
         guard let text = String(data: pem, encoding: .utf8) else { return nil }
-        let body = text
-            .replacingOccurrences(of: "\r", with: "")   // tolerate CRLF PEMs
-            .split(separator: "\n")
-            .filter { !$0.hasPrefix("-----") }
-            .joined()
-        return Data(base64Encoded: body)
+        let begin = "-----BEGIN CERTIFICATE-----"
+        let end = "-----END CERTIFICATE-----"
+        guard let s = text.range(of: begin), let e = text.range(of: end, range: s.upperBound..<text.endIndex)
+        else {
+            // No framing at all: treat the whole thing as bare base64 so a
+            // header-less blob still decodes (older stored values).
+            return Data(base64Encoded: text.replacingOccurrences(of: "\r", with: "")
+                .split(separator: "\n").filter { !$0.hasPrefix("-----") }.joined(),
+                options: .ignoreUnknownCharacters)
+        }
+        return Data(base64Encoded: String(text[s.upperBound..<e.lowerBound]),
+                    options: .ignoreUnknownCharacters)
     }
 }
 

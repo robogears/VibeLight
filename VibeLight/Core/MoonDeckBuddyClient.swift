@@ -204,7 +204,13 @@ final class MoonDeckBuddyClient: Sendable {
         let rejectionsBefore = trust.pinRejectionCount
         let data: Data, response: URLResponse
         do {
+            // Replies here are tiny JSON objects ({"version":8}); the only
+            // other bound was an INACTIVITY timeout, which never cuts off a
+            // server that keeps sending.
             (data, response) = try await session.data(for: req)
+            guard response.expectedContentLength <= 256 * 1024, data.count <= 256 * 1024 else {
+                throw MDError.badResponse("reply too large (\(data.count) bytes)")
+            }
         } catch {
             // Report .certChanged only when the pin ACTUALLY rejected a
             // certificate during this request. URLError.cancelled alone is not

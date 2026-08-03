@@ -87,13 +87,13 @@ actor ArtworkStore: ArtworkProviding {
     private var recentFailures: [Key: Date] = [:]
 
     /// Keys with a background revalidation already running (dedupe guard).
-    private var revalidating: Set<Key> = []
+    private var revalidating: [Key: Task<Void, Never>] = [:]
 
     /// Counting-semaphore state for the 4-fetch gate. Implemented with
     /// continuations inside the actor rather than DispatchSemaphore, which
     /// would block a cooperative-pool thread.
     private var activeFetchCount = 0
-    private var fetchWaiters: [CheckedContinuation<Void, Never>] = []
+    private var fetchWaiters: [(id: UUID, continuation: CheckedContinuation<Void, any Error>)] = []
 
     init(
         api: any HostAPIProviding,
@@ -176,7 +176,10 @@ actor ArtworkStore: ArtworkProviding {
         }
         knownPlaceholders = knownPlaceholders.filter { $0.key.hostID != hostUUID }
         recentFailures = recentFailures.filter { $0.key.hostID != hostUUID }
-        revalidating = revalidating.filter { $0.hostID != hostUUID }
+        for (key, task) in revalidating where key.hostID == hostUUID {
+            task.cancel()
+            revalidating[key] = nil
+        }
         // Route the host ID through the SAME traversal guard the write path
         // uses (cacheFileURL, safeComponent): host.id comes from the host, so a
         // hostile "../../.." value would otherwise escape the boxart cache and
@@ -230,9 +233,12 @@ actor ArtworkStore: ArtworkProviding {
     // MARK: - Fetch pipeline
 
     private func performFetch(
-        app: StreamApp, host: StreamHost, address: String, key: Key, fileURL: URL
+        app: StreamApp, host: StreamHost, address: String, key: Key, fileURL: URL,
+        isRevalidation: Bool = false
     ) async -> TileArtwork {
-        await acquireFetchSlot()
+        // A cancelled wait leaves the queue without claiming a slot; there is
+        // nothing to release and nothing to show.
+        do { try await acquireFetchSlot() } catch { return fallback(for: fileURL) }
         defer { releaseFetchSlot() }
 
         let data: Data
@@ -250,6 +256,15 @@ actor ArtworkStore: ArtworkProviding {
         recentFailures[key] = nil
 
         if Self.isPlaceholder(data) {
+            // On the BACKGROUND revalidation path, one placeholder sighting is
+            // not proof the art is gone — a host mid-restart or mid-library-scan
+            // serves the stock box.png transiently. Deleting the cached file AND
+            // memoising the placeholder for 24 h on that basis threw away real
+            // art the user had, unattended, with no way to force a refetch.
+            // Foreground fetches (a tile with nothing cached) still record it.
+            if isRevalidation, Self.modificationDate(of: fileURL) != nil {
+                return .image(fileURL)
+            }
             // NEVER cache the placeholder as art; remember it in-memory and
             // drop any previously cached real art (revalidation path — the
             // host-side image was removed).
@@ -294,25 +309,48 @@ actor ArtworkStore: ArtworkProviding {
     private func scheduleRevalidation(
         app: StreamApp, host: StreamHost, address: String, key: Key, fileURL: URL
     ) {
-        guard !revalidating.contains(key), inFlight[key] == nil else { return }
+        guard revalidating[key] == nil, inFlight[key] == nil else { return }
         if let failedAt = recentFailures[key], Date().timeIntervalSince(failedAt) < failureBackoff {
             return
         }
-        revalidating.insert(key)
-        Task {
-            _ = await self.performFetch(app: app, host: host, address: address, key: key, fileURL: fileURL)
-            self.revalidating.remove(key)
+        // Tracked, not fire-and-forget: an untracked task survived
+        // invalidate(hostUUID:) and could re-create the cache directory of a
+        // host the user had just removed.
+        revalidating[key] = Task {
+            _ = await self.performFetch(app: app, host: host, address: address,
+                                        key: key, fileURL: fileURL, isRevalidation: true)
+            self.revalidating[key] = nil
         }
     }
 
     // MARK: - Fetch gate (max 4 in flight)
 
-    private func acquireFetchSlot() async {
+    /// Parks until a slot frees. Cancellation-aware: the old version used a
+    /// non-throwing continuation that ignored cancellation entirely, so a
+    /// cancelled tile's fetch stayed queued forever and — because the four slots
+    /// are GLOBAL — one host that accepted a connection and then went silent
+    /// stalled box art for every host, app-wide, until its timeout expired.
+    private func acquireFetchSlot() async throws {
         if activeFetchCount < Self.maxConcurrentFetches {
             activeFetchCount += 1
             return
         }
-        await withCheckedContinuation { fetchWaiters.append($0) }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { c in
+                fetchWaiters.append((id, c))
+            }
+        } onCancel: {
+            Task { await self.dropWaiter(id) }
+        }
+    }
+
+    /// Removes a cancelled waiter from the queue and fails its continuation, so
+    /// it never holds a claim on a slot it will not use.
+    private func dropWaiter(_ id: UUID) {
+        guard let i = fetchWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = fetchWaiters.remove(at: i)
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private func releaseFetchSlot() {
@@ -320,7 +358,7 @@ actor ArtworkStore: ArtworkProviding {
             activeFetchCount -= 1
         } else {
             // Hand the slot directly to the next waiter; the count stays.
-            fetchWaiters.removeFirst().resume()
+            fetchWaiters.removeFirst().continuation.resume()
         }
     }
 

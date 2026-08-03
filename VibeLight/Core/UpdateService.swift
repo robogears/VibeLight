@@ -259,7 +259,12 @@ final class UpdateService {
             throw UpdateError.noAsset
         }
         let size = (asset["size"] as? Int64) ?? (asset["size"] as? Int).map(Int64.init) ?? 0
-        let releaseURL = (obj["html_url"] as? String).flatMap(URL.init)
+        // Validate html_url like every other URL from this JSON. It was the
+        // one field taken on trust, and it is handed straight to
+        // NSWorkspace.open — so a tampered release payload could open an
+        // arbitrary scheme/host from a click inside the app. The hardcoded
+        // fallback below means a rejected URL degrades to the right page.
+        let releaseURL = (obj["html_url"] as? String).flatMap(validatedAssetURL)
             ?? URL(string: "https://github.com/\(owner)/\(repo)/releases")!
         // Match the "<asset>.sha256" sidecar the ship process publishes next to
         // the zip (asset-name contract). Optional: older releases predate it.
@@ -434,7 +439,12 @@ final class UpdateService {
         fi
         rollback() {
           echo "rolling back"; rm -rf "$DEST"
-          if [ -n "$BAK" ]; then mv "$BAK" "$DEST"; open "$DEST"; fi
+          # $BAK is empty exactly when $DEST did not exist before the swap — a
+          # first install into /Applications. Without a fallback that path
+          # removed the half-written bundle, opened nothing, and left the user
+          # with no app at all after we had already quit.
+          if [ -n "$BAK" ]; then mv "$BAK" "$DEST"; open "$DEST"
+          else open "$NEW_APP" 2>/dev/null || true; fi
           cleanup; exit 1
         }
         # Copy the new bundle in.
@@ -526,7 +536,13 @@ private final class GitHubRedirectGuard: NSObject, URLSessionTaskDelegate, @unch
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        if let host = request.url?.host?.lowercased(),
+        // Scheme AND host. Checking the host alone let an https→http downgrade
+        // through (`http://github.com/…` is a GitHub host), which strips the
+        // only authenticity boundary this updater has — while the payload
+        // downloader's guard, which delegates to validatedAssetURL, required
+        // https all along. The two sessions must agree.
+        if let url = request.url, url.scheme == "https",
+           let host = url.host?.lowercased(),
            host == "github.com" || host == "api.github.com"
              || host.hasSuffix(".github.com") || host.hasSuffix(".githubusercontent.com") {
             completionHandler(request)
@@ -539,10 +555,29 @@ private final class GitHubRedirectGuard: NSObject, URLSessionTaskDelegate, @unch
 /// Streams a download to a temp file, reporting progress. Follows GitHub's
 /// redirect to the CDN automatically.
 private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    /// `@unchecked Sendable` with mutable state across two execution contexts —
+    /// the awaiting task sets `continuation`, and the URLSession delegate queue
+    /// reads it and writes `movedFile` — so it needs a lock, and had none. The
+    /// resume-once discipline lives in `finish` (take the continuation out under
+    /// the lock, then resume outside it), the shape MTLSDelegate already uses.
+    private let lock = NSLock()
     private var continuation: CheckedContinuation<URL, Error>?
     private let onProgress: @Sendable (Double) -> Void
     private let byteCap: Int64
     private var movedFile: URL?
+
+    private func setContinuation(_ c: CheckedContinuation<URL, Error>) {
+        lock.lock(); continuation = c; lock.unlock()
+    }
+
+    /// Resumes at most once, whichever context gets here first.
+    private func finish(_ result: Result<URL, Error>) {
+        lock.lock()
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume(with: result)
+    }
 
     private init(expectedSize: Int64, onProgress: @escaping @Sendable (Double) -> Void) {
         self.byteCap = UpdateService.byteCap(forAdvertisedSize: expectedSize)
@@ -559,7 +594,7 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         return try await withCheckedThrowingContinuation { continuation in
-            delegate.continuation = continuation
+            delegate.setContinuation(continuation)
             var request = URLRequest(url: url)
             request.setValue("VibeLight-Updater", forHTTPHeaderField: "User-Agent")
             session.downloadTask(with: request).resume()
@@ -597,8 +632,7 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         // here handed the ERROR PAGE to the checksum/unzip stage as if it were
         // the zip — failing later, with a misleading "corrupt download" story.
         if let http = downloadTask.response as? HTTPURLResponse, http.statusCode != 200 {
-            continuation?.resume(throwing: UpdateError.http(http.statusCode))
-            continuation = nil
+            finish(.failure(UpdateError.http(http.statusCode)))
             return
         }
         // The temp file is deleted right after this returns — move it now.
@@ -606,22 +640,21 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
             .appendingPathComponent("vibelight-update-\(UUID().uuidString).zip")
         do {
             try FileManager.default.moveItem(at: location, to: dest)
-            movedFile = dest
+            lock.lock(); movedFile = dest; lock.unlock()
         } catch {
-            continuation?.resume(throwing: error)
-            continuation = nil
+            finish(.failure(error))
         }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock(); let moved = movedFile; lock.unlock()
         if let error {
-            continuation?.resume(throwing: error)
-        } else if let movedFile {
-            continuation?.resume(returning: movedFile)
+            finish(.failure(error))
+        } else if let moved {
+            finish(.success(moved))
         } else {
-            continuation?.resume(throwing: UpdateError.network)
+            finish(.failure(UpdateError.network))
         }
-        continuation = nil
     }
 }
 #else

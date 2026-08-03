@@ -84,7 +84,11 @@ enum IdentityStore {
     private static var keyURL: URL { directory.appendingPathComponent("client.key") }
     private static let uniqueIDKey = "vibelight.uniqueid"
 
-    private static func uniqueID() -> String {
+    /// The client's `uniqueid`, generated once and persisted. THE single owner
+    /// of this key — HostAPIClient used to be a second reader/writer with a
+    /// stricter validity rule, so a value accepted here was silently rotated
+    /// there, changing the id the host uses for its per-client bookkeeping.
+    static func uniqueID() -> String {
         if let existing = UserDefaults.standard.string(forKey: uniqueIDKey), !existing.isEmpty {
             return existing
         }
@@ -228,8 +232,12 @@ enum IdentityStore {
             "-days", "7300", "-nodes", "-sha256",
             "-subj", "/CN=NVIDIA GameStream Client",
         ]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        // nullDevice, NOT Pipe(): nothing ever read these, so openssl blocked
+        // forever the moment it filled the 64 KB pipe buffer — and this runs
+        // synchronously on the MAIN ACTOR during first-launch startup, so the
+        // hang would be a permanently beachballed app with no window.
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
             process.waitUntilExit()

@@ -68,6 +68,14 @@ enum AppRelocator {
         exec >> "$LOGDIR/update.log" 2>&1
         echo "=== $(date) relocate src=$SRC dest=$DEST ==="
         for i in $(seq 1 150); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.2; done
+        # The wait can EXPIRE with the app still running (a modal holding
+        # termination, a hung quit). The updater's relauncher aborts here; this
+        # one proceeded regardless and could ditto a live bundle and then
+        # rm -rf the source out from under a running process. Nothing has been
+        # touched yet, so aborting is completely safe.
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+          echo "app did not exit; aborting relocate"; open "$SRC"; rm -f "$0"; exit 1
+        fi
         mkdir -p "$(dirname "$DEST")"
 
         # Move the existing install ASIDE rather than deleting it. This used to

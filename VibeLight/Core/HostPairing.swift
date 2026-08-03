@@ -168,7 +168,7 @@ final class HostPairing: @unchecked Sendable {
         req.setValue("close", forHTTPHeaderField: "Connection")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = timeout
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await Self.boundedData(URLSession.shared, req)
         return String(data: data, encoding: .utf8) ?? ""
     }
 
@@ -185,8 +185,24 @@ final class HostPairing: @unchecked Sendable {
         let delegate = PairTLSDelegate(identity: identity, serverCertDER: GameStreamCrypto.pemToDER(serverCertPEM))
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        let (data, _) = try await session.data(for: req)
+        let (data, _) = try await Self.boundedData(session, req)
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// Every other host read in the app is byte-capped; the pairing client never
+    /// was, and it is the one that talks over PLAINTEXT HTTP — so anyone on the
+    /// path, not just the host, could stream unbounded bytes into memory. The
+    /// largest legitimate reply is a hex-encoded PEM certificate, so 1 MB is
+    /// already enormous. Rejects on the declared length before reading a body
+    /// byte, and again on what actually arrives.
+    private static let pairingByteCap = 1 << 20
+
+    private static func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
+        let (data, response) = try await session.data(for: request)
+        if response.expectedContentLength > Int64(pairingByteCap) || data.count > pairingByteCap {
+            throw URLError(.dataLengthExceedsMaximum)
+        }
+        return (data, response)
     }
 
     /// Removes our pairing session (and any stale half-open one) on the host.

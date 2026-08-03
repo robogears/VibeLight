@@ -17,7 +17,6 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     // by `lock`; everything else is immutable and Sendable.
 
     private let identityProvider: ClientIdentityProvider
-    private let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.vibelight.VibeLight", category: "HostAPIClient")
 
     /// Sent as `uniqueid` on every request. Sunshine never authorizes by it,
@@ -56,10 +55,15 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         try session(for: host)
     }
 
-    init(identityProvider: ClientIdentityProvider, defaults: UserDefaults = .standard) {
+    /// `uniqueID` is supplied by the caller — the same value `IdentityStore`
+    /// already owns and `HostPairing` already receives. It used to be
+    /// regenerated here from a SECOND reader of the same UserDefaults key with a
+    /// stricter validity rule (exactly 16 characters), so a value IdentityStore
+    /// happily accepted was silently overwritten by this class, changing the id
+    /// the host uses for its per-client bookkeeping mid-life.
+    init(identityProvider: ClientIdentityProvider, uniqueID: String? = nil) {
         self.identityProvider = identityProvider
-        self.defaults = defaults
-        self.uniqueID = Self.persistentUniqueID(in: defaults)
+        self.uniqueID = uniqueID ?? IdentityStore.uniqueID()
     }
 
     // MARK: - HostAPIProviding
@@ -82,11 +86,31 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
                 let request = try makeRequest(
                     address: candidate.host, port: candidate.port - httpsPortOffset, path: "/serverinfo")
                 data = try await boundedData(session, request).0
-            } catch let error as URLError {
-                // Task cancellation surfaces as URLError.cancelled too (and so
-                // does our own pin-mismatch rejection) — only genuine Swift
-                // cancellation should escape here.
+            } catch {
+                // Per-ADDRESS failures advance to the next candidate; verdicts
+                // ABOUT THE HOST do not. This clause used to catch only
+                // URLError, so a malformed address (makeRequest throws
+                // .unreachable) abandoned the remaining candidates — but
+                // widening it naively is worse, because it also swallows the
+                // byte-cap rejection, which means the host DID answer and is a
+                // definitive answer about it.
                 if Task.isCancelled { throw CancellationError() }
+                if let apiError = error as? HostAPIError {
+                    switch apiError {
+                    case .unreachable:
+                        // This address is no good; try the next one.
+                        logger.debug("serverinfo via \(candidate.host, privacy: .public) failed: \(apiError.localizedDescription, privacy: .public)")
+                        continue
+                    default:
+                        // .malformedResponse (over-cap body, unusable session)
+                        // and friends are about the host, not the route.
+                        throw apiError
+                    }
+                }
+                guard let error = error as? URLError else {
+                    logger.debug("serverinfo via \(candidate.host, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
                 // Ask the delegate whether IT rejected the handshake on the
                 // pin, rather than reading that into URLError.cancelled — which
                 // also covers a session invalidated mid-request and other
@@ -764,28 +788,14 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
 
     // MARK: - Identity helpers
 
-    /// Stable 16-hex-char uniqueid, synthesized once and persisted. Sunshine
-    /// doesn't authorize by it, so it needn't match Moonlight's — it only has
-    /// to be present and consistent.
-    private static func persistentUniqueID(in defaults: UserDefaults) -> String {
-        let key = "vibelight.uniqueid"
-        if let existing = defaults.string(forKey: key), existing.count == 16 {
-            return existing
-        }
-        let fresh = String(format: "%016llx", UInt64.random(in: UInt64.min...UInt64.max))
-        defaults.set(fresh, forKey: key)
-        return fresh
-    }
-
     /// PEM → DER for byte-exact pinning. The pinned cert is stored exactly as
     /// pairing captured it (PEM text); the TLS layer hands us DER.
+    /// Defers to the ONE PEM parser. Pairing and pinning read the same stored
+    /// `serverCertPEM`, and having two parsers meant they could disagree on what
+    /// it contained (this one took the first block; the other concatenated every
+    /// block in the file).
     private static func derCertificate(fromPEM pem: Data) -> Data? {
-        guard let text = String(data: pem, encoding: .utf8),
-              let begin = text.range(of: "-----BEGIN CERTIFICATE-----"),
-              let end = text.range(of: "-----END CERTIFICATE-----"),
-              begin.upperBound <= end.lowerBound else { return nil }
-        let base64 = String(text[begin.upperBound..<end.lowerBound])
-        return Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
+        GameStreamCrypto.pemToDER(pem)
     }
 }
 

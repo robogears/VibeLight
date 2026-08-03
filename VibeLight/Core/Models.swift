@@ -220,21 +220,31 @@ struct StreamSettings: Sendable, Codable, Equatable {
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let f = StreamSettings.fallback
+        // `decodeIfPresent` is lenient about MISSING keys but not about unknown
+        // VALUES: a present enum key whose raw value this build doesn't know
+        // THROWS, and the throw escapes the whole init — so one renamed case
+        // reset every setting to defaults and emptied every preset slot that
+        // contained it. Decode enums via their raw value and fall back per
+        // field, so an unknown value costs exactly that field.
+        func enumValue<T: RawRepresentable>(_ key: CodingKeys, _ fallback: T) -> T where T.RawValue == String {
+            (try? c.decodeIfPresent(String.self, forKey: key)).flatMap { $0 }
+                .flatMap(T.init(rawValue:)) ?? fallback
+        }
         width = try c.decodeIfPresent(Int.self, forKey: .width) ?? f.width
         height = try c.decodeIfPresent(Int.self, forKey: .height) ?? f.height
         fps = try c.decodeIfPresent(Int.self, forKey: .fps) ?? f.fps
         bitrateKbps = try c.decodeIfPresent(Int.self, forKey: .bitrateKbps) ?? f.bitrateKbps
-        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? f.codec
+        codec = enumValue(.codec, f.codec)
         hdr = try c.decodeIfPresent(Bool.self, forKey: .hdr) ?? f.hdr
-        self.decoder = try c.decodeIfPresent(VideoDecoder.self, forKey: .decoder) ?? f.decoder
+        self.decoder = enumValue(.decoder, f.decoder)
         yuv444 = try c.decodeIfPresent(Bool.self, forKey: .yuv444) ?? f.yuv444
-        audio = try c.decodeIfPresent(AudioConfig.self, forKey: .audio) ?? f.audio
+        audio = enumValue(.audio, f.audio)
         muteHostSpeakers = try c.decodeIfPresent(Bool.self, forKey: .muteHostSpeakers) ?? f.muteHostSpeakers
         muteOnFocusLoss = try c.decodeIfPresent(Bool.self, forKey: .muteOnFocusLoss) ?? f.muteOnFocusLoss
         absoluteMouse = try c.decodeIfPresent(Bool.self, forKey: .absoluteMouse) ?? f.absoluteMouse
         swapMouseButtons = try c.decodeIfPresent(Bool.self, forKey: .swapMouseButtons) ?? f.swapMouseButtons
         reverseScrolling = try c.decodeIfPresent(Bool.self, forKey: .reverseScrolling) ?? f.reverseScrolling
-        captureSystemKeys = try c.decodeIfPresent(CaptureSystemKeys.self, forKey: .captureSystemKeys) ?? f.captureSystemKeys
+        captureSystemKeys = enumValue(.captureSystemKeys, f.captureSystemKeys)
         swapGamepadButtons = try c.decodeIfPresent(Bool.self, forKey: .swapGamepadButtons) ?? f.swapGamepadButtons
         backgroundGamepad = try c.decodeIfPresent(Bool.self, forKey: .backgroundGamepad) ?? f.backgroundGamepad
         touchControls = try c.decodeIfPresent(Bool.self, forKey: .touchControls) ?? f.touchControls
