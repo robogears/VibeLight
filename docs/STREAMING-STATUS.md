@@ -58,6 +58,19 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
     launch → the TV goes BLACK on every stream RE-launch (fixed 2026-07-07). The
     layer is a lifetime `let`, so its `weak attached` cache never nils on its own.
 
+## Platform behaviours that are NOT bugs
+
+- **The PS/Home button needs two presses on iPadOS, by design.** iPadOS shows
+  the user a note saying to press the PlayStation button twice: the first press
+  is consumed by the system and only the second reaches the foreground app.
+  `preferredSystemGestureState = .disabled` is still required (without it the
+  button never arrives at all) but does not opt out of that reservation.
+  Device-logged: every press produces a clean down/up pair leaving the iPad, so
+  nothing client-side is dropping it. Ruled out and reverted while chasing this:
+  the aggregate `valueChangedHandler` missing Home, a missing minimum-hold latch
+  (the one START genuinely needs for old MFi pads), and the announced controller
+  type making Sunshine build a virtual DS4 instead of an X360 pad.
+
 ## Remaining roadmap (in rough priority)
 
 - HEVC/HDR (`supportedVideoFormats |= H265/H265_MAIN10`, HEVC path exists in

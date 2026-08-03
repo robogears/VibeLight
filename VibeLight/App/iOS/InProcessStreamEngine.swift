@@ -326,16 +326,8 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored private var announcedSlots: Set<UInt8> = []
     /// Holds START down for ≥100 ms after a Menu press: old MFi pads emit an
     /// instantaneous down+up that games otherwise miss.
-    /// Minimum-hold latches, keyed by the button flag being held. Some buttons
-    /// report an instantaneous down+up that the host never sees as a real press
-    /// (see the latch in `forward`). START has needed this since old MFi pads;
-    /// GUIDE needs it too — that is the "PS button takes two presses" bug.
-    @ObservationIgnored private var stickyUntil: [Int32: ContinuousClock.Instant] = [:]
-    @ObservationIgnored private weak var stickyPad: GCExtendedGamepad?
-    /// Diagnostic only — see the guide logging in `forward`.
-    @ObservationIgnored private var lastLoggedGuide = false
-    /// EXPERIMENT flag — see the block in `ensureAnnounced`. Temporary.
-    @ObservationIgnored private var announceAsXboxExperiment = false
+    @ObservationIgnored private var menuStickyUntil: ContinuousClock.Instant?
+    @ObservationIgnored private weak var menuStickyPad: GCExtendedGamepad?
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -386,22 +378,7 @@ final class InProcessStreamEngine: StreamEngine {
         guard let session else { return false }
         let pad = controller.extendedGamepad
         var type = LiControllerType.unknown
-        // EXPERIMENT (guide-button double-press): announce every pad as an Xbox
-        // controller. Device logging proved the GUIDE press leaves the iPad
-        // correctly on the first press, so the double-press is downstream —
-        // announcing a DualSense makes Sunshine create a virtual DS4, and
-        // Steam routes a DS4 "PS" button through PlayStation Configuration
-        // Support rather than the plain guide path. An X360 virtual pad's guide
-        // button is the reliable one-press route into Big Picture.
-        //
-        // Cost if this works: host-side glyphs show Xbox letters instead of PS
-        // shapes (the ON-4 passthrough). That is a preference worth exposing as
-        // a setting — but only once we know it actually fixes the button.
-        // Revert this block to restore true type reporting.
-        if pad != nil { announceAsXboxExperiment = true }
-        if announceAsXboxExperiment {
-            type = LiControllerType.xbox
-        } else if pad is GCXboxGamepad {
+        if pad is GCXboxGamepad {
             type = LiControllerType.xbox
         } else if pad is GCDualShockGamepad || pad is GCDualSenseGamepad {
             type = LiControllerType.ps
@@ -442,6 +419,23 @@ final class InProcessStreamEngine: StreamEngine {
         }
     }
 
+    /// PS/HOME NEEDS TWO PRESSES ON iPadOS, AND THAT IS BY DESIGN — DO NOT
+    /// "FIX" IT. iPadOS itself tells the user to press the PlayStation button
+    /// twice: the FIRST press is consumed by the system, and only the second
+    /// reaches the foreground app. Setting `preferredSystemGestureState` to
+    /// `.disabled` (below) is still required and still correct — without it the
+    /// button never reaches us at all — but it does not opt out of the
+    /// first-press reservation.
+    ///
+    /// This was chased three times before the answer turned out to be printed on
+    /// the iPad. Device logging settled it: every press produces a clean
+    /// `raw=down sent=DOWN` / `raw=up sent=up` pair, so the guide press leaves
+    /// the device correctly on the first press — the system simply acts on that
+    /// first one too. Things that are NOT the cause, all measured and reverted:
+    /// the aggregate `valueChangedHandler` not firing for Home; a missing
+    /// minimum-hold latch like the one START needs; and the pad being announced
+    /// as a DualSense (which would make Sunshine build a virtual DS4).
+    ///
     /// iOS reserves the PS/Home ("Guide"), Share, and Options buttons for its own
     /// system gestures by default, so those presses never reach the app and the
     /// host never sees them (the Steam/PS overlay won't open in-game). Disabling
@@ -596,46 +590,23 @@ final class InProcessStreamEngine: StreamEngine {
         if pad.leftThumbstickButton?.isPressed == true { flags |= 0x0040 }
         if pad.rightThumbstickButton?.isPressed == true { flags |= 0x0080 }
 
-        // Minimum-hold latch. Some buttons report an instantaneous down+up, and
-        // a press the host observes for ~0 ms is a press it ignores — the button
-        // appears not to work at all, or to need a second, luckier press.
-        //
-        // START has needed this since old MFi pads. GUIDE (PS/Home) has exactly
-        // the same problem and never got the same treatment, which is why
-        // pressing PS once did nothing and pressing it twice opened the Steam
-        // menu: the second press overlapped the first well enough to be seen.
-        //
-        // Latch the flag for 100 ms and schedule a trailing re-send, so the
-        // RELEASE still reaches the host even if no further pad events arrive.
+        // Menu minimum-hold: old MFi pads report an instantaneous down+up for
+        // Menu; latch START for 100 ms so games see a real press. A trailing
+        // re-send delivers the release even if no further pad events arrive.
         let now = ContinuousClock.now
-        func latch(_ flag: Int32, pressed: Bool) {
-            if pressed {
-                if stickyUntil[flag] == nil {
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(for: .milliseconds(120))
-                        guard let self else { return }
-                        self.stickyUntil[flag] = nil
-                        if let sticky = self.stickyPad { self.forward(sticky) }
-                    }
+        if pad.buttonMenu.isPressed {
+            if menuStickyUntil == nil {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(120))
+                    guard let self else { return }
+                    self.menuStickyUntil = nil
+                    if let sticky = self.menuStickyPad { self.forward(sticky) }
                 }
-                stickyUntil[flag] = now.advanced(by: .milliseconds(100))
-                stickyPad = pad
-            } else if let until = stickyUntil[flag], now < until, pad === stickyPad {
-                flags |= flag
             }
-        }
-        latch(0x0010, pressed: pad.buttonMenu.isPressed)                 // START
-        latch(0x0400, pressed: pad.buttonHome?.isPressed == true)        // GUIDE
-
-        // Diagnostic for the "PS button needs two presses" report. Logs only on
-        // a GUIDE transition, so it is silent during play. Remove once the
-        // behaviour is confirmed on device.
-        let guideNow = (flags & 0x0400) != 0
-        if guideNow != lastLoggedGuide {
-            lastLoggedGuide = guideNow
-            NSLog("[VibeLight][guide] raw=%@ sent=%@ slot=%d",
-                  (pad.buttonHome?.isPressed == true) ? "down" : "up",
-                  guideNow ? "DOWN" : "up", slot)
+            menuStickyUntil = now.advanced(by: .milliseconds(100))
+            menuStickyPad = pad
+        } else if let until = menuStickyUntil, now < until, pad === menuStickyPad {
+            flags |= 0x0010
         }
 
         // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~2s (with a

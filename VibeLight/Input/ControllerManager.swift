@@ -312,34 +312,9 @@ final class ControllerManager {
                     self?.streamForwarder?(pad)
                 }
             }
-            // The PS/Home ("Guide") button needs its OWN handler.
-            //
-            // `valueChangedHandler` above is the aggregate handler for the
-            // EXTENDED GAMEPAD profile, but Home lives in the PHYSICAL input
-            // profile — and on iOS a Home press on its own does not reliably
-            // fire the aggregate. The symptom is precise and confusing: press
-            // once and nothing reaches the host; press again (or nudge a stick
-            // while holding it) and the aggregate finally fires, reads
-            // `buttonHome.isPressed` as already-down, and the Steam/guide menu
-            // opens — so the button "needs two presses".
-            //
-            // Subscribing to the element directly delivers press AND release on
-            // the first tap. Forwarding the whole pad keeps one code path: the
-            // engine always sends a complete snapshot, so a duplicate forward
-            // from both handlers is idempotent.
-            if let home = controller.physicalInputProfile.buttons[GCInputButtonHome] {
-                home.pressedChangedHandler = { [weak self] _, _, _ in
-                    MainActor.assumeIsolated {
-                        guard let pad = controller.extendedGamepad else { return }
-                        self?.streamForwarder?(pad)
-                    }
-                }
-            }
             return
         }
         pad.valueChangedHandler = nil
-        // Launcher mode: hand Home back to iOS (see setSystemGestures).
-        controller.physicalInputProfile.buttons[GCInputButtonHome]?.pressedChangedHandler = nil
 
         // D-pad and left thumbstick are one logical directional source;
         // whichever produced input last wins (see directionalInputChanged).
