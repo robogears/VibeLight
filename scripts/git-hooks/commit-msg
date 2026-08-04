@@ -22,8 +22,31 @@ msg_file="$1"
 fail=0
 block() { echo "  ✖ $1"; fail=1; }
 
-# Ignore comment lines git strips anyway, and honour a per-line opt-out.
-body="$(grep -v '^#' "$msg_file" | grep -v 'topology-ok' || true)"
+# Scan '#'-leading lines TOO. The obvious version skipped them as "comments git
+# strips anyway" — but that is only true for editor commits (cleanup=strip).
+# `git commit -m` uses cleanup=whitespace, which KEEPS them, so a message like
+#   git commit -m "fix pairing
+#   # tested against <real ip>"
+# passed the guard and landed the address in the permanent log. Reproduced
+# before fixing; covered by test-commit-msg.sh.
+#
+# Everything from git's scissors line down IS dropped by git, and under
+# `commit -v` it contains the whole diff — which pre-commit already inspects,
+# and whose removed/context lines would produce false blocks. So cut there and
+# scan every line above it.
+raw="$(sed '/^# ------------------------ >8 ------------------------$/,$d' "$msg_file")"
+cut_status=$?
+# This cut now uses sed, so it inherits the same fail-open hazard as the
+# sanitizer below: a broken sed returns nothing, an empty body exits 0, and the
+# guard is off while looking fine. Caught by test-commit-msg.sh the first time
+# this cut was added — hence the check.
+if [ "$cut_status" -ne 0 ] || { [ -s "$msg_file" ] && [ -z "$raw" ]; }; then
+  echo "  ✖ commit-msg: could not read the message (sed exit $cut_status)."
+  echo ""
+  echo "commit-msg: refusing to commit — a guard that cannot check must not approve."
+  exit 1
+fi
+body="$(grep -v 'topology-ok' <<<"$raw" || true)"
 [ -z "$body" ] && exit 0
 
 candidates="$(sed -E 's/(^|[^0-9.])192\.168\.1\.(10|20|255)([^0-9.]|$)/\1<placeholder>\3/g;

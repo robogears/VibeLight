@@ -61,7 +61,8 @@ Releases are cut locally and published to GitHub Releases; the macOS app
 self-updates from `releases/latest`. Do NOT auto-install builds to
 /Applications — William updates through the in-app updater.
 
-1. Bump `MARKETING_VERSION` in `project.yml` (3 places), rewrite
+1. Bump `MARKETING_VERSION` in `project.yml` (2 places — was 3 before the
+   VibeLight-Dev target was removed in 0.2.1), rewrite
    `RELEASE_NOTES.md` (whole file = the release body), commit, tag `vX.Y.Z`.
 2. Release build → stage a copy → `scripts/embed-helper.sh` → assets:
    `VibeLight-X.Y.Z-arm64.zip` (updater consumes this, in-place swap) +
