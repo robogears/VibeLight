@@ -1027,7 +1027,7 @@ final class AppState {
     /// buddy, POST /pair, then poll until the user approves the PIN on the PC.
     func beginMoonDeckPairing() {
         guard case .moonDeckSetup(let hostID)? = overlay,
-              let host = hosts.first(where: { $0.id == hostID }),
+              let host = hostForCapturedID(hostID),
               let addr = moonDeckConnectAddress(for: host) else { return }
         let port = Int(moonDeckPortText.trimmingCharacters(in: .whitespaces)) ?? MoonDeckBuddyClient.defaultPort
         let pin = String(format: "%04d", Int.random(in: 0...9999))
@@ -1110,7 +1110,7 @@ final class AppState {
     /// Fire the restart. Called from the confirm overlay's "Restart" and from the
     /// setup overlay's "Restart now" (right after a successful pair).
     func performRestartPC(hostID: String) {
-        guard let host = hosts.first(where: { $0.id == hostID }),
+        guard let host = hostForCapturedID(hostID),
               let addr = moonDeckConnectAddress(for: host),
               let cfg = moonDeckConfig(for: host) else { return }
         moonDeckRestarting = true
@@ -1403,7 +1403,16 @@ final class AppState {
 
     private func rememberApps(_ list: [StreamApp], for host: StreamHost) {
         guard !list.isEmpty else { return }
-        appCache[host.id] = list
+        // Key on the host's id AS IT IS NOW, not as it was when the caller
+        // captured it. `refreshSelectedHost` holds a value-type snapshot taken
+        // before `upgradeAddedHost` learned the real UUID, so a newly added
+        // computer's FIRST app list was filed under `added:<ip>` and then
+        // deleted two lines later by the prune below — whose `live` set already
+        // held the UUID. The cache existed precisely so a sleeping PC doesn't
+        // blank the shelf, and for that computer it stayed empty until the next
+        // poll 12 s later.
+        let key = currentID(of: host)
+        appCache[key] = list
         // Bounded: only the hosts that still exist, so a long-lived install
         // can't accumulate app lists for computers that are long gone.
         let live = Set(addedHosts.map { $0.uuid ?? "added:\($0.ip)" })
@@ -1414,7 +1423,30 @@ final class AppState {
     }
 
     private func rememberedApps(for host: StreamHost) -> [StreamApp] {
-        appCache[host.id] ?? host.apps
+        appCache[currentID(of: host)] ?? appCache[host.id] ?? host.apps
+    }
+
+    /// A host's id is not stable: `upgradeAddedHost` swaps the synthetic
+    /// `added:<ip>` for the real UUID the first time /serverinfo answers, and
+    /// the 12 s poll can do that while a caller is still holding a snapshot
+    /// taken before the swap. Re-resolve through the address, which does not
+    /// change, before using an id as a key or a lookup.
+    private func currentID(of host: StreamHost) -> String {
+        guard let ip = host.manualAddress,
+              let added = addedHosts.first(where: { $0.ip == ip }) else { return host.id }
+        return added.uuid ?? "added:\(added.ip)"
+    }
+
+    /// Resolves a host id captured when a card was opened. Same instability as
+    /// `currentID(of:)`, seen from the other side: `.confirmRemoveHost` and
+    /// friends store only the id STRING, so an id swap while the card sits open
+    /// made the destructive button a silent no-op — it took the not-found
+    /// branch and just dismissed, leaving the computer in the list.
+    func hostForCapturedID(_ id: String) -> StreamHost? {
+        if let host = hosts.first(where: { $0.id == id }) { return host }
+        guard id.hasPrefix("added:") else { return nil }
+        let ip = String(id.dropFirst("added:".count))
+        return hosts.first { $0.manualAddress == ip }
     }
 
     /// Filters host pseudo-apps out of the library (permission placeholder,
@@ -2080,7 +2112,7 @@ final class AppState {
                     addHost()
                 } else if let id = focus.focusedItemID, id.hasPrefix("hostmenu:") {
                     let hostID = String(id.dropFirst("hostmenu:".count))
-                    if let host = hosts.first(where: { $0.id == hostID }) {
+                    if let host = hostForCapturedID(hostID) {
                         // Unpaired → start pairing; paired → switch to it.
                         if needsPairing(host) { beginPairing(host) }
                         else { selectHost(hostID); dismissOverlay() }
@@ -2129,7 +2161,7 @@ final class AppState {
             switch event {
             case .select:
                 if focus.focusedItemID == "removehost:yes",
-                   let host = hosts.first(where: { $0.id == hostID }) {
+                   let host = hostForCapturedID(hostID) {
                     dismissOverlay(); removeAddedHost(host)
                 } else { dismissOverlay() }
             case .back: dismissOverlay()
