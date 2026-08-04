@@ -1,31 +1,45 @@
-# VibeLight v0.2.0 — VibeLight stands on its own
+# VibeLight v0.2.1 — Type on your PC from the iPad, and presets a thumb away
 
-*VibeLight no longer shares anything with Moonlight. It has its own identity, its own computer list, and its own settings — so installing, resetting or deleting Moonlight can't change VibeLight underneath you. **This is a clean break: you'll pair your computers once more.***
+*Nothing to redo this time — no re-pairing, no lost settings. Update and carry on. This release is mostly about the two places you actually touch: your presets, and the iPad while a game is running.*
 
-### ⚠️ Read this first — you'll re-pair your computers
-Until now VibeLight quietly reused Moonlight's pairing file. It worked, but it meant your computers and your pairing lived inside another app's data, and anything that touched Moonlight could break VibeLight without warning.
+### ⌨️ Type on your PC with the iPad's keyboard
+A keyboard button now sits under the ✕ while you're streaming. Tap it and the iPad's own keyboard slides up — what you type goes straight to the PC, as if a keyboard were plugged into it. Chat boxes, launcher search fields, that one game that wants you to name your save.
 
-That link is now cut, which means **after updating:**
-- Computers that came from Moonlight **won't be listed** — add them again with **Computers ▸ Add computer by IP address**.
-- Pairing happens **in VibeLight** (enter the PIN on your PC). You never need to open Moonlight again — and pairing there won't help, because VibeLight now has its own identity.
-- Your presets, theme and settings are untouched.
+It's the real iPadOS keyboard, so you get every symbol page, dictation, and the layout you already know. Autocorrect is off on purpose: "w" needs to arrive as "w", not as "We".
 
-*A one-time chore, and after it VibeLight is genuinely self-contained.*
+While it's up, only the part of the screen the keyboard actually covers stops passing taps through to the game — so you can tap a text field first and then type into it. That holds whether the keyboard is docked at the bottom, split in half, or floating wherever you dragged it.
 
-### 🔗 Completely separate from Moonlight
-- VibeLight generates and keeps **its own client identity**, stored with VibeLight.
-- Its **computers, apps and stream settings** are its own — nothing is read from, or written to, Moonlight's preferences.
-- The bundled streaming helper got the same treatment, so the two apps no longer trade data behind the scenes.
-- Moonlight can be uninstalled with no effect on VibeLight. You don't need it installed at all.
+### 👋 The stream buttons get out of the way
+The ✕ and keyboard buttons show for about 7 seconds when a game starts, then slide off the right edge. Swipe in from the top-right corner and they come back, following your finger.
 
-### 💬 Errors that tell you the truth
-- A computer that's **awake but not answering** no longer shows as "asleep" — you get *"isn't answering — restart Sunshine/Vibepollo on the PC"*, and VibeLight stops offering to wake a machine that's already on.
-- **"Not paired"** now says what to do about it, in VibeLight, instead of sending you to Moonlight.
-- A computer whose **security certificate changed** is called out specifically — that usually means its streaming software was reinstalled, but it can also mean a different machine is answering on that address.
+Once they're gone they stop taking taps entirely — no invisible button sitting on top of your game. Using either one resets the timer, and raising the keyboard keeps them put, since those are exactly the two buttons you want mid-sentence.
 
-### 🎯 Streaming reliability
-- **Starting a game no longer times out too early.** Launching does real work on the PC (spinning up the encoder, sometimes creating a display), which could take longer than VibeLight was willing to wait — so it gave up while the PC carried on and started streaming to nobody. Launches now get room to breathe, and a launch that *does* fail cleans up after itself instead of leaving a stuck session that broke the next attempt.
-- **Computers added by IP now learn their real identity** from the PC, which fixes a case where the streaming helper refused to connect to a computer it had been given.
+### 🎛️ Presets moved under your games
+They used to live on the right edge, a whole shelf-width away. Now they sit in a row directly beneath the games: **press down** from any game to reach them, and up to go back to the exact game you left.
+
+They're a proper part of the navigation now rather than a bolt-on, so the mouse, a controller, the keyboard and touch all agree about what's selected — and your slot position follows you between the home screen and Settings. Your games also scroll all the way to the edge of the screen now, instead of fading out early to make room for the old rail.
+
+### 🛡️ Confirmations that don't bite
+"Forget Computer?" and "Clear Preset?" are meant to open with **Cancel** selected. They did — until the first time you moved to or hovered the red button, after which every later opening started with the destructive option already selected, one press away from deleting something. Fixed.
+
+Right-clicking a preset on the home screen and choosing **Clear** now asks first too, like it already did everywhere else.
+
+### 🎮 The PlayStation button needs two presses — that's Apple, not us
+If you've wondered why the PS button takes two presses on iPad: the first opens iOS's own Game Overlay, and only the second reaches the game. iPadOS says so itself, on screen, naming VibeLight. There's no way to opt out, so the in-app shortcut list now reads "PS / Xbox button ×2" instead of sending you hunting for a bug that was never there.
+
+VibeLight also identifies itself to iOS as a game now, which switches on Game Mode — that meaningfully lowers controller latency over Bluetooth.
+
+### 🔒 Reliability
+Two full audits and a deep review of every change went into this release. What you'd actually notice:
+
+- Your game shelf no longer goes blank on a newly added computer if the PC sleeps right after you add it.
+- **Forget Computer** always works — there was a window where the button quietly did nothing and left the computer in the list.
+- Limits on how much a computer can make the app hold now genuinely hold. Two of them were checking the size *after* loading everything into memory, which on an iPad could mean the app being killed mid-pairing.
+- The iPad's encryption library moved up to mbedTLS 3.6.7.
+- Errors during pairing and PC restarts say what actually happened instead of collapsing into "offline".
+
+### 🧹 Housekeeping
+The separate "VibeLight Dev" build is gone — unused for months, and it only cluttered the project. This doesn't affect the app you use.
 
 ---
 *Install (Mac): open the `.dmg` and drag VibeLight to Applications. Already on an earlier version? VibeLight offers this update in-app.*
