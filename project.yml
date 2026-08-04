@@ -138,6 +138,22 @@ targets:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: VibeLight connects to your gaming PC on your local network to list games, fetch box art, and stream them.
         GCSupportsControllerUserInteraction: true
+        # Declare the iOS app a GAME. Both macOS targets already do this
+        # (INFOPLIST_KEY_LSApplicationCategoryType below); the iOS target — the
+        # one that actually has controllers attached — declared neither key,
+        # which is also a straight parity gap with moonlight-ios.
+        #
+        # CERTAIN benefit: iOS 18 Game Mode. Sustained CPU/GPU priority and,
+        # more relevant here, markedly lower Bluetooth latency for game
+        # controllers. For an app whose whole job is putting a pad in front of a
+        # streamed game, that is a win on its own.
+        #
+        # UNPROVEN benefit: iOS routes controller system buttons differently for
+        # apps it classifies as games, so this MAY affect the PS/Home button's
+        # first-press reservation. Do not assume it does — see the note at
+        # setSystemGestures for what has already been ruled out.
+        LSApplicationCategoryType: public.app-category.games
+        LSSupportsGameMode: true
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         # Opt into multiple scenes so iOS creates an EXTERNAL-DISPLAY scene when a
