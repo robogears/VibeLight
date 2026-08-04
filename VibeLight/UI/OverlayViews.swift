@@ -212,7 +212,11 @@ private struct CheatSheetCard: View {
                 sheetSection("During a stream")
                 keyRow("Start+Select+L1+R1", "Leave the stream — game keeps running")
                 keyRow("Tap ✕", "Leave the stream (top-right)")
-                keyRow("PS / Xbox button", "Opens the game's own overlay (Steam, PS)")
+                // Press TWICE is iPadOS's rule, not ours: the first press opens
+                // Apple's Game Overlay, and iOS itself tells the user to press
+                // again to reach the app. Saying "press it" here sent people
+                // hunting for a bug in VibeLight.
+                keyRow("PS / Xbox button ×2", "Opens the game's own menu (Steam, PS) — iOS takes the first press")
                 keyRow("Touch", "Tap = click, drag = cursor (Settings ▸ Input)")
                 #else
                 sheetSection("During a stream")

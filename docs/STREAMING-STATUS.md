@@ -60,16 +60,19 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 
 ## Platform behaviours that are NOT bugs
 
-- **The PS/Home button needs two presses on iPadOS, by design.** iPadOS shows
-  the user a note saying to press the PlayStation button twice: the first press
-  is consumed by the system and only the second reaches the foreground app.
+- **The PS/Home button needs two presses on iPadOS, by design.** PROVEN by
+  iOS 18's Game Overlay stating it on screen, naming the app: *"Features in
+  VibeLight may be designed to use 'PS Button'. To access this functionality
+  instead of the Game Overlay, press [PS] twice."* The first press opens
+  Apple's Game Overlay; the second reaches the app. There is no opt-out.
   `preferredSystemGestureState = .disabled` is still required (without it the
-  button never arrives at all) but does not opt out of that reservation.
-  Device-logged: every press produces a clean down/up pair leaving the iPad, so
-  nothing client-side is dropping it. Ruled out and reverted while chasing this:
-  the aggregate `valueChangedHandler` missing Home, a missing minimum-hold latch
-  (the one START genuinely needs for old MFi pads), and the announced controller
-  type making Sunshine build a virtual DS4 instead of an X360 pad.
+  button never arrives) but does not override the Overlay's claim on press one.
+  Tried and reverted first: subscribing to the Home element directly; a
+  minimum-hold latch on GUIDE; announcing pads as Xbox so Sunshine builds a
+  virtual X360 pad instead of a DS4; and device logging, which could only see
+  the presses that were DELIVERED, never the ones the system had taken. The
+  in-stream cheat sheet now says "PS / Xbox button ×2" so users aren't sent
+  hunting for a bug that isn't there.
 
 ## Remaining roadmap (in rough priority)
 

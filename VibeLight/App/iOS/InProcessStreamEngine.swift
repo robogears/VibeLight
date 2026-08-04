@@ -419,22 +419,33 @@ final class InProcessStreamEngine: StreamEngine {
         }
     }
 
-    /// PS/HOME NEEDS TWO PRESSES ON iPadOS, AND THAT IS BY DESIGN — DO NOT
-    /// "FIX" IT. iPadOS itself tells the user to press the PlayStation button
-    /// twice: the FIRST press is consumed by the system, and only the second
-    /// reaches the foreground app. Setting `preferredSystemGestureState` to
-    /// `.disabled` (below) is still required and still correct — without it the
-    /// button never reaches us at all — but it does not opt out of the
-    /// first-press reservation.
+    /// PS/HOME NEEDS TWO PRESSES ON iPadOS, BY DESIGN — DO NOT "FIX" IT.
     ///
-    /// This was chased three times before the answer turned out to be printed on
-    /// the iPad. Device logging settled it: every press produces a clean
-    /// `raw=down sent=DOWN` / `raw=up sent=up` pair, so the guide press leaves
-    /// the device correctly on the first press — the system simply acts on that
-    /// first one too. Things that are NOT the cause, all measured and reverted:
-    /// the aggregate `valueChangedHandler` not firing for Home; a missing
-    /// minimum-hold latch like the one START needs; and the pad being announced
-    /// as a DualSense (which would make Sunshine build a virtual DS4).
+    /// PROVEN, not inferred: iOS 18's Game Overlay says so in its own words,
+    /// on screen, naming this app:
+    ///
+    ///     "Features in VibeLight may be designed to use 'PS Button'. To access
+    ///      this functionality instead of the Game Overlay, press [PS] twice."
+    ///
+    /// The FIRST press opens Apple's Game Overlay; the second reaches us. There
+    /// is no opt-out. `preferredSystemGestureState = .disabled` (below) is still
+    /// required and still correct — without it the button never arrives at all —
+    /// but it does not override the Overlay's claim on the first press.
+    ///
+    /// Four things were tried and reverted before the iPad simply said it:
+    ///   1. subscribing to the Home element directly instead of the aggregate
+    ///      `valueChangedHandler` (it was already firing);
+    ///   2. giving GUIDE the minimum-hold latch START genuinely needs for old
+    ///      MFi pads (the press duration was never the problem);
+    ///   3. announcing every pad as an Xbox controller, in case Sunshine's
+    ///      virtual DS4 swallowed it host-side (it does not);
+    ///   4. device logging, which showed a clean down/up pair per DELIVERED
+    ///      press — and could not see the presses the system had already taken,
+    ///      which was the entire answer.
+    ///
+    /// Declaring the app a game (LSApplicationCategoryType / LSSupportsGameMode
+    /// in project.yml) does NOT change this. It was kept anyway: Game Mode
+    /// meaningfully lowers controller Bluetooth latency, which matters here.
     ///
     /// iOS reserves the PS/Home ("Guide"), Share, and Options buttons for its own
     /// system gestures by default, so those presses never reach the app and the
