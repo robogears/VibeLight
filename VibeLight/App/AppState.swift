@@ -1647,7 +1647,35 @@ final class AppState {
     /// all gray turns Select into a lottery).
     private func presentOverlay(_ newOverlay: Overlay) {
         overlay = newOverlay
-        refreshFocus()
+        rebuildFocus()
+        // Open on the card's DECLARED first choice, not on whatever the user
+        // last touched in it. FocusEngine's per-section memory is deliberately
+        // never pruned — right for a shelf, hazardous for a confirm card:
+        // hovering "Forget Computer" once records index 1, and `setSections`'
+        // repair restores index 1 every later time the card is built, so it
+        // opens ARMED and one press destroys something. The cards document
+        // "Cancel is focused first"; this is what makes that true.
+        // (Pinned by FocusEngineTests.testSectionMemoryCanRestoreADestructive…)
+        if opensOnDeclaredFirstChoice(newOverlay) { focus.focusFirst() }
+        if focus.focusedItemID == nil { focus.focusFirst() }
+    }
+
+    /// Listed explicitly, not applied blanket: `.hosts` SHOULD remember which
+    /// computer you were on, `.sessionEnded` picks its own headline action
+    /// right after presenting, and the HUD / cheat sheet deliberately leave the
+    /// home screen's focus untouched underneath them (rebuildFocus returns
+    /// early for those, so forcing focus would move the shelf behind the card).
+    private func opensOnDeclaredFirstChoice(_ overlay: Overlay) -> Bool {
+        switch overlay {
+        case .confirmRemoveHost, .confirmClearPreset, .confirmOverridePreset,
+             .confirmSwitchStream, .presetSlotMenu:
+            return true
+        case .confirmRestartPC:
+            // rebuildFocus installs no section while a restart is in flight.
+            return !moonDeckRestarting
+        default:
+            return false
+        }
     }
 
     /// Rebuild the focus tree and guarantee something is focused — the shared

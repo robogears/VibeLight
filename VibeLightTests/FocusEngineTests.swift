@@ -342,6 +342,40 @@ final class FocusEngineTests: XCTestCase {
         XCTAssertEqual(engine.focusedSectionID, "presets")
     }
 
+    /// A DESTRUCTIVE confirm must never open with the destructive button focused.
+    ///
+    /// The engine's per-section memory is deliberately never pruned — a shelf
+    /// should give you your place back. For a transient confirm card that same
+    /// memory is a hazard: hovering "Forget Computer" once records index 1, and
+    /// the next time the card is built `setSections`' repair restores index 1,
+    /// so the card opens armed. AppState must therefore focus the safe choice
+    /// EXPLICITLY rather than trusting first-item-wins. This test pins the
+    /// engine behaviour that makes that necessary.
+    func testSectionMemoryCanRestoreADestructiveIndexOnReentry() {
+        let confirm = FocusSection(id: "removehost", kind: .vList,
+                                   itemIDs: ["removehost:cancel", "removehost:yes"])
+        let home = shelf("apps", count: 4)
+        let engine = makeEngine([home])
+        engine.focusFirst()
+
+        // Card opens the first time: repair lands on index 0 — the safe choice.
+        engine.setSections([confirm])
+        XCTAssertEqual(engine.focusedItemID, "removehost:cancel")
+
+        // The user hovers (or d-pads onto) the destructive button, then cancels.
+        engine.focus(itemID: "removehost:yes")
+        engine.setSections([home])
+
+        // Card opens again — memory now restores the DESTRUCTIVE index.
+        engine.setSections([confirm])
+        XCTAssertEqual(engine.focusedItemID, "removehost:yes",
+                       "engine restores remembered index; AppState must override it explicitly")
+
+        // Which is exactly why an explicit focus call is the fix.
+        engine.focus(itemID: "removehost:cancel")
+        XCTAssertEqual(engine.focusedItemID, "removehost:cancel")
+    }
+
     // MARK: - prevSection / nextSection
 
     func testSectionJumpsSkipEmptyAndClampAtEnds() {

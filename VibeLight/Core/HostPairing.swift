@@ -168,7 +168,12 @@ final class HostPairing: @unchecked Sendable {
         req.setValue("close", forHTTPHeaderField: "Connection")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = timeout
-        let (data, _) = try await Self.boundedData(URLSession.shared, req)
+        // A per-request session, not URLSession.shared: the cap lives in a
+        // delegate, and the shared session cannot have one.
+        let reader = CappedResponseReader()
+        let session = URLSession(configuration: .ephemeral, delegate: reader, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, _) = try await reader.read(session, req, cap: Self.pairingByteCap)
         return String(data: data, encoding: .utf8) ?? ""
     }
 
@@ -185,25 +190,25 @@ final class HostPairing: @unchecked Sendable {
         let delegate = PairTLSDelegate(identity: identity, serverCertDER: GameStreamCrypto.pemToDER(serverCertPEM))
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        let (data, _) = try await Self.boundedData(session, req)
+        let (data, _) = try await delegate.read(session, req, cap: Self.pairingByteCap)
         return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// Every other host read in the app is byte-capped; the pairing client never
     /// was, and it is the one that talks over PLAINTEXT HTTP — so anyone on the
-    /// path, not just the host, could stream unbounded bytes into memory. The
+    /// path, not just the host, can stream unbounded bytes into memory. The
     /// largest legitimate reply is a hex-encoded PEM certificate, so 1 MB is
-    /// already enormous. Rejects on the declared length before reading a body
-    /// byte, and again on what actually arrives.
+    /// already enormous.
+    ///
+    /// Enforced by `CappedResponseReader`, which cancels the transfer mid-flight.
+    /// The first version of this cap checked `data.count` AFTER
+    /// `URLSession.data(for:)` had already buffered the whole body, and its
+    /// comment claimed it "rejects on the declared length before reading a body
+    /// byte" — it did neither. A chunked reply declares no length at all, so
+    /// there was nothing to reject on, and the count check only ran once the
+    /// bytes were resident. `timeoutInterval` does not help: it is an
+    /// *inactivity* timer that a steady stream resets forever.
     private static let pairingByteCap = 1 << 20
-
-    private static func boundedData(_ session: URLSession, _ request: URLRequest) async throws -> (Data, URLResponse) {
-        let (data, response) = try await session.data(for: request)
-        if response.expectedContentLength > Int64(pairingByteCap) || data.count > pairingByteCap {
-            throw URLError(.dataLengthExceedsMaximum)
-        }
-        return (data, response)
-    }
 
     /// Removes our pairing session (and any stale half-open one) on the host.
     /// The real endpoint is GET /unpair — `phrase=unpair` on /pair is NOT a
@@ -260,7 +265,9 @@ final class HostPairing: @unchecked Sendable {
 
 /// mTLS delegate for the pairing phase-5 request: presents our client identity
 /// and accepts the server cert we pinned during phase 1.
-private final class PairTLSDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// Inherits the body cap from `CappedResponseReader` and adds the phase-5 TLS
+/// behaviour on top.
+private final class PairTLSDelegate: CappedResponseReader {
     private let identity: SecIdentity
     private let serverCertDER: Data?
     private let logger = Logger(subsystem: "com.vibelight.app", category: "pairing")

@@ -65,6 +65,11 @@ final class MoonDeckBuddyClient: Sendable {
     private let session: URLSession
     private let trust = PinnedTrust()
 
+    /// Every reply this client reads is a tiny JSON object; 256 KB is already
+    /// three orders of magnitude of headroom. Enforced mid-transfer — see
+    /// `CappedResponseReader` for why a post-hoc size check bounds nothing.
+    private static let replyByteCap = 256 * 1024
+
     /// `configuration` is injectable so tests can intercept requests with a
     /// custom URLProtocol; production passes nil for the pinned-trust session.
     init(configuration: URLSessionConfiguration? = nil) {
@@ -205,12 +210,15 @@ final class MoonDeckBuddyClient: Sendable {
         let data: Data, response: URLResponse
         do {
             // Replies here are tiny JSON objects ({"version":8}); the only
-            // other bound was an INACTIVITY timeout, which never cuts off a
-            // server that keeps sending.
-            (data, response) = try await session.data(for: req)
-            guard response.expectedContentLength <= 256 * 1024, data.count <= 256 * 1024 else {
-                throw MDError.badResponse("reply too large (\(data.count) bytes)")
-            }
+            // other bound is an INACTIVITY timeout, which never cuts off a
+            // server that keeps sending. The cap is enforced by the reader as
+            // bytes arrive — the previous version checked `data.count` after
+            // the whole body was already buffered, which bounds nothing, and
+            // threw from inside this `do` where the catch below relabelled it
+            // "offline" so it could never even be reported.
+            (data, response) = try await trust.read(session, req, cap: Self.replyByteCap)
+        } catch let tooLarge as CappedResponseReader.TooLarge {
+            throw MDError.badResponse("reply too large (\(tooLarge.bytes) bytes)")
         } catch {
             // Report .certChanged only when the pin ACTUALLY rejected a
             // certificate during this request. URLError.cancelled alone is not
@@ -253,7 +261,7 @@ final class MoonDeckBuddyClient: Sendable {
 /// - no expected cert yet → accept the presented cert and RECORD it, so it can be
 ///   pinned once pairing succeeds (trust-on-first-use).
 /// Thread-safe: URLSession invokes the delegate on its own queue.
-private final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendable {
+private final class PinnedTrust: CappedResponseReader {
     private let lock = NSLock()
     private var expected: [String: Data] = [:]     // host -> required leaf DER
     private var observedCerts: [String: Data] = [:] // host -> last-seen leaf DER

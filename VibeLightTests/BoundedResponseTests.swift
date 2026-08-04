@@ -181,17 +181,21 @@ final class LocalTLSServer {
         return String(decoding: d, as: UTF8.self)
     }
 
-    func serve(_ data: Data, declaredLength: Bool) {
+    /// `chunkDelay` throttles the server to a slow drip so a test can cancel
+    /// mid-transfer deterministically — over loopback an unthrottled 20 MB
+    /// arrives faster than any sleep a test could wait.
+    func serve(_ data: Data, declaredLength: Bool, tls: Bool = true, chunkDelay: Double = 0) {
         try? data.write(to: payloadURL)
-        start(declaredLength: declaredLength)
+        start(declaredLength: declaredLength, tls: tls, chunkDelay: chunkDelay)
         waitUntilListening()
     }
 
-    private func start(declaredLength: Bool) {
+    private func start(declaredLength: Bool, tls: Bool = true, chunkDelay: Double = 0) {
         let script = """
-        import http.server, ssl, sys
+        import http.server, ssl, sys, time
         payload = open(sys.argv[1], 'rb').read()
         declared = sys.argv[2] == '1'
+        delay = float(sys.argv[7])
         class H(http.server.BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
             def do_GET(self):
@@ -210,21 +214,24 @@ final class LocalTLSServer {
                             chunk = payload[i:i+step]
                             self.wfile.write(chunk); self.wfile.flush()
                             sent += len(chunk)
+                            if delay: time.sleep(delay)
                     else:
                         for i in range(0, len(payload), step):
                             chunk = payload[i:i+step]
                             self.wfile.write(b'%X\\r\\n' % len(chunk) + chunk + b'\\r\\n')
                             self.wfile.flush()
                             sent += len(chunk)
+                            if delay: time.sleep(delay)
                         self.wfile.write(b'0\\r\\n\\r\\n')
                 except Exception:
                     pass  # client hung up mid-transfer — that is the point
                 open(sys.argv[5], 'w').write(str(sent))
             def log_message(self, *a): pass
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(sys.argv[4])
         srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[3])), H)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        if sys.argv[6] == '1':
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(sys.argv[4])
+            srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
         srv.serve_forever()
         """
         let scriptURL = dir.appendingPathComponent("server.py")
@@ -237,7 +244,8 @@ final class LocalTLSServer {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.python3!)
-        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", "\(port)", pemPath, sentURL.path]
+        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", "\(port)",
+                       pemPath, sentURL.path, tls ? "1" : "0", "\(chunkDelay)"]
         p.standardOutput = errHandle
         p.standardError = errHandle
         do { try p.run() } catch { print("SERVER-SPAWN-FAILED \(error)"); return }
