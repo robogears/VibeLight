@@ -72,11 +72,37 @@ struct StreamView: UIViewRepresentable {
             return free
         }
 
+        /// True when `point` (this view's coordinates) is under the on-screen
+        /// keyboard. Everything outside it stays live, so you can still tap a
+        /// text field in the game and then type into it.
+        ///
+        /// The keyboard usually swallows its own touches — it lives in a window
+        /// above this one. This exists for the cases where it does not: the gap
+        /// between the halves of a SPLIT keyboard, the area around a FLOATING
+        /// one, and the strip beneath an undocked keyboard. Those all report as
+        /// part of the keyboard's frame, and a tap there is aiming at a key, not
+        /// at the game.
+        private func isUnderKeyboard(_ point: CGPoint) -> Bool {
+            guard let engine, engine.onScreenKeyboardUp else { return false }
+            let keyboard = engine.keyboardFrameInScreen
+            guard !keyboard.isNull, !keyboard.isEmpty, let screen = window?.screen else { return false }
+            // Screen → this view. Not `convert(_:from: nil)`, which means window
+            // base coordinates — the same thing only when the app owns the whole
+            // screen, and wrong under Stage Manager or a split view.
+            return screen.coordinateSpace.convert(keyboard, to: self).contains(point)
+        }
+
         private func forward(_ touches: Set<UITouch>, phase: MoonlightTouchPhase) {
             guard let engine else { return }
             engine.noteCompanionActivity()   // any touch wakes the iPad companion
             for touch in touches {
                 let allocate = (phase == .down)
+                // Only a touch that BEGINS on the keyboard is dropped. Gating
+                // here rather than per-event is what keeps a drag that started
+                // on the stream working when it crosses the keyboard — and
+                // guarantees its release is delivered, because a touch with no
+                // pointer id never sent a press to strand.
+                if allocate, isUnderKeyboard(touch.location(in: self)) { continue }
                 guard let id = pointerId(for: touch, allocate: allocate) else { continue }
                 engine.sendTouch(phase, pointerId: id,
                                  location: touch.location(in: self), viewSize: bounds.size)

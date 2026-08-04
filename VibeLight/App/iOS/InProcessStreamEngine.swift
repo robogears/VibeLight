@@ -3,6 +3,8 @@ import Foundation
 import Observation
 import AVFoundation
 import GameController
+import UIKit   // UIResponder keyboard notifications (arrives transitively via
+               // AVFoundation, but this file depends on it directly)
 
 /// iOS streaming engine (Phases 3+). Drives an in-process moonlight-common-c
 /// connection via `MoonlightSession`, replacing the Phase-1 `DisabledStreamEngine`
@@ -67,6 +69,25 @@ final class InProcessStreamEngine: StreamEngine {
                 }
                 MoonlightSession.resumeAudio()
             }
+        }
+        // Track where the on-screen keyboard actually is, so only the area it
+        // covers stops accepting stream touches. willChangeFrame covers every
+        // case in one callback: appearing, dismissing, docking, undocking,
+        // splitting, and a floating keyboard being dragged around.
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            MainActor.assumeIsolated { self?.keyboardFrameInScreen = frame ?? .zero }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Explicitly cleared: the final willChangeFrame parks the keyboard
+            // just off the bottom rather than reporting an empty rect, and a
+            // stale rect would keep blocking a strip of a stream with no
+            // keyboard over it.
+            MainActor.assumeIsolated { self?.keyboardFrameInScreen = .zero }
         }
     }
 
@@ -271,19 +292,10 @@ final class InProcessStreamEngine: StreamEngine {
     func sendTouch(_ phase: MoonlightTouchPhase, pointerId: UInt32,
                    location: CGPoint, viewSize: CGSize) {
         guard touchControlsEnabled, let session else { return }
-        // Keyboard up → the stream is not a touchpad. A release still goes
-        // through if its press did (same rule as the controller gate below):
-        // swallowing an .up strands a pressed contact in the game forever.
-        if onScreenKeyboardUp {
-            switch phase {
-            case .down, .move:
-                if !activeTouchIDs.contains(pointerId) { return }
-            case .up, .cancel:
-                if !activeTouchIDs.contains(pointerId) { return }
-            @unknown default:
-                return
-            }
-        }
+        // (Touches landing ON the keyboard are filtered by StreamView, which is
+        // the only place that knows the view's coordinate space. Doing it there
+        // also means a touch that STARTED on the stream keeps working if it
+        // drags over the keyboard — and its release still arrives.)
         // Controller-only play: a stray palm/grip touch used to warp the host
         // cursor to that spot AND left-click (absolute touch → mouse fallback)
         // — the "phantom cursor mid-game" bug. While an extended gamepad is
@@ -535,9 +547,19 @@ final class InProcessStreamEngine: StreamEngine {
 
     // MARK: - On-screen keyboard
 
-    /// True while the iPad's own keyboard is raised over the stream. Suspends
-    /// touch-as-input: half the screen is keys, and a tap meant for "S" would
-    /// otherwise also warp the in-game cursor and click there.
+    /// Where the keyboard actually is, in SCREEN coordinates — `.zero` when it
+    /// is down. Only the area it covers stops accepting stream touches; the rest
+    /// of the screen stays live, so you can still tap a text field in the game
+    /// and then type into it.
+    ///
+    /// Read from the notification rather than assumed, because "the keyboard"
+    /// is not one shape: docked fills the width, split leaves a gap in the
+    /// middle, and floating is a small pane the user can park anywhere. The
+    /// reported frame covers each of those; guessing "the bottom half" would be
+    /// wrong for two of the three.
+    private(set) var keyboardFrameInScreen: CGRect = .zero
+
+    /// True while the iPad's own keyboard is raised over the stream.
     var onScreenKeyboardUp = false {
         didSet {
             guard oldValue != onScreenKeyboardUp, !onScreenKeyboardUp else { return }
