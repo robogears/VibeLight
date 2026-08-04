@@ -15,10 +15,12 @@ xcodebuild -project VibeLight.xcodeproj -scheme VibeLight-iOS -configuration Deb
   -destination 'generic/platform=iOS Simulator' build                                      # iOS
 ```
 
-Schemes: **VibeLight** (macOS), **VibeLight-Dev** (coexisting dev build —
-dormant; don't build/install it unless asked), **VibeLight-iOS** (iPhone/iPad).
-Plus **MoonlightCore**, a static-lib target compiling the vendored
-moonlight-common-c C core for iOS.
+Schemes: **VibeLight** (macOS) and **VibeLight-iOS** (iPhone/iPad). Plus
+**MoonlightCore**, a static-lib target compiling the vendored moonlight-common-c
+C core for iOS. (A `VibeLight-Dev` coexisting build existed until 0.2.1 — a
+second bundle id so it could run beside the release app. It went unused for
+months, so the target, its scheme, its generated plist and its AppIconDev asset
+set were all removed. Don't recreate it without a reason.)
 
 - iOS **device** builds need a team: copy `Local.xcconfig.example` →
   `Local.xcconfig` (gitignored) and set `DEVELOPMENT_TEAM`. `Signing.xcconfig`
