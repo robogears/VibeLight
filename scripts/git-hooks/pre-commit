@@ -25,8 +25,27 @@ fail=0
 block() { echo "  ✖ $1"; fail=1; }
 warn()  { echo "  ⚠ $1"; }
 
-# Only added lines (leading '+'), excluding the +++ file header.
-added="$(git diff --cached --unified=0 --no-color | grep -E '^\+[^+]' || true)"
+# Only added lines. `--output-indicator-new='>'` marks additions with '>' while
+# the file header stays '+++', so the two can never be confused.
+#
+# The obvious version — `grep -E '^\+[^+]'` to skip the '+++' header — has a
+# hole: an added line whose own first character is '+' arrives as '++…' and gets
+# dropped with the header, so ANY leaked address on such a line committed
+# cleanly. Found by review, reproduced, and now covered by a test case.
+# `--output-indicator-new` needs git ≥ 2.24 (macOS ships far newer). Capture
+# git's own exit status directly: an old git rejects the option with a usage
+# error, and reading that as "no additions" would silently disable the guard.
+raw="$(git diff --cached --unified=0 --no-color --output-indicator-new='>' 2>/dev/null)"
+git_status=$?
+if [ "$git_status" -ne 0 ]; then
+  echo "  ✖ pre-commit: could not read the staged diff (git exit $git_status)."
+  echo ""
+  echo "pre-commit: refusing to commit — the guard could not check this diff, and"
+  echo "  a guard that cannot check must not approve. (Needs git ≥ 2.24 for"
+  echo "  --output-indicator-new; bypass deliberately with --no-verify.)"
+  exit 1
+fi
+added="$(grep '^>' <<<"$raw" | cut -c2- || true)"
 [ -z "$added" ] && exit 0
 
 # Drop lines the author explicitly marked, then drop the exact placeholder
