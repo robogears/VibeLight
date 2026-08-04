@@ -88,5 +88,83 @@ enum KeyboardMap {
         default:             return nil
         }
     }
+
+    // MARK: - On-screen keyboard (characters, not HID codes)
+
+    /// The on-screen keyboard hands us finished TEXT, not key codes: iOS gives
+    /// `insertText("A")`, never "shift down, a, shift up". So a character has to
+    /// be turned back into the key press that would have produced it —
+    /// `("A")` → VK 0x41 **with shift**, `("@")` → VK 0x32 **with shift**.
+    ///
+    /// US layout, deliberately. The host applies its OWN layout to the virtual-key
+    /// codes it receives, so mapping through any other layout here would double
+    /// up the translation and land the wrong character. Anything unmapped
+    /// (accented letters, emoji, CJK) returns nil and is dropped rather than
+    /// guessed at — a wrong keystroke in a game is worse than a missing one.
+    static func keyStroke(for character: Character) -> (vk: Int16, shift: Bool)? {
+        // Letters: same VK either way; case is carried by shift.
+        if let ascii = character.asciiValue {
+            switch ascii {
+            case 0x61...0x7A:                                    // a–z
+                return (Int16(ascii - 0x61 + 0x41), false)
+            case 0x41...0x5A:                                    // A–Z
+                return (Int16(ascii), true)
+            case 0x30...0x39:                                    // 0–9
+                return (Int16(ascii), false)
+            default: break
+            }
+        }
+        switch character {
+        // Whitespace and editing. "\n" arrives from the keyboard's return key.
+        case " ":  return (0x20, false)   // VK_SPACE
+        case "\n", "\r": return (0x0D, false)   // VK_RETURN
+        case "\t": return (0x09, false)   // VK_TAB
+        // Unshifted punctuation.
+        case "-":  return (0xBD, false)   // VK_OEM_MINUS
+        case "=":  return (0xBB, false)   // VK_OEM_PLUS
+        case "[":  return (0xDB, false)   // VK_OEM_4
+        case "]":  return (0xDD, false)   // VK_OEM_6
+        case "\\": return (0xDC, false)   // VK_OEM_5
+        case ";":  return (0xBA, false)   // VK_OEM_1
+        case "'":  return (0xDE, false)   // VK_OEM_7
+        case "`":  return (0xC0, false)   // VK_OEM_3
+        case ",":  return (0xBC, false)   // VK_OEM_COMMA
+        case ".":  return (0xBE, false)   // VK_OEM_PERIOD
+        case "/":  return (0xBF, false)   // VK_OEM_2
+        // Shifted digits.
+        case "!":  return (0x31, true)
+        case "@":  return (0x32, true)
+        case "#":  return (0x33, true)
+        case "$":  return (0x34, true)
+        case "%":  return (0x35, true)
+        case "^":  return (0x36, true)
+        case "&":  return (0x37, true)
+        case "*":  return (0x38, true)
+        case "(":  return (0x39, true)
+        case ")":  return (0x30, true)
+        // Shifted punctuation.
+        case "_":  return (0xBD, true)
+        case "+":  return (0xBB, true)
+        case "{":  return (0xDB, true)
+        case "}":  return (0xDD, true)
+        case "|":  return (0xDC, true)
+        case ":":  return (0xBA, true)
+        case "\"": return (0xDE, true)
+        case "~":  return (0xC0, true)
+        case "<":  return (0xBC, true)
+        case ">":  return (0xBE, true)
+        case "?":  return (0xBF, true)
+        // The iOS keyboard's "smart" substitutions reach us as real curly
+        // characters even with smart quotes/dashes off in some contexts —
+        // fold them back to the plain key that produced them.
+        case "\u{2018}", "\u{2019}": return (0xDE, false)   // ' '  → '
+        case "\u{201C}", "\u{201D}": return (0xDE, true)    // " "  → "
+        case "\u{2013}", "\u{2014}": return (0xBD, false)   // – —  → -
+        default:   return nil
+        }
+    }
+
+    /// VK_BACK — the on-screen keyboard's delete key.
+    static let backspaceVK: Int16 = 0x08
 }
 #endif

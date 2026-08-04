@@ -271,6 +271,19 @@ final class InProcessStreamEngine: StreamEngine {
     func sendTouch(_ phase: MoonlightTouchPhase, pointerId: UInt32,
                    location: CGPoint, viewSize: CGSize) {
         guard touchControlsEnabled, let session else { return }
+        // Keyboard up → the stream is not a touchpad. A release still goes
+        // through if its press did (same rule as the controller gate below):
+        // swallowing an .up strands a pressed contact in the game forever.
+        if onScreenKeyboardUp {
+            switch phase {
+            case .down, .move:
+                if !activeTouchIDs.contains(pointerId) { return }
+            case .up, .cancel:
+                if !activeTouchIDs.contains(pointerId) { return }
+            @unknown default:
+                return
+            }
+        }
         // Controller-only play: a stray palm/grip touch used to warp the host
         // cursor to that spot AND left-click (absolute touch → mouse fallback)
         // — the "phantom cursor mid-game" bug. While an extended gamepad is
@@ -518,6 +531,49 @@ final class InProcessStreamEngine: StreamEngine {
         }
         heldKeys.removeAll()
         keyboardModifiers = 0
+    }
+
+    // MARK: - On-screen keyboard
+
+    /// True while the iPad's own keyboard is raised over the stream. Suspends
+    /// touch-as-input: half the screen is keys, and a tap meant for "S" would
+    /// otherwise also warp the in-game cursor and click there.
+    var onScreenKeyboardUp = false {
+        didSet {
+            guard oldValue != onScreenKeyboardUp, !onScreenKeyboardUp else { return }
+            // Dismissing while a modifier is latched would strand it down on the
+            // host — every later keystroke would arrive Ctrl-ed.
+            releaseHeldKeys()
+        }
+    }
+
+    /// Types one character from the on-screen keyboard: press (with shift if the
+    /// character needs it), then release, so the host sees a complete keystroke.
+    ///
+    /// Shift is sent as a real key event AROUND the character rather than only as
+    /// a modifier mask, because a host that reads the mask alone still needs the
+    /// shift key's own down/up to produce an uppercase letter in most games.
+    func typeCharacter(_ character: Character) {
+        guard let session, let stroke = KeyboardMap.keyStroke(for: character) else { return }
+        let shiftVK: Int16 = 0xA0   // VK_LSHIFT
+        var mods = keyboardModifiers
+        if stroke.shift {
+            mods |= KeyboardMap.modShift
+            session.sendKeyboardEvent(shiftVK, down: true, modifiers: mods)
+        }
+        session.sendKeyboardEvent(stroke.vk, down: true, modifiers: mods)
+        session.sendKeyboardEvent(stroke.vk, down: false, modifiers: mods)
+        if stroke.shift {
+            mods &= ~KeyboardMap.modShift
+            session.sendKeyboardEvent(shiftVK, down: false, modifiers: mods)
+        }
+    }
+
+    /// Backspace from the on-screen keyboard.
+    func typeBackspace() {
+        guard let session else { return }
+        session.sendKeyboardEvent(KeyboardMap.backspaceVK, down: true, modifiers: keyboardModifiers)
+        session.sendKeyboardEvent(KeyboardMap.backspaceVK, down: false, modifiers: keyboardModifiers)
     }
 
     /// 0…1 fill of the hold-to-leave combo ring (nil = not holding). RootView

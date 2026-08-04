@@ -108,9 +108,19 @@ struct RootView: View {
                         }
                     }
                     .overlay(alignment: .topTrailing) {
-                        // Until input lands (Phase 4), a tappable way back out so
-                        // the stream screen isn't a trap.
-                        if !dimmedOnTV {
+                        // Leave the stream, and raise the iPad's keyboard so the
+                        // host types as if one were plugged into it. Handheld
+                        // only: on a TV the iPad is already a companion panel
+                        // with its own controls, and nothing covers gameplay.
+                        if !dimmedOnTV && !onTV {
+                            StreamControls(
+                                onLeave: { state.session.disconnect() },
+                                keyboardUp: Binding(
+                                    get: { state.session.onScreenKeyboardUp },
+                                    set: { state.session.onScreenKeyboardUp = $0 }
+                                )
+                            )
+                        } else if !dimmedOnTV {
                             Button { state.session.disconnect() } label: {
                                 Image(systemName: "xmark")
                                     .font(.system(size: 16, weight: .bold))
@@ -120,6 +130,20 @@ struct RootView: View {
                             }
                             .padding(24)
                         }
+                    }
+                    .overlay {
+                        // Zero-size and invisible: it exists only to own the
+                        // keyboard and receive what is typed.
+                        StreamKeyboard(
+                            isUp: Binding(
+                                get: { state.session.onScreenKeyboardUp },
+                                set: { state.session.onScreenKeyboardUp = $0 }
+                            ),
+                            onCharacter: { state.session.typeCharacter($0) },
+                            onBackspace: { state.session.typeBackspace() }
+                        )
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
                     }
                     .overlay {
                         // While the leave chord is held the stream sinks toward

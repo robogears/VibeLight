@@ -213,6 +213,8 @@ private struct CheatSheetCard: View {
                 sheetSection("During a stream")
                 keyRow("Start+Select+L1+R1", "Leave the stream — game keeps running")
                 keyRow("Tap ✕", "Leave the stream (top-right)")
+                keyRow("Tap ⌨", "Type on the PC with the iPad's keyboard")
+                keyRow("Swipe in ←", "Buttons hide after 7 s — swipe from the top-right edge")
                 // Press TWICE is iPadOS's rule, not ours: the first press opens
                 // Apple's Game Overlay, and iOS itself tells the user to press
                 // again to reach the app. Saying "press it" here sent people
