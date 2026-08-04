@@ -410,7 +410,7 @@ private struct PresetSlotChip: View {
         .contextMenu {
             if isFilled {
                 Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
-                Button(role: .destructive) { state.clearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+                Button(role: .destructive) { state.requestClearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
             }
         }
     }
