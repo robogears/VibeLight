@@ -28,7 +28,7 @@ final class LaunchIntro {
     @ObservationIgnored private var protected = false
 
     // Beat map: header, hero, then shelf tiles (index i on `tileBase + min(i,
-    // tileCap)`), then the focus ring + hint bar + preset rail on `late`.
+    // tileCap)`), then the focus ring + hint bar + preset row on `late`.
     static let header = 1, hero = 2, tileBase = 3, tileCap = 5, late = 9
 
     /// Absolute ms from start for beats 1…late — spread over ~3s so the UI looks

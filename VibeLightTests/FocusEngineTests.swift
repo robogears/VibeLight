@@ -313,6 +313,35 @@ final class FocusEngineTests: XCTestCase {
         XCTAssertEqual(engine.focusedSectionID, "A")
     }
 
+    /// Pins the HOME screen's focus tree shape (header / apps / preset row):
+    /// DOWN from a game lands on the preset row, UP returns to the same game,
+    /// and DOWN from the row clamps (nothing below is focusable). If the row
+    /// ever moves again, this test names the contract that has to move with it.
+    func testHomeTreeHeaderAppsPresetRowTraversal() {
+        let engine = makeEngine([
+            shelf("header", count: 2),
+            shelf("apps", count: 12),
+            shelf("presets", count: 6),
+        ])
+        engine.focus(itemID: "apps-7")
+        XCTAssertTrue(press(engine, .down))
+        XCTAssertEqual(engine.focusedSectionID, "presets")
+        XCTAssertFalse(press(engine, .down), "nothing below the preset row")
+        XCTAssertEqual(engine.focusedSectionID, "presets")
+        XCTAssertTrue(press(engine, .up))
+        XCTAssertEqual(engine.focusedItemID, "apps-7", "per-section memory returns to the same game")
+        // No host / empty shelf: DOWN from the header must skip the empty apps
+        // section straight into the preset row, not die on it.
+        engine.setSections([
+            shelf("header", count: 1),
+            shelf("apps", count: 0),
+            shelf("presets", count: 6),
+        ])
+        engine.focus(itemID: "header-0")
+        XCTAssertTrue(press(engine, .down))
+        XCTAssertEqual(engine.focusedSectionID, "presets")
+    }
+
     // MARK: - prevSection / nextSection
 
     func testSectionJumpsSkipEmptyAndClampAtEnds() {

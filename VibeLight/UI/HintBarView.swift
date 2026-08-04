@@ -133,16 +133,23 @@ struct HintBarView: View {
     private var hints: [(String, NavigationEvent, String?)] {
         switch state.screen {
         case .home:
-            if state.isPresetRailActive {
-                let filled = state.focusedPresetSlot.map { state.presets[$0] != nil } ?? false
-                var rail: [(String, NavigationEvent, String?)] = [
-                    ("use", .select, "Use Preset"),
+            // On a preset slot in the row under the shelf. A filled slot can be
+            // used/managed; an empty one can only be filled from Settings, so
+            // say THAT instead of dangling a "Use Preset" that does nothing.
+            if let i = state.presetSlotIndex(state.focus.focusedItemID) {
+                if state.presets[i] != nil {
+                    return [
+                        ("use", .select, "Use Preset"),
+                        ("opts", .contextMenu, "Rename / Clear"),
+                        ("games", .move(.up), "Back to Games"),
+                    ]
+                }
+                return [
+                    ("fill", .settings, "Save One in Settings"),
+                    ("games", .move(.up), "Back to Games"),
                 ]
-                if filled { rail.append(("opts", .contextMenu, "Rename / Clear")) }
-                rail.append(("leaveleft", .move(.left), "Back to Games"))
-                return rail
             }
-            // No "Presets" hint: the rail is one nudge right and discoverable.
+            // No "Presets" hint: the row is one nudge down and discoverable.
             // No quit-app hint on iOS: apps don't self-quit there (HIG), and
             // the chord is disabled in ControllerManager anyway.
             var home: [(String, NavigationEvent, String?)] = [

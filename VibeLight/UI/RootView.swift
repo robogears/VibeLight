@@ -179,7 +179,7 @@ struct RootView: View {
     /// authored on a landscape design canvas; we fit that canvas to the real
     /// window across BOTH dimensions so it never overflows — the previous
     /// width-only, floor-1.0 rule left a small/windowed Mac at full design size,
-    /// so the title, logo and preset rail overflowed and collided.
+    /// so the title, logo and preset row overflowed and collided.
     /// - macOS: 1.0 through the normal Mac range (design flexes comfortably at
     ///   ≥ 1440×860 pt); SHRINK to fit a smaller window; scale UP on 4K/5K so
     ///   fixed-size elements aren't tiny.
@@ -248,7 +248,7 @@ struct ExternalDisplayContent: View {
     /// TV design canvas. The iPad's effective canvas is ~1536 wide; a SMALLER
     /// one makes tiles/text read larger from the couch, but it must stay wide
     /// enough that the launcher's landscape layout (header row, shelf, preset
-    /// rail) doesn't crowd — 1280 was too narrow (that was the "misaligned").
+    /// row) doesn't crowd — 1280 was too narrow (that was the "misaligned").
     /// The launcher renders at ≥2× (forced in `ExternalDisplay` — old 1080p TVs
     /// report @1×, which would rasterize this canvas at 1× and upscale → blur),
     /// so a 1440-pt canvas rasterizes at 2880 px and DOWNSAMPLES to the panel:

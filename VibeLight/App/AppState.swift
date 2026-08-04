@@ -229,7 +229,7 @@ final class AppState {
             persistSettings()
             // The "this preset is active" marker documents itself as "nil once
             // settings diverge", but nothing ever cleared it: only clearSlot
-            // did, so every tweak after applying a preset left the rail still
+            // did, so every tweak after applying a preset left the slots still
             // showing that slot as active while the live settings no longer
             // matched it. Clear it the moment they stop agreeing.
             if let i = activePresetSlot, presets.indices.contains(i),
@@ -284,9 +284,6 @@ final class AppState {
     /// Which slot's settings are currently loaded (nil once settings diverge or
     /// a slot is cleared).
     private(set) var activePresetSlot: Int?
-    /// Non-nil when focus is on the home-screen preset rail (managed outside the
-    /// FocusEngine so it uses left/right to enter/leave the app shelf).
-    var focusedPresetSlot: Int?
     private static let presetsKey = "vibelight.presets.v2"
     private static let activePresetKey = "vibelight.activePresetSlot"
 
@@ -388,7 +385,7 @@ final class AppState {
         presets = Self.loadPresets()
         // Range-check AND require the slot to actually hold a preset: after one
         // fails to decode (FailableDecodable -> nil slot) the saved index could
-        // point at an empty slot, leaving the rail highlighting nothing.
+        // point at an empty slot, leaving the row highlighting nothing.
         let savedSlot = UserDefaults.standard.object(forKey: Self.activePresetKey) as? Int
         activePresetSlot = savedSlot.flatMap {
             (0..<Self.presetSlotCount).contains($0) && presets[$0] != nil ? $0 : nil
@@ -498,7 +495,7 @@ final class AppState {
         controller.focusTick()
     }
 
-    /// Home rail: load slot `i`'s settings (no-op for an empty slot).
+    /// Home preset row: load slot `i`'s settings (no-op for an empty slot).
     func applySlot(_ i: Int) {
         guard presets.indices.contains(i), let preset = presets[i] else { return }
         settings = preset.settings
@@ -552,29 +549,7 @@ final class AppState {
 
     func applyRename(_ i: Int) {
         renameSlot(i, to: renameText)
-        dismissOverlay()
-    }
-
-    // MARK: - Home preset rail navigation (all six slots always present)
-
-    var isPresetRailActive: Bool { focusedPresetSlot != nil }
-
-    private func enterPresetRail() {
-        focusedPresetSlot = activePresetSlot ?? 0
-        controller.focusTick()
-    }
-
-    private func exitPresetRail() {
-        focusedPresetSlot = nil
-        controller.focusTick()
-    }
-
-    private func movePresetFocus(_ delta: Int) {
-        guard let i = focusedPresetSlot else { return }
-        let next = min(max(i + delta, 0), Self.presetSlotCount - 1)
-        guard next != i else { return }
-        focusedPresetSlot = next
-        controller.focusTick()
+        dismissOverlay(returningTo: "presetslot:\(i)")
     }
 
     private func wireCallbacks() {
@@ -599,7 +574,7 @@ final class AppState {
             guard let self, let new else { return }
             self.controller.focusTick()   // haptic on every move (unchanged)
             // Sound only when LANDING on the home header (Restart PC / host chip).
-            // Scrolling the app shelf, the preset rail, and settings rows is
+            // Scrolling the app shelf, the preset row, and settings rows is
             // silent — audio there is reserved for deliberate actions.
             if new.hasPrefix("header:") { self.sfx.play(.move) }
         }
@@ -1644,6 +1619,14 @@ final class AppState {
                     id: "apps", kind: .shelf,
                     itemIDs: apps.map { "app:\(appKey($0))" }
                 ))
+                // The six preset slots sit in a row UNDER the shelf — d-pad
+                // DOWN from a game reaches them, UP returns. Same section and
+                // item IDs as the settings strip, so the engine's per-section
+                // memory carries your slot position between the two screens.
+                sections.append(FocusSection(
+                    id: "presetslots", kind: .shelf,
+                    itemIDs: (0..<Self.presetSlotCount).map { "presetslot:\($0)" }
+                ))
             case .settings:
                 // The six preset slots sit above the rows (up from a row reaches
                 // them); L1/R1 still switch tabs. Default focus is the first row
@@ -1900,30 +1883,18 @@ final class AppState {
     }
 
     private func routeHome(_ event: NavigationEvent) {
-        // Preset rail mode: up/down move within, left leaves, select applies,
-        // X (contextMenu) opens rename/clear on a filled slot.
-        if isPresetRailActive {
-            switch event {
-            case .move(.up): movePresetFocus(-1)
-            case .move(.down): movePresetFocus(+1)
-            case .move(.left): exitPresetRail()
-            case .move(.right): break
-            case .select: if let i = focusedPresetSlot { applySlot(i) }
-            case .contextMenu:
-                if let i = focusedPresetSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
-            case .back: exitPresetRail()
-            case .settings: openSettings()
-            default: break
-            }
-            return
-        }
+        // The preset row under the shelf is a normal focus-engine section, so
+        // movement needs no special casing — only select/contextMenu do.
+        let onSlot = presetSlotIndex(focus.focusedItemID)
         switch event {
         case .select:
             // (A `host:`-prefixed branch used to sit here. No view and no
             // rebuildFocus path has ever emitted that prefix — the home screen
             // emits `header:*`/`app:*` and the overlay emits `hostmenu:*`, which
             // does not match. Host switching goes through routeOverlay.)
-            if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
+            if let i = onSlot {
+                applySlot(i)                    // no-op on an empty slot
+            } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
             } else if focus.focusedItemID == "header:power" {
                 wakeSelectedHost()
@@ -1934,12 +1905,13 @@ final class AppState {
             }
         case .settings:
             openSettings()
-        case .detail, .contextMenu:
+        case .contextMenu:
+            // X on a filled slot manages it; anywhere else X (like Y) opens
+            // the cheat sheet, same as before the row moved.
+            if let i = onSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
+            else { presentOverlay(.cheatSheet) }
+        case .detail:
             presentOverlay(.cheatSheet)
-        case .move(.right):
-            // Right off the end of the app shelf enters the preset rail (always
-            // available — the six slots are always shown).
-            if !focus.handle(.move(.right)) { enterPresetRail() }
         case .back:
             break // home is the root — nowhere to go back to
         default:
@@ -2120,9 +2092,9 @@ final class AppState {
         case .confirmClearPreset(let i):
             switch event {
             case .select:
-                if focus.focusedItemID == "clearpreset:yes" { dismissOverlay(); clearSlot(i) }
-                else { dismissOverlay() }
-            case .back: dismissOverlay()
+                if focus.focusedItemID == "clearpreset:yes" { dismissOverlay(returningTo: "presetslot:\(i)"); clearSlot(i) }
+                else { dismissOverlay(returningTo: "presetslot:\(i)") }
+            case .back: dismissOverlay(returningTo: "presetslot:\(i)")
             default: _ = focus.handle(event)
             }
         case .confirmRemoveHost(let hostID):
@@ -2139,11 +2111,11 @@ final class AppState {
             switch event {
             case .select:
                 if focus.focusedItemID == "override:yes" {
-                    dismissOverlay()
+                    dismissOverlay(returningTo: "presetslot:\(i)")
                     performSaveToSlot(i)
-                } else { dismissOverlay() }
+                } else { dismissOverlay(returningTo: "presetslot:\(i)") }
             case .back:
-                dismissOverlay()
+                dismissOverlay(returningTo: "presetslot:\(i)")
             default:
                 _ = focus.handle(event)
             }
@@ -2157,10 +2129,10 @@ final class AppState {
                     // immediately, while merely OVERWRITING one (which loses
                     // strictly less) already shows a confirm. Match them.
                     presentOverlay(.confirmClearPreset(i))
-                default: dismissOverlay()
+                default: dismissOverlay(returningTo: "presetslot:\(i)")
                 }
             case .back:
-                dismissOverlay()
+                dismissOverlay(returningTo: "presetslot:\(i)")
             default:
                 _ = focus.handle(event)
             }
@@ -2168,9 +2140,9 @@ final class AppState {
             switch event {
             case .select:
                 if focus.focusedItemID == "rename:set" { applyRename(i) }
-                else { dismissOverlay() }
+                else { dismissOverlay(returningTo: "presetslot:\(i)") }
             case .back:
-                dismissOverlay()
+                dismissOverlay(returningTo: "presetslot:\(i)")
             default:
                 _ = focus.handle(event)
             }
@@ -2217,12 +2189,19 @@ final class AppState {
         }
     }
 
-    private func dismissOverlay() {
+    /// `returningTo` re-focuses a specific id after the overlay's sections are
+    /// gone — used by the preset overlays to land back ON the slot they were
+    /// opened from. Without it the engine's repair anchors at ordinal 0, which
+    /// happened to be the slot strip on the settings screen but is the HEADER
+    /// on home (the row sits below the shelf there). Same double-focus pattern
+    /// as quitRemoteGameCompletely's park-on-host-chip.
+    private func dismissOverlay(returningTo id: String? = nil) {
         pairingTask?.cancel(); pairingTask = nil; pairing = nil
         setPairingKeepAwake(false)
         moonDeckPairingTask?.cancel(); moonDeckPairingTask = nil; moonDeckPairing = nil
         overlay = nil
         rebuildFocus()
+        if let id { focus.focus(itemID: id) }
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 

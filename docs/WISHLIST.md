@@ -17,8 +17,8 @@ Requested by William (2026-07-04). Not yet implemented (except where noted).
   on hover at the top-left.
 - ✅ **(5) Custom + native resolution** — native auto-detected in the cycle;
   select the Resolution row to type an arbitrary WxH.
-- ✅ **(1) Settings presets** — save current settings as a preset; right-side
-  home rail to pick the active one.
+- ✅ **(1) Settings presets** — save current settings as a preset; picked on
+  the home screen (slot row under the games since 0.2.1; was a right-side rail).
 - ✅ **(6) Stream-entry flash** — mitigated (Dock no longer un-hidden during the
   handoff, on both the launcher and helper sides); needs live confirmation.
 - ✅ **(3) UI scales with resolution.** A root scaler lays the big-picture UI

@@ -202,6 +202,7 @@ private struct CheatSheetCard: View {
                 row(.settings, "Open settings")
                 row(.nextSection, "Switch settings tab (L1/R1)")
                 row(.move(.up), "Up from the games: Restart PC / computer")
+                row(.move(.down), "Down from the games: your presets")
                 row(.quitChord, "Quit the remote game completely")
                 #if os(macOS)
                 row(.quitApp, "Quit VibeLight")

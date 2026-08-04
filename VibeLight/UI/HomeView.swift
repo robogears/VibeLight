@@ -1,19 +1,13 @@
 import SwiftUI
 
 /// The big-picture home screen: status header, hero title of the focused app,
-/// the games shelf, and the input hint bar.
+/// the games shelf with the preset row directly beneath it, and the input
+/// hint bar.
 struct HomeView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
         content
-            // The six preset slots always live on the right edge, vertically
-            // centered.
-            .overlay(alignment: .trailing) {
-                PresetRail()
-                    .padding(.trailing, 40)
-                    .introReveal(state.intro.arrived(LaunchIntro.late), y: 0, blur: 8)
-            }
             // The launch deal-in plays the first time home appears (once per app
             // launch; a no-op after that — see LaunchIntro). Skipped during the
             // first-run setup wizard; `completeSetup` fires it right after.
@@ -61,6 +55,13 @@ struct HomeView: View {
 
             AppShelf()
                 .padding(.top, 18)
+
+            // The preset row rides directly under the games — one d-pad DOWN
+            // away, instead of the old right-edge rail a whole shelf-width
+            // right. Same late reveal beat as the hint bar.
+            PresetRow()
+                .padding(.horizontal, 72)
+                .introReveal(state.intro.arrived(LaunchIntro.late), y: 6)
 
             Spacer(minLength: 0)
 
@@ -280,26 +281,13 @@ private struct AppShelf: View {
                     }
                 }
                 .padding(.leading, 72)
-                // End-rest padding: at max scroll the LAST tile must park fully
-                // left of where the edge dissolve begins (see the mask below),
-                // or it would sit half-faded with nowhere further to scroll.
-                .padding(.trailing, 380)
+                // End-rest padding: at max scroll the last tile parks at the
+                // same margin the shelf leads with. (The old right-edge preset
+                // rail — and the edge-dissolve mask that kept tiles from
+                // sliding under it — is gone: the row lives below the shelf
+                // now, so tiles bleed to the screen edge like a proper shelf.)
+                .padding(.trailing, 72)
                 .padding(.vertical, 40) // headroom for the focus scale/glow
-            }
-            // Edge dissolve: the preset rail overlays the trailing ~292pt
-            // (252 rail + 40 margin), and a long shelf scrolls straight through
-            // that column. Masking the VIEWPORT dissolves tiles to nothing just
-            // before the rail so the two never visually collide — the tvOS shelf
-            // treatment, and cheaper than a blur at the iPad's 120Hz. Fixed pt
-            // widths (not fractions) so the fade hugs the rail on every screen.
-            .mask {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    LinearGradient(colors: [.black, .clear],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(width: 90)
-                    Color.clear.frame(width: 285)
-                }
             }
             .onChange(of: state.focus.focusedItemID) { _, new in
                 guard let new, new.hasPrefix("app:") else { return }
@@ -311,22 +299,30 @@ private struct AppShelf: View {
     }
 }
 
-/// The right-side preset rail: pick which saved settings preset a launch uses.
-/// Reached by pressing right off the end of the app shelf (or clicking).
-private struct PresetRail: View {
+/// The preset row under the games shelf: pick which saved settings preset a
+/// launch uses. One d-pad DOWN from the shelf (a real focus-engine section,
+/// unlike the old right-edge rail's bolt-on focus), or click/tap a chip.
+private struct PresetRow: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("PRESETS")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
                 .tracking(2)
                 .foregroundStyle(Theme.textSecondary)
-            ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
-                PresetSlotChip(slot: slot)
+            HStack(spacing: 10) {
+                ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
+                    PresetSlotChip(slot: slot)
+                        // Equal flexible widths: six chips share the row and cap
+                        // at the old rail's 252pt (the full
+                        // "1440p · 120 fps · 100 Mbps" summary); on narrow
+                        // screens they compress together instead of wrapping.
+                        .frame(maxWidth: 252)
+                }
             }
         }
-        .frame(width: 252)   // fits the full "1440p · 120 fps · 100 Mbps" summary
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -339,10 +335,11 @@ private struct PresetSlotChip: View {
     let slot: Int
     @State private var hovering = false
 
+    private var focusID: String { "presetslot:\(slot)" }
     private var preset: StreamPreset? { state.presets[slot] }
     private var isFilled: Bool { preset != nil }
     private var isActive: Bool { state.activePresetSlot == slot }
-    private var isFocused: Bool { state.focusedPresetSlot == slot }
+    private var isFocused: Bool { state.focus.focusedItemID == focusID }
     private var lit: Bool { isActive || isFocused }
 
     var body: some View {
@@ -364,6 +361,15 @@ private struct PresetSlotChip: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
                         .lineLimit(1)
+                } else {
+                    // Invisible second line: keeps EMPTY chips the exact height
+                    // of filled ones. Chips now sit side by side, where a
+                    // filled chip's summary line otherwise makes it ~7pt taller
+                    // and the row's edges visibly wobble (fine in the old
+                    // vertical rail, where heights never shared an edge).
+                    Text(" ")
+                        .font(.system(size: 11, weight: .medium))
+                        .hidden()
                 }
             }
             Spacer(minLength: 4)
@@ -389,8 +395,18 @@ private struct PresetSlotChip: View {
         .animation(Theme.focusSpring, value: isActive)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: isFilled)
-        .onHover { hovering = $0 }
-        .onTapGesture { if isFilled { state.applySlot(slot) } }
+        .onHover { over in
+            hovering = over
+            // Hover-focus parity with the app tiles: pointer and controller
+            // share one focus truth (and the same guard against a parked
+            // cursor fighting the d-pad).
+            if over && state.inputMode == .pointer {
+                state.focus.focus(itemID: focusID)
+            }
+        }
+        // Route through pointerSelect so a click focuses the chip and then
+        // behaves exactly like pressing A on it (applies when filled).
+        .onTapGesture { state.pointerSelect(focusID) }
         .contextMenu {
             if isFilled {
                 Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }

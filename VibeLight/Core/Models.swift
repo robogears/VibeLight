@@ -267,7 +267,7 @@ struct StreamPreset: Codable, Equatable, Identifiable, Sendable {
     var name: String
     var settings: StreamSettings
 
-    /// A short "1080p · 120 fps" summary for the home-screen rail.
+    /// A short "1080p · 120 fps" summary for the preset chips (home row + settings strip).
     var summary: String {
         let res: String
         switch (settings.width, settings.height) {

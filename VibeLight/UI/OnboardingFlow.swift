@@ -279,7 +279,7 @@ private struct PresetsStep: View {
                     }
                 }
                 VStack(spacing: 6) {
-                    Text("On the home screen, press ▶ to open your presets and load one.")
+                    Text("On the home screen, your presets sit right under your games — press ▼ to load one.")
                     Text("Save more setups onto the other slots anytime in Settings.")
                 }
                 .font(.system(size: 16, weight: .medium, design: .rounded))

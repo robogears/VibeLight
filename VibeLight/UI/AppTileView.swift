@@ -9,8 +9,7 @@ struct AppTileView: View {
     @State private var artwork: TileArtwork = .pending
 
     private var focusID: String { "app:\(state.appKey(app))" }
-    // Not "focused" while the preset rail owns focus — avoids two highlights.
-    private var isFocused: Bool { state.focus.focusedItemID == focusID && !state.isPresetRailActive }
+    private var isFocused: Bool { state.focus.focusedItemID == focusID }
     // During the launch deal-in the focus ring holds off until the shelf has
     // finished dealing, so it "lands" last. After the intro this equals isFocused.
     private var showFocus: Bool { isFocused && state.intro.focusReady }
