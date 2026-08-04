@@ -21,8 +21,6 @@ struct HomeView: View {
                 .padding(.top, 48)
                 .introReveal(state.intro.arrived(LaunchIntro.header), y: -8)   // eases in from the top
 
-            Spacer(minLength: 0)
-
             // Hero: the focused app's name writ large — the "what am I about
             // to play" moment.
             VStack(alignment: .leading, spacing: 10) {
@@ -56,14 +54,16 @@ struct HomeView: View {
             AppShelf()
                 .padding(.top, 18)
 
-            // The preset row rides directly under the games — one d-pad DOWN
-            // away, instead of the old right-edge rail a whole shelf-width
-            // right. Same late reveal beat as the hint bar.
+            // Two equal spacers float the preset row in the MIDDLE of the space
+            // between the games and the hint bar, instead of letting it sink to
+            // the bottom edge. One d-pad DOWN from a game either way.
+            Spacer(minLength: 24)
+
             PresetRow()
                 .padding(.horizontal, 72)
                 .introReveal(state.intro.arrived(LaunchIntro.late), y: 6)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 24)
 
             HintBarView()
                 .padding(.horizontal, 72)
@@ -287,8 +287,12 @@ private struct AppShelf: View {
                 // sliding under it — is gone: the row lives below the shelf
                 // now, so tiles bleed to the screen edge like a proper shelf.)
                 .padding(.trailing, 72)
-                .padding(.vertical, 40) // headroom for the focus scale/glow
+                .padding(.vertical, AppTileView.Metrics.focusPadding)
             }
+            // Pin the shelf to its content. Unconstrained, a horizontal
+            // ScrollView claims all the vertical space on offer, which pushed
+            // everything below it to the bottom of the screen.
+            .frame(height: AppTileView.Metrics.shelf)
             .onChange(of: state.focus.focusedItemID) { _, new in
                 guard let new, new.hasPrefix("app:") else { return }
                 withAnimation(Theme.focusSpring) {

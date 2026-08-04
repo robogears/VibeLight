@@ -8,6 +8,21 @@ struct AppTileView: View {
 
     @State private var artwork: TileArtwork = .pending
 
+    /// Fixed tile metrics, published so `AppShelf` can size its scroll view
+    /// from them. A horizontal ScrollView expands to fill EVERY point of
+    /// vertical space it is offered — left unconstrained it swallowed the
+    /// whole home screen and pinned the preset row to the bottom no matter
+    /// where the row sat in the stack.
+    enum Metrics {
+        static let art = CGSize(width: 210, height: 280)
+        static let labelSpacing: CGFloat = 14
+        static let labelHeight: CGFloat = 18          // one line of 15pt SF Rounded
+        /// Headroom for the 1.11 focus scale and its accent glow.
+        static let focusPadding: CGFloat = 40
+        static var content: CGFloat { art.height + labelSpacing + labelHeight }
+        static var shelf: CGFloat { content + focusPadding * 2 }
+    }
+
     private var focusID: String { "app:\(state.appKey(app))" }
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
     // During the launch deal-in the focus ring holds off until the shelf has
@@ -15,9 +30,9 @@ struct AppTileView: View {
     private var showFocus: Bool { isFocused && state.intro.focusReady }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Metrics.labelSpacing) {
             artworkView
-                .frame(width: 210, height: 280)
+                .frame(width: Metrics.art.width, height: Metrics.art.height)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay {
                     RoundedRectangle(cornerRadius: 14)
@@ -36,7 +51,7 @@ struct AppTileView: View {
                 .font(.system(size: 15, weight: showFocus ? .bold : .medium, design: .rounded))
                 .foregroundStyle(showFocus ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
-                .frame(width: 210)
+                .frame(width: Metrics.art.width, height: Metrics.labelHeight)
         }
         .scaleEffect(showFocus ? 1.11 : 1.0)
         .animation(Theme.focusSpring, value: showFocus)
