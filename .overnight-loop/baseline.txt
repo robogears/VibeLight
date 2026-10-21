@@ -1,0 +1,51 @@
+# Baseline — 2026-10-21 23:24 — HEAD 8c51dc7 — branch codeX
+
+## macOS: build + full test suite (VibeLight scheme)
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.050 (0.155) seconds
+	 Executed 132 tests, with 0 failures (0 unexpected) in 13.296 (14.058) seconds
+	 Executed 132 tests, with 0 failures (0 unexpected) in 13.296 (14.070) seconds
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.059 (0.193) seconds
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.006 (0.013) seconds
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.009 (0.013) seconds
+	 Executed 4 tests, with 0 failures (0 unexpected) in 1.009 (1.018) seconds
+	 Executed 4 tests, with 0 failures (0 unexpected) in 6.867 (6.869) seconds
+	 Executed 45 tests, with 0 failures (0 unexpected) in 0.107 (0.253) seconds
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.291 (2.294) seconds
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.753 (2.755) seconds
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.006 (0.009) seconds
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.008 (0.011) seconds
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.048 (0.171) seconds
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.010 (0.013) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.071 (0.100) seconds
+** TEST SUCCEEDED **
+2026-10-21 23:26:40.768903+0400 VibeLight[38088:10655031] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.044773+0400 VibeLight[38088:10655163] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.044918+0400 VibeLight[38088:10655163] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.132294+0400 VibeLight[38088:10655166] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.132370+0400 VibeLight[38088:10655166] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.264379+0400 VibeLight[38088:10656044] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-10-21 23:26:41.264449+0400 VibeLight[38088:10656044] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+<unknown>:0: warning: -[VibeLightTests.PinDurabilityTests testAStaleUnpinnedSnapshotCannotUnpinALiveSession] : This method should not be called on the main thread as it may lead to UI unresponsiveness.
+<unknown>:0: warning: -[VibeLightTests.PinDurabilityTests testAnUnparseablePinFailsClosed] : This method should not be called on the main thread as it may lead to UI unresponsiveness.
+<unknown>:0: warning: -[VibeLightTests.PinDurabilityTests testRePairingWithADifferentCertificateStillRebuilds] : This method should not be called on the main thread as it may lead to UI unresponsiveness.
+
+## iOS: simulator build (VibeLight-iOS scheme)
+    |                                                                 `- warning: 'screens' was deprecated in iOS 16.0: Use UIApplication.shared.openSessions to find open sessions with scenes from other screens [#DeprecatedDeclaration]
+    |                       `- warning: call to main actor-isolated static method 'forceLandscape()' in a synchronous nonisolated context [#ActorIsolatedCall]
+    |                     `- warning: class 'PairTLSDelegate' must restate inherited '@unchecked Sendable' conformance
+    |                     `- warning: class 'PinnedTrust' must restate inherited '@unchecked Sendable' conformance
+   |                  `- warning: result of call to 'resignFirstResponder()' is unused [#NoUsage]
+** BUILD SUCCEEDED **
+~/Developer/VibeLight/VibeLight/App/iOS/ExternalScenePlacement.swift:117:65: warning: 'screens' was deprecated in iOS 16.0: Use UIApplication.shared.openSessions to find open sessions with scenes from other screens [#DeprecatedDeclaration]
+~/Developer/VibeLight/VibeLight/App/iOS/StreamKeyboard.swift:43:18: warning: result of call to 'resignFirstResponder()' is unused [#NoUsage]
+~/Developer/VibeLight/VibeLight/App/iOS/VibeLightApp.swift:42:23: warning: call to main actor-isolated static method 'forceLandscape()' in a synchronous nonisolated context [#ActorIsolatedCall]
+~/Developer/VibeLight/VibeLight/Core/HostPairing.swift:270:21: warning: class 'PairTLSDelegate' must restate inherited '@unchecked Sendable' conformance
+~/Developer/VibeLight/VibeLight/Core/MoonDeckBuddyClient.swift:264:21: warning: class 'PinnedTrust' must restate inherited '@unchecked Sendable' conformance
+~/Developer/VibeLight/VibeLight/Streaming/MoonlightSession.h:46:12: warning: parameter 'aesKey/aesIv' not found in the function declaration [-Wdocumentation]
+
+## iOS: tests on 'iPad Pro 11-inch (M5)' (IOSIdentityTests skipped — they overwrite the simulator app's real pairing identity; baseline DAT-simulator-identity-reset-f95217a7)
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.017 (0.098) seconds
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.017 (0.123) seconds
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.017 (0.129) seconds
+** TEST SUCCEEDED **

@@ -1,5 +1,10 @@
 # VibeLight
 
+Read [AIKnowledge.md](AIKnowledge.md) alongside this file for the source-verified
+implementation map, known audit findings and verification limits. This file
+remains the authority for project instructions; refresh the relevant knowledge
+when implementation changes.
+
 A native macOS + iOS/iPadOS big-picture launcher for Moonlight game streaming.
 Steam Big Picture-style fullscreen UI, full controller navigation, touch-first
 fallbacks, clear keybinds. On macOS it drives the proven moonlight-qt engine as
