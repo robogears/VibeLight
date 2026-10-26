@@ -101,6 +101,25 @@ final class AppState {
         }
         return hosts.first?.id
     }
+
+    /// The Computers menu's row order: the selected computer (persisted, so
+    /// also the last one used) first, then the rest in their existing order
+    /// (owner, 26 Oct 2026: "the last used PC should be at the top with a
+    /// little bar that seperates it from the other PCS"). The ONE source of
+    /// that order — HostMenuCard draws it and rebuildFocus emits it, so the
+    /// controller's up/down always walks the rows as drawn.
+    nonisolated static func hostMenuOrder(hosts: [StreamHost], selectedID: String?) -> [StreamHost] {
+        guard let selectedID, let i = hosts.firstIndex(where: { $0.id == selectedID }) else { return hosts }
+        var ordered = hosts
+        ordered.insert(ordered.remove(at: i), at: 0)
+        return ordered
+    }
+
+    /// Whether the menu draws the divider under its first row: only when the
+    /// selected computer was lifted to the top AND other computers follow it.
+    nonisolated static func hostMenuHasDivider(hosts: [StreamHost], selectedID: String?) -> Bool {
+        hosts.count > 1 && hosts.contains { $0.id == selectedID }
+    }
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
     private(set) var hostError: String?
@@ -1574,7 +1593,9 @@ final class AppState {
                 }
                 sections = [FocusSection(id: "pair", kind: .vList, itemIDs: ids)]
             } else {
-                var ids = hosts.map { "hostmenu:\($0.id)" }
+                // Same order HostMenuCard draws (selected computer first).
+                var ids = Self.hostMenuOrder(hosts: hosts, selectedID: selectedHostID)
+                    .map { "hostmenu:\($0.id)" }
                 if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
                 sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
             }
