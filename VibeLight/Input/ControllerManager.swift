@@ -36,9 +36,32 @@ final class ControllerManager {
     /// GameController reports those separately).
     private(set) var connectedControllers: [GCController] = []
 
-    /// Which glyph family hint bars should render. Follows the most recently
-    /// used controller; `.keyboard` when no controller is attached.
-    private(set) var glyphStyle: ControllerGlyphStyle = .keyboard
+    /// Which device produced the last directed (focus-moving) input.
+    enum DirectedSource: Sendable { case pad, keyboard }
+
+    /// Which glyph family hint bars should render. Follows the device that
+    /// drove last: the keyboard's glyphs after a key press, even with a pad
+    /// attached (QOL-keyboard-hints-show-pad-glyphs); otherwise the most
+    /// recently used controller's; `.keyboard` when none is attached.
+    var glyphStyle: ControllerGlyphStyle {
+        Self.effectiveGlyphStyle(lastSource: lastDirectedSource,
+                                 controllerStyle: activeControllerStyle)
+    }
+
+    /// The pure rule behind `glyphStyle`: keyboard glyphs when the keyboard
+    /// drove last or no controller is attached; the controller's otherwise.
+    nonisolated static func effectiveGlyphStyle(
+        lastSource: DirectedSource, controllerStyle: ControllerGlyphStyle?
+    ) -> ControllerGlyphStyle {
+        guard lastSource == .pad, let controllerStyle else { return .keyboard }
+        return controllerStyle
+    }
+
+    private var lastDirectedSource: DirectedSource = .pad
+    /// Glyph family of the controller in hand (nil when none is attached).
+    /// Stored rather than read live from `GCController.current` so switching
+    /// pads is observed and the hints redraw.
+    private var activeControllerStyle: ControllerGlyphStyle?
 
     /// The single output. UI wires this once; both controllers and the
     /// keyboard funnel through it. Always invoked on the main actor.
@@ -179,7 +202,8 @@ final class ControllerManager {
     /// Single funnel for semantic events: every controller/keyboard event is
     /// directed-modality input activity in addition to its meaning, so the
     /// activity callback can never drift out of sync with event delivery.
-    private func emit(_ event: NavigationEvent) {
+    private func emit(_ event: NavigationEvent, from source: DirectedSource) {
+        lastDirectedSource = source
         onInputActivity?(.directed)
         onEvent?(event)
     }
@@ -229,6 +253,7 @@ final class ControllerManager {
         observe(.GCControllerDidBecomeCurrent) { [weak self] in
             // The user switched pads: hint glyphs and the haptic engine both
             // follow the controller actually in hand.
+            self?.lastDirectedSource = .pad
             self?.updateGlyphStyle()
             self?.rebuildHapticsEngine()
         }
@@ -285,7 +310,7 @@ final class ControllerManager {
     }
 
     private func updateGlyphStyle() {
-        glyphStyle = ControllerGlyphStyle(controller: activeController)
+        activeControllerStyle = activeController.map(ControllerGlyphStyle.init(controller:))
     }
 
     /// Assigning handlers is idempotent, so rewiring on every connect/refresh
@@ -357,7 +382,7 @@ final class ControllerManager {
         button.pressedChangedHandler = { [weak self] _, _, pressed in
             MainActor.assumeIsolated {
                 guard pressed else { return }
-                self?.emit(event)
+                self?.emit(event, from: .pad)
             }
         }
     }
@@ -389,12 +414,12 @@ final class ControllerManager {
         guard let direction else { return }
 
         // Move immediately on engage, then auto-repeat while held.
-        emit(.move(direction))
+        emit(.move(direction), from: .pad)
         repeatTask = Task { [weak self] in
             try? await Task.sleep(for: Tuning.initialRepeatDelay)
             while !Task.isCancelled {
                 guard let self, let held = self.heldDirection else { return }
-                self.emit(.move(held))
+                self.emit(.move(held), from: .pad)
                 try? await Task.sleep(for: Tuning.repeatInterval)
             }
         }
@@ -406,8 +431,11 @@ final class ControllerManager {
     /// never flash UI), then publishes ring progress at ~30 Hz until the
     /// threshold, fires the event exactly once, and clears the ring. Release
     /// or reset cancels the task; the defer clears any leftover ring state.
+    /// `source` is the device holding (nil for touch/mouse hint buttons, which
+    /// leave the glyph family as it was).
     private func runHoldChord(
         kind: HoldProgress.Kind, duration: Duration, event: NavigationEvent,
+        source: DirectedSource?,
         stillHeld: @escaping @MainActor () -> Bool,
         markFired: @escaping @MainActor () -> Void
     ) async {
@@ -422,7 +450,7 @@ final class ControllerManager {
             if elapsed >= duration {
                 markFired()
                 holdProgress = nil
-                emit(event)
+                emit(event, from: source ?? lastDirectedSource)
                 return
             }
             if elapsed >= grace {
@@ -452,7 +480,7 @@ final class ControllerManager {
         pointerHoldTask = Task { [weak self] in
             guard let self else { return }
             await self.runHoldChord(
-                kind: kind, duration: duration, event: event,
+                kind: kind, duration: duration, event: event, source: nil,
                 stillHeld: { self.pointerHoldActive },
                 markFired: { self.pointerHoldActive = false })
         }
@@ -477,6 +505,7 @@ final class ControllerManager {
                 guard let self else { return }
                 await self.runHoldChord(
                     kind: .quitGame, duration: Tuning.quitChordHold, event: .quitChord,
+                    source: .pad,
                     stillHeld: { self.menuIsDown && !self.menuLongPressFired },
                     markFired: { self.menuLongPressFired = true }
                 )
@@ -491,7 +520,7 @@ final class ControllerManager {
             menuHoldTask?.cancel()
             menuHoldTask = nil
             if wasDown && !firedLongPress {
-                emit(.settings)
+                emit(.settings, from: .pad)
             }
         }
     }
@@ -515,6 +544,7 @@ final class ControllerManager {
                 guard let self else { return }
                 await self.runHoldChord(
                     kind: .quitApp, duration: Tuning.quitAppHold, event: .quitApp,
+                    source: .pad,
                     stillHeld: { self.backIsDown && !self.backLongPressFired },
                     markFired: { self.backLongPressFired = true }
                 )
@@ -528,7 +558,7 @@ final class ControllerManager {
             backHoldTask?.cancel()
             backHoldTask = nil
             if wasDown && !firedLongPress {
-                emit(.back)
+                emit(.back, from: .pad)
             }
         }
     }
@@ -658,10 +688,11 @@ final class ControllerManager {
         }
         kbHoldTask?.cancel()
         kbHoldHeld = true
+        lastDirectedSource = .keyboard   // keyboard hints while the ring fills
         kbHoldTask = Task { [weak self] in
             guard let self else { return }
             await self.runHoldChord(
-                kind: kind, duration: duration, event: event,
+                kind: kind, duration: duration, event: event, source: .keyboard,
                 stillHeld: { self.kbHoldHeld },
                 markFired: { self.kbHoldHeld = false })
         }
@@ -681,7 +712,7 @@ final class ControllerManager {
         // Cmd/Ctrl/Opt chord — pass straight through.
         if flags.contains(.command) {
             if event.charactersIgnoringModifiers == "," {
-                emit(.settings)
+                emit(.settings, from: .keyboard)
                 return nil
             }
             if flags.contains(.shift), event.charactersIgnoringModifiers?.lowercased() == "q" {
@@ -710,11 +741,11 @@ final class ControllerManager {
         // must not machine-gun while held.
         if event.isARepeat {
             if case .move = navEvent {
-                emit(navEvent)
+                emit(navEvent, from: .keyboard)
             }
             return nil
         }
-        emit(navEvent)
+        emit(navEvent, from: .keyboard)
         return nil
     }
     #endif
