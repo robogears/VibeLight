@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (171 Mac) · last: Menu Sounds switch merged
+STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (177 Mac; 1 unidentified intermittent failure, not reproduced) · last: TV dead end fixed
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -22,6 +22,8 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (171 Mac) · last: Men
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 18:58 The TV dead end is fixed (audit Medium): with a TV plugged in and no controller, the launcher stays on your iPad and the TV mirrors it; with a controller, the companion panel takes over as before (and gives the iPad back if the controller drops out). The panel now has a quiet "Use the iPad Instead" button and no longer shows the TV's pixel numbers. Review raised a possible new compiler warning in Release builds; real iOS and Mac Release builds showed it doesn't exist.
+  - Honest note: the first full test run of the merged tree had 1 failure I didn't capture the name of. Six more runs (2 full, 4 targeted on the timing-sensitive network tests) were all clean. Most likely the loopback-timing flake the audit already flagged (QUA-bounded-test-loopback-flake, in fix group 9).
 - 26 Oct 18:10 Settings ▸ Audio now has a Menu Sounds switch (On by default). Off silences the launcher's ticks, chimes and the setup quack on Mac and iPad — games and controller haptics are unaffected — and it survives relaunching and loading presets. 171 Mac tests green.
 - 26 Oct 17:50 The previous session ended (the Mac restarted) while three jobs were running; you said "keep going". Nothing was lost: fix group 5 had all four fixes committed, the TV-dead-end batch both of its fixes, and the menu-sounds batch's work was saved as an unverified WIP commit. All three resumed to verify and finish their reviews.
 - 26 Oct 17:05 iPad text and touch targets merged (audit Medium):
@@ -101,6 +103,10 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (171 Mac) · last: Men
 - Mac: Settings, the header buttons and the hint bar look exactly as before.
 
 - Settings ▸ Audio ▸ Menu Sounds: set Off, move around Home — silent; relaunch — still Off; load a preset — still Off.
+
+- Wired TV, no controller: the launcher stays usable by touch on the iPad and the TV mirrors it. Connect a controller: the companion panel fades in. Disconnect it: the launcher comes back to the iPad.
+- On the companion panel, tap "Use the iPad Instead": the launcher returns to the iPad and Settings ▸ Video ▸ Use TV / Monitor reads Off.
+- AirPlay mirroring (with and without a controller): tell me what happens — this path couldn't be checked from code.
 
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
