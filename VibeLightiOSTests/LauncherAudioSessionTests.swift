@@ -7,7 +7,6 @@ import AVFoundation
 /// switch (LIF-menu-sfx-audio-category-leak): the launcher's audio session is
 /// `.ambient` from startup and again after every stream. Only the category is
 /// read and set — nothing is activated or played.
-@MainActor
 final class LauncherAudioSessionTests: XCTestCase {
 
     private var savedCategory: AVAudioSession.Category = .ambient
@@ -25,6 +24,7 @@ final class LauncherAudioSessionTests: XCTestCase {
     /// Creating the menu-sound player selects `.ambient` even when something
     /// left the session in a non-mixing category (iOS's own default is
     /// `.soloAmbient`, which stops other apps' music).
+    @MainActor
     func testMenuSoundsSelectTheMixingAmbientCategory() throws {
         try AVAudioSession.sharedInstance().setCategory(.soloAmbient)
         _ = MenuSFX()
