@@ -158,6 +158,24 @@ enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Settings ▸ Themes ▸ Interface Size: multiplies the launcher's canvas scale
+/// (`RootView.uiScale`), the custom-UI way to enlarge text Apple accepts in
+/// place of Dynamic Type (UX-ios-scale-shrinks-text-targets). A GLOBAL
+/// appearance preference like `BackgroundTheme`, so loading a stream preset
+/// never changes it. Raw values persist in UserDefaults — never rename.
+enum InterfaceSize: String, Codable, CaseIterable, Sendable {
+    case `default`, large
+
+    var factor: CGFloat { self == .large ? 1.25 : 1.0 }
+
+    var label: String {
+        switch self {
+        case .default: "Default"
+        case .large:   "Large"
+        }
+    }
+}
+
 struct StreamSettings: Sendable, Codable, Equatable {
     // Video
     var width: Int
@@ -305,17 +323,24 @@ struct StreamPreset: Codable, Equatable, Identifiable, Sendable {
     var name: String
     var settings: StreamSettings
 
-    /// A short "1080p · 120 fps" summary for the preset chips (home row + settings strip).
-    var summary: String {
-        let res: String
+    /// A "1080p · 120 fps · 80 Mbps" summary for the Home preset chips. At
+    /// 13 pt it is wider than a chip on an iPad's 1440-wide canvas and at
+    /// Interface Size Large, so the chip falls back to `shortSummary`, then
+    /// `resolutionLabel`, rather than end the line in "…" (polish 1A).
+    var summary: String { "\(shortSummary) · \(settings.bitrateKbps / 1000) Mbps" }
+
+    /// "1080p · 120 fps": what a chip shows when the full summary is too wide.
+    var shortSummary: String { "\(resolutionLabel) · \(settings.fps) fps" }
+
+    /// "1080p", "4K": the narrowest form, so a chip never shows a cut-off line.
+    var resolutionLabel: String {
         switch (settings.width, settings.height) {
-        case (1280, 720): res = "720p"
-        case (1920, 1080): res = "1080p"
-        case (2560, 1440), (3440, 1440): res = "1440p"
-        case (3840, 2160): res = "4K"
-        default: res = "\(settings.height)p"
+        case (1280, 720): "720p"
+        case (1920, 1080): "1080p"
+        case (2560, 1440), (3440, 1440): "1440p"
+        case (3840, 2160): "4K"
+        default: "\(settings.height)p"
         }
-        return "\(res) · \(settings.fps) fps · \(settings.bitrateKbps / 1000) Mbps"
     }
 }
 

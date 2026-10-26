@@ -15,7 +15,7 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 3 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon). Building now: iPad/iPhone text and touch-target sizes. Next: TV dead end, then accent labels, menu-sound switch, empty Home, banner, setup hints. |
+| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 4 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size). Building now: the TV dead end (+ companion readout). Next: accent labels, menu-sound switch, empty Home, banner, setup hints. |
 | MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Fix group 1 merged (saved data never lost, bad values can't crash — 7 findings). Group 5 (client identity safety) building. Groups 2–4, 6–9 queued. |
 | MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
 | MT-P1 | 21 Oct | Four new features the audit suggested (not defects) | ⏸ | Not asked for yet: one PC with two addresses, iPad hardware-keyboard launcher navigation, more on-screen-keyboard keys, saved game list at start-up. Say which. |

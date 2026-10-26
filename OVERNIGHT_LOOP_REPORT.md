@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (162 Mac) · last: Computers menu order merged (your request)
+STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (168 Mac) · last: iPad sizing + Interface Size merged
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -12,6 +12,7 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (162 Mac) · last: Com
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
+- 💡 Leftover (Low) — on a landscape iPhone or a Mac window under ~860 pt tall, Interface Size ▸ Large can't make anything bigger, and the row doesn't say so. iPhone really needs a compact Home layout (the design lead's recommendation), which is a bigger design job.
 - 💡 Leftover (Low) — the stream controls only notice AssistiveTouch being switched on at their next redraw (SwiftUI can't observe it); VoiceOver and Switch Control are noticed immediately. Fix later with a UIAccessibility notification observer.
 - 💡 Leftover (Low) — the keyboard-hint fix has a unit test for its rule but no test pinning the wiring that tags keyboard vs controller input; a future edit could quietly undo it.
 - 💡 The helper repo tracks a generated build file, `app/Makefile.Debug`, that has your full home-folder path in it and is public on GitHub — why: it leaks the machine path, and since the move it points at the OLD location, so the helper's next `make` needs a fresh `qmake moonlight-qt.pro` first — how: in ~/Developer/vibelight-moonlight-helper, `git rm --cached app/Makefile.Debug`, add `app/Makefile.*` to .gitignore, commit, push. Not done unattended: it's another repo's `master`.
@@ -21,6 +22,12 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (162 Mac) · last: Com
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 17:05 iPad text and touch targets merged (audit Medium):
+  - on iPad the launcher is a little larger (it fits the same canvas as a Mac window);
+  - small labels are at least 13 pt and buttons have 44 pt tap areas on iPad/iPhone; the Mac keeps its exact sizes;
+  - Settings ▸ Themes ▸ Interface Size (Default / Large) makes it bigger still, and loading a preset doesn't undo it;
+  - preset chips on iPad drop the bitrate ("1080p · 144 fps") rather than being cut off with "…".
+  - Review caught two real problems before merge (the Mac's layout had changed; iPad chips would have been cut off); both fixed. 168 Mac tests green.
 - 26 Oct 16:45 Your Computers-menu request is merged: the computer you're on is listed first, a thin divider separates it from the others, and the controller moves through the rows in the order they're drawn. The menu opens on the computer you're on, and leaving the pairing panel lands back on the computer you were pairing. The review caught two focus slips along the way (one from me), both fixed and tested. 162 Mac tests green.
 - 26 Oct 16:10 Fix group 1 merged. Saved data is never lost now:
   - one unreadable saved computer, Restart PC pairing or preset is kept exactly as stored, and changes to everything else still save (before, one bad entry froze the computer list for good or wiped presets);
@@ -86,6 +93,10 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (162 Mac) · last: Com
 
 - Computers menu (2+ computers saved): choose one that isn't first, reopen Computers — it's at the top with a thin line under it; D-pad down walks the rows in the order drawn; with one computer there's no line.
 - Start pairing a computer that isn't selected, then press Back — focus returns to that computer's row.
+
+- iPad, Interface Size: at Default, Home is a little larger with nothing clipped and all six preset chips visible; switch Settings ▸ Themes ▸ Interface Size to Large — everything ~25% bigger, nothing clipped. **Your call:** does Large feel right?
+- iPad: the Settings ◀ ▶ arrows and the Wake/Restart buttons respond to a tap just outside the visible circle.
+- Mac: Settings, the header buttons and the hint bar look exactly as before.
 
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**

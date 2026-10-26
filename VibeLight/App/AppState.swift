@@ -278,6 +278,17 @@ final class AppState {
         }
     }
 
+    /// Settings ▸ Themes ▸ Interface Size. Global appearance pref on its own key,
+    /// like `backgroundTheme`: inside `settings` it would be captured into
+    /// presets, so loading a preset would undo it and changing it would
+    /// deselect the active preset. (UX-ios-scale-shrinks-text-targets)
+    var interfaceSize: InterfaceSize = .default {
+        didSet {
+            guard oldValue != interfaceSize else { return }
+            UserDefaults.standard.set(interfaceSize.rawValue, forKey: Self.interfaceSizeKey)
+        }
+    }
+
     // MARK: First-run setup wizard
 
     /// The current setup-wizard step, or nil when the launcher is live. Non-nil
@@ -335,6 +346,7 @@ final class AppState {
 
     private static let settingsKey = "vibelight.streamSettings"
     private static let backgroundThemeKey = "vibelight.backgroundTheme"
+    private static let interfaceSizeKey = "vibelight.interfaceSize"
     private static let setupVersionKey = "vibelight.setupVersion"
 
     // MARK: - Boot
@@ -386,6 +398,10 @@ final class AppState {
         if let raw = UserDefaults.standard.string(forKey: Self.backgroundThemeKey),
            let theme = BackgroundTheme(rawValue: raw) {
             backgroundTheme = theme   // didSet doesn't fire during init
+        }
+        if let raw = UserDefaults.standard.string(forKey: Self.interfaceSizeKey),
+           let size = InterfaceSize(rawValue: raw) {
+            interfaceSize = size
         }
         // Show the setup wizard when the user hasn't completed the CURRENT
         // required version (fresh install → 0; a bump forces a redo for all).
@@ -2465,7 +2481,7 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss
         case touchControls, touchWithController, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
-        case background
+        case background, interfaceSize
         case appVersion, checkUpdates, restartSetup
 
         var focusID: String { "setting:\(rawValue)" }
@@ -2504,6 +2520,7 @@ final class AppState {
             case .performanceOverlay: "Performance Stats"
             case .stopStreamOnExit: "Quit Game on App Exit"
             case .background: "Background"
+            case .interfaceSize: "Interface Size"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
             case .restartSetup: "Restart Setup"
@@ -2550,7 +2567,7 @@ final class AppState {
                 #else
                 [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
                 #endif
-            case .themes: [.background]
+            case .themes: [.background, .interfaceSize]
             }
         }
     }
@@ -2675,6 +2692,7 @@ final class AppState {
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
         case .stopStreamOnExit: settings.stopStreamOnExit ? "On" : "Off"
         case .background: backgroundTheme.title
+        case .interfaceSize: interfaceSize.label
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
         case .restartSetup: "Replay the intro"
@@ -2752,6 +2770,7 @@ final class AppState {
         case .performanceOverlay: settings.performanceOverlay.toggle()
         case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
         case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
+        case .interfaceSize: interfaceSize = Self.cycle(interfaceSize, forward: forward)
         case .appVersion, .checkUpdates, .restartSetup: break  // not value rows
         }
     }

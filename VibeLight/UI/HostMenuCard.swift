@@ -114,7 +114,7 @@ struct HostMenuCard: View {
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(state.focus.focusedItemID == "hostmenu:add" ? .white : Theme.accent)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, Theme.perPlatform(iOS: 10, macOS: 8))
                     .background(
                         state.focus.focusedItemID == "hostmenu:add" ? Theme.accent : Theme.accent.opacity(0.15),
                         in: Capsule())
@@ -160,7 +160,7 @@ private struct HostRow: View {
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(isFocused ? .white : Theme.textPrimary)
                 Text(statusText)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: Theme.labelSize(12), weight: .medium))
                     .foregroundStyle(isFocused ? .white.opacity(0.8) : Theme.textSecondary)
             }
             Spacer()
@@ -181,6 +181,11 @@ private struct HostRow: View {
                     Image(systemName: "trash")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(isFocused ? .white.opacity(0.85) : Theme.textSecondary)
+                        // The glyph alone was a ~15 pt touch target inside a row
+                        // that is itself a tap target (UX-ios-scale-shrinks-text-targets).
+                        .frame(width: Theme.perPlatform(iOS: 44, macOS: nil),
+                               height: Theme.perPlatform(iOS: 44, macOS: nil))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -252,7 +257,7 @@ private struct PairingPanel: View {
                         }
                     }
                     Text("Open your host's web UI at \(pairing.webUIURL) and type the PIN.")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: Theme.labelSize(12), weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
