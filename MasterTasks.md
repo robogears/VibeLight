@@ -15,10 +15,7 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Merged: group 1 (saved data never lost, bad values can't crash — 7 findings), group 5 (your pairings can't be lost to an unreadable identity — 4 findings), group 7 (updater, move-to-Applications, helper errors — 6 findings) and group 9 (docs, tests, the flaky test — 13 findings). Group 6a finishing; groups 2, 3, 4, 6b, 8 and a small group 9 leftover queued for a future run. |
-| MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
-| MT-13 | 26 Oct | "When you're done with this wrap up and end /overnightprotocol end" | 🔨 | Replaces MT-12: finishing what's running (empty Home/banner, setup hints, group 9, group 6a), then the loop wraps up and ends. Groups 2, 3, 4, 6b and 8 stay queued here for a future run. |
-| MT-12 | 26 Oct | "/overnightprotocol stop when you've finished your mt" | ⏸ | Superseded by MT-13 (stop after the work in progress instead). |
+| MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | ⏳ | Merged: groups 1 (saved data — 7 findings), 5 (pairings safe from an unreadable identity — 4), 6a (iPad stream input, keyboards, menu sounds — 7), 7 (updater, move-to-Applications, helper errors — 6) and 9 (docs, tests, the flaky test — 13). Queued for the next run, fully planned in the loop plan: 2 (pairing trust), 3 (starting and stopping streams), 4 (keyboard and controller dead ends), 6b (TV/monitor mode and other iPad items), 8 (wording) and a small group-9 leftover. Say "resume the overnight loop" or ask for any group. |
 | MT-P1 | 21 Oct | Four new features the audit suggested (not defects) | ⏸ | Not asked for yet: one PC with two addresses, iPad hardware-keyboard launcher navigation, more on-screen-keyboard keys, saved game list at start-up. Say which. |
 | MT-P2 | 21 Oct | Old private addresses still in the public git history | ⏸ | Your call: rotate the addresses (recommended) or rewrite public history. |
 
@@ -26,6 +23,9 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | Done |
 |---|---|---|---|
+| MT-13 | 26 Oct | "When you're done with this wrap up and end /overnightprotocol end" | Done 27 Oct: finished the work in progress (empty Home + banner, setup hints, groups 9 and 6a), merged and pushed everything, wrote the final report, removed the loop's temporary safety rules and keep-awake, and ended the loop. |
+| MT-12 | 26 Oct | "/overnightprotocol stop when you've finished your mt" | Superseded by MT-13. |
+| MT-2 | 21 Oct | "also run /overnightprotocol" | Ran on `codeX` 21–27 Oct; ended at your request. Report: `OVERNIGHT_LOOP_REPORT.md`. |
 | MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | All 13 merged into `codeX`: iPad text and touch sizes + Interface Size, TV dead end, stream-controls handle, navy labels on the blue, destructive red, no hover zoom, setup hints with your controller's real buttons, keyboard hints on Mac, computer banner that doesn't cut messages off, empty Home that says what to do, companion readout removed, Menu Sounds switch, full-bleed iPad icon. Taste calls and live checks are in the loop report. |
 | MT-10 | 26 Oct | "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on" | Merged into `codeX`: the computer you're on is first, a thin divider follows, the controller walks the rows in the drawn order, and the menu opens (and returns from pairing) on the right computer. Live check in the loop report. |
 | MT-11 | 26 Oct | "dont stop what you're doing … add it to … MasterTasks" | Standing rule; this file. |

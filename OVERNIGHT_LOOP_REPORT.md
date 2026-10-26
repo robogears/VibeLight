@@ -1,17 +1,23 @@
 # Overnight Loop Report — 2026-10-21
 
-**TL;DR — running again since you resumed it on 26 Oct.** VibeLight lives in ~/Developer with its stream helper; the deep audit is done and dry (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). Merged on `codeX`: fix groups 1 (saved data) and 7 (updater), your Computers-menu order, and 7 of the 13 visual changes. Building: fix group 5 (identity safety) and visual batch 2C (accent labels, destructive red, no hover zoom). Nothing merged to main, nothing released.
+**TL;DR — finished and stopped at your request (27 Oct).** Everything is merged, verified and pushed on `codeX` (nothing on `main`, nothing released). Done: the deep audit (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report in `.git/overnight-loop/`); all 13 visual changes; your Computers-menu order; fix groups 1 (saved data), 5 (pairing identity), 6a (iPad input, keyboards, menu sounds), 7 (updater) and 9 (docs, tests, the flaky test). Final tree: 260 Mac tests + 31 iOS tests green, iOS build green. Queued for a next run: fix groups 2, 3, 4, 6b, 8 and a small group-9 leftover (all planned in `OVERNIGHT_LOOP_PLAN.md`). Your move: the live checks below on your Mac and iPad, the questions below, and the Recommendations.
 
-STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one intermittent failure is now identified — the known loopback flake, BoundedResponseTests, passes alone; fix queued in G9) · last: updater fixes merged
+STATUS: STOPPED · cycle 0 · 11 done · build+tests GREEN (260 Mac, 31 iOS) · last: iPad stream input, keyboards and menu sounds (G6a)
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
 - Commits: `git log --oneline --grep='^loop' main..codeX`
 
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
-- ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
+- ❓ MT-P2 — your old home-network addresses, PC names and a host ID are in the PUBLIC git history — options: change the addresses (recommended) | rewrite public history
+- ❓ MT-P1 — build any of the four suggested features? — one PC with home + Tailscale addresses · iPad hardware-keyboard launcher navigation · more on-screen-keyboard keys · the saved game list at start-up
+- ❓ Should the iPad's pairing key be "this device only" (never in a backup; a restored iPad would need pairing again)?
+- ❓ Taste calls (see Live checks): navy text on the blue · Pair Computer starting pairing straight away · the iPad stream grab pill's visibility · Interface Size ▸ Large
 
 ## Recommendations (things the loop chose not to do unattended)
+- 💡 Leftover (Low, G6a) — a launch that carries on after you leave switches its audio to the menu-sound category, so its game audio would mix with music and obey Silent; the root cause is that a launch can't be aborted (fix group 3, LIF-stale-launch-restart).
+- 💡 iPad keyboard on non-US PCs (G6a, non-drastic) — only characters with no US key (é, ß, emoji) are sent as text; everything else is a US-position key press, as in Moonlight. Suggest an optional Settings ▸ Input "Type everything as text" switch for UK/German/French PCs (not default: games reading raw keys wouldn't see W/A/S/D).
+- 💡 If one edge swipe still leaves the app on your iPad: Apple's deferral can be cancelled by an auto-hidden Home indicator; the fallback is to show the indicator while streaming with touch (as Moonlight does) — a look change, your call.
 - 💡 Your CLAUDE.md (fix group 9; your file, not edited): line ~214 says the leave chord "shows a 2 s progress ring" — the code is ~1 s (`total = 1.0`), suggest "held Start+Select+LB+RB leave chord that shows a ~1 s progress ring"; line ~194 lists "config import, identity (macOS reuse + …)" under Core/ — suggest "models, contracts, identity (VibeLight's own: macOS files + iOS keychain), …"; lines ~43–45 — Swift duplicates are now gitignored; suggest moving strays aside instead of deleting: `mkdir -p _dump/strays && find VibeLight VibeLightTests VibeLightiOSTests \( -name '* [0-9].swift' -o -name '* copy.swift' -o -name 'Info [0-9]*.plist' -o -name 'iOS-Info [0-9]*.plist' \) -exec mv -n {} _dump/strays/ \;`. QUA-claude-md-points-to-untracked: CLAUDE.md lines 3–6 point the public repo at `AIKnowledge.md`, which is kept out of git — move that pointer into `CLAUDE.local.md`, or split AIKnowledge into a public map and a private findings file.
 - 💡 Privacy guard gaps (scripts/git-hooks — your guard rails, not edited): SEC-pre-commit-external-diff-bypass — in `pre-commit` (~line 38) use `git diff --cached --unified=0 --no-color --no-ext-diff --no-textconv`, refuse when `--numstat` shows added lines but none were scanned, and add a test with a stub `GIT_EXTERNAL_DIFF`; SEC-commit-msg-scissors-bypass — in `commit-msg` (~line 37) cut at the scissors line only when the next non-empty line starts with `diff --git`, plus a test; QOL-topology-guard-coverage-gaps — read an untracked deny-list generated from `CLAUDE.local.md`, add private IPv6 (`fd..:`) and `.ts.net`, and add a `pre-push` hook running the same checks.
 - 💡 QUA-moonlight-import-dead-code (rest, queued as G9b): `IdentityStore.resolve(moonlightIdentity: nil)` → `resolve()` and drop the parameter; delete `AppState.importedHosts` and start `rebuildHosts` with an empty list; fix the two comments that still mention Moonlight's hosts.
@@ -32,6 +38,8 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 27 Oct 00:30 Wrap-up (your request): every lane merged and removed; final tree 260 Mac tests, 31 iOS tests (IOSIdentityTests included — no longer skipped), iOS build with the 6 known warnings only. Loop deny rules and keep-awake removed; loop ended.
+- 27 Oct 00:10 Fix group 6a merged (7 findings; review 1 upheld 1 Low — numpad/ISO keys dropped while the iPad keyboard was up — fixed; last review 1 Low → Recommendations). What you now get on iPad: a swipe from a screen edge mid-game needs a second swipe before iPadOS leaves the app (so a stray swipe no longer ends the stream or quits the game on the PC); menu sounds mix with your music and stay quiet in Silent mode, also after a stream; the menu-sound engine lets go of the speakers 10 s after the last sound; a key held when the keyboard drops out is released on the PC; hardware keys arrive once; accented letters and emoji from the on-screen keyboard reach the PC; a split or floating keyboard keeps blocking taps beneath it. Non-drastic: other symbols still type as US key positions (see Recommendations). Checked by tests and source; needs your iPad (Live checks).
 - 26 Oct 23:00 Visual 3I merged — the last of the 13 visual changes (review 1 upheld 1 Low, fixed; last review clean): the setup wizard's hints show your controller's real buttons (or Return/Esc on a keyboard) and become tappable pills on an iPad with no controller; the wizard and the main hint bar share one chip, so they can't drift; VoiceOver hears Back/Continue as buttons. Wizard hint labels go from 15 pt to the main bar's 13 pt (the cost of sharing one chip). Source- and unit-checked, not yet seen in a running app. 257 Mac tests green, iOS build green. Pushed.
 - 26 Oct 22:40 Fix group 9 merged (13 findings; review 1 upheld 3 Lows, fixed; last review 1 Low → your CLAUDE.md, see Recommendations). What you now get: the README gives the right leave-stream chord (~1 s), drops the removed Moonlight import and calls the iPad key an ordinary keychain key; Mac tests no longer boot VibeLight against your real settings and PCs; the flaky size-cap tests passed 180/180 under load; two tests that couldn't fail now can; Finder duplicates of private files are ignored; the install script stops promising a stock-Moonlight fallback; swift-crypto 4.5.0 → 4.5.2. 250 Mac tests green, iOS build green. iOS unit tests NOT yet run on the merged tree — the Simulator timed out booting while another lane used it; they run once on the final tree. Pushed.
 - 26 Oct 22:10 Visual 3H merged (2 audit items; review 1 upheld 4 Lows, fixed; last review 1 Medium + 2 Lows — the Medium and one Low fixed directly with tests proven to fail without them, independently checked, 2 more Lows from that check fixed; 1 Low left in Recommendations). What you now get: an empty Home says why it's empty and offers the next step (Add Computer, Pair Computer, Wake Computer; "Looking for <PC>…" until it first answers); computer-banner errors wrap to two lines and show in full in the Computers card; "Restarting <PC>…" is grey progress with a spinner. Source- and unit-checked, not yet seen in a running app (see Live checks). 248 Mac tests green, iOS build green. Pushed.
@@ -115,6 +123,10 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - ~/Documents is iCloud-synced — that's almost certainly where the `AppState 2.swift` / `Info 2.plist` duplicates CLAUDE.md warns about came from (sync-conflict copies). Moving out of iCloud should end them.
 
 ## Live checks for you (things only your eyes or devices can confirm)
+- iPad mid-stream: swipe up once from the bottom — the game keeps running; a second swipe goes Home. Same from the top and right edges; the grab pill still shows the controls. In the launcher one swipe goes Home as normal.
+- iPad: play Music, open VibeLight and move around — Music keeps playing; Silent on → no ticks. Stream a game, leave — same again; the next stream has game sound even with Silent on.
+- iPad with a Magic Keyboard mid-stream: type "hello" into Notepad — each letter once; hold W in a game, detach the keyboard — the PC releases W at once; hold W and pull down Control Center — the game stops moving.
+- iPad on-screen keyboard: type `é ß 🙂` into Notepad — each arrives once; split or float the keyboard and tap just outside it — the game gets the tap only outside the keyboard.
 - Setup wizard (Settings ▸ Restart Setup): with an Xbox pad the bar shows Ⓑ Back · d-pad Change · Ⓐ Continue; with a PlayStation pad Circle/Cross; on iPad with no controller only tappable pills (no Change); on the Mac with the keyboard ⎋ Back · arrows · ⏎ Continue. With VoiceOver: "Back, button", "Continue, button", and "Change" without "button"; VO-Space on Back goes back.
 - Mac: run the tests (`xcodebuild … test`) — no VibeLight window or Dock icon appears, and your settings are unchanged. Then open VibeLight normally — it opens full-screen as before.
 - iPad: hold Start+Select+L1+R1 while streaming — the ring fills in about 1 s and you leave the stream while the game keeps running.
@@ -153,6 +165,7 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - (Optional, on a throwaway copy only) Mac with `client.pem` made unreadable (`chmod 000`): a host action says VibeLight can't read its identity file and changed nothing; `client.key` is untouched. Restore the permissions afterwards.
 
 ## Test status
+- FINAL (27 Oct, tree efbe427+): macOS 260 tests, 0 failures; iOS 31 tests, 0 failures (iPhone 17 Simulator; IOSIdentityTests run, no longer skipped); iOS build with the 6 known warnings only. The loopback flake (BoundedResponseTests) is fixed — 180/180 under load.
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
   - macOS: full suite 132 tests, 0 failures. Runtime note: 3 PinDurabilityTests log "should not be called on the main thread".
   - iOS: simulator build succeeds with 6 compiler warnings — `UIScreen.screens` deprecated (ExternalScenePlacement.swift:117); unused `resignFirstResponder()` result (StreamKeyboard.swift:43); main-actor call from a nonisolated context (VibeLightApp.swift:42); `PairTLSDelegate` / `PinnedTrust` must restate `@unchecked Sendable` (HostPairing.swift:270, MoonDeckBuddyClient.swift:264 — introduced in v0.2.1's byte-cap change); a doc-comment parameter mismatch (MoonlightSession.h:46).
@@ -174,6 +187,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 6, "shelved": 0, "blocked": 0,
- "state": "looping", "build": "green"}
+ "cycles": 0, "done": 11, "shelved": 0, "blocked": 0,
+ "state": "stopped", "build": "green"}
 ```
