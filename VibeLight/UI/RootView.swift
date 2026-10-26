@@ -38,7 +38,7 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let scale = Self.uiScale(for: geo.size)
+            let scale = Self.uiScale(for: geo.size, interfaceSize: state.interfaceSize)
             // On iOS the stream is an OVERLAY, so the launcher underneath is
             // never unmounted — and seven of the ten background themes
             // (including the default) animate every display frame. That kept a

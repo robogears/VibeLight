@@ -60,4 +60,19 @@ final class UIScaleTests: XCTestCase {
         }
         XCTAssertEqual(RootView.designMin, CGSize(width: 1440, height: 860))
     }
+
+    /// The setting is one row on Settings ▸ Themes, on every platform, and its
+    /// focus ID is emitted by exactly one tab (the focus invariant: one view
+    /// per emitted ID). Raw values persist in UserDefaults, so they're frozen.
+    func testInterfaceSizeIsOneRowOnTheThemesTab() {
+        XCTAssertEqual(AppState.SettingsTab.themes.rows, [.background, .interfaceSize])
+        let tabsWithRow = AppState.SettingsTab.allCases.filter { $0.rows.contains(.interfaceSize) }
+        XCTAssertEqual(tabsWithRow, [.themes])
+        XCTAssertEqual(AppState.SettingsRow.interfaceSize.title, "Interface Size")
+        XCTAssertEqual(AppState.SettingsRow.interfaceSize.focusID, "setting:interfaceSize")
+        XCTAssertEqual(InterfaceSize.allCases.map(\.rawValue), ["default", "large"])
+        XCTAssertEqual(InterfaceSize.allCases.map(\.label), ["Default", "Large"])
+        XCTAssertEqual(InterfaceSize.large.factor, 1.25)
+        XCTAssertEqual(InterfaceSize.default.factor, 1.0)
+    }
 }
