@@ -102,6 +102,20 @@ final class ThemeContrastTests: XCTestCase {
         XCTAssertTrue(wizard.contains(".foregroundStyle(prominent ? Theme.onAccent : Theme.textPrimary)"))
     }
 
+    // MARK: - The last destructive button is always red (UX-destructive-styling-inconsistent)
+
+    /// The buttons that actually delete turn red when focused, like Restart PC
+    /// and the preset menu's "Clear" that leads to them.
+    func testFinalDestructiveButtonsAreMarkedDestructive() throws {
+        let clear = try source(of: "private struct ConfirmClearPresetCard: View {",
+                               in: "VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(clear.contains("OverlayButton(id: \"clearpreset:yes\", title: \"Clear Preset\", symbol: \"trash.fill\", destructive: true)"))
+        let forget = try source(of: "private struct ConfirmRemoveHostCard: View {",
+                                in: "VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(forget.contains("OverlayButton(id: \"removehost:yes\", title: \"Forget Computer\", symbol: \"trash.fill\",\n"
+                                      + "                              destructive: true)"))
+    }
+
     /// The body of one view struct, from its declaration to the closing brace
     /// at column 0 — so a pin can't pass on text elsewhere in the file.
     private func source(of declaration: String, in path: String) throws -> String {

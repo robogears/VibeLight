@@ -391,7 +391,7 @@ private struct ConfirmClearPresetCard: View {
             }
             VStack(spacing: 12) {
                 OverlayButton(id: "clearpreset:cancel", title: "Keep It", symbol: "xmark")
-                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill")
+                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill", destructive: true)
             }
         }
         .padding(48).frame(width: 460)
@@ -426,7 +426,8 @@ private struct ConfirmRemoveHostCard: View {
             }
             VStack(spacing: 12) {
                 OverlayButton(id: "removehost:cancel", title: "Keep It", symbol: "xmark")
-                OverlayButton(id: "removehost:yes", title: "Forget Computer", symbol: "trash.fill")
+                OverlayButton(id: "removehost:yes", title: "Forget Computer", symbol: "trash.fill",
+                              destructive: true)
             }
         }
         .padding(48).frame(width: 460)
