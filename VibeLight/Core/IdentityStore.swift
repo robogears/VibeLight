@@ -79,10 +79,11 @@ enum IdentityStore {
             // first unlock after a reboot. The identity is probably sitting
             // right there. Generating would call deleteAll() and destroy it,
             // unpairing every computer with no way back except re-pairing each
-            // one by PIN. Returning an empty identity instead costs the user a
-            // relaunch and nothing else: ClientIdentityProvider.secIdentity()
-            // re-queries the keychain lazily and caches only on success, so the
-            // app recovers on its own once the device is unlocked.
+            // one by PIN. Returning an empty identity instead costs nothing:
+            // ClientIdentityProvider.secIdentity() re-queries the keychain
+            // lazily and caches only on success, and pairingCertificatePEM()
+            // re-reads the certificate when pairing starts, so the app recovers
+            // on its own once the device is unlocked.
             return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
         }
     }

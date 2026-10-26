@@ -32,15 +32,23 @@ final class ClientIdentityProvider: @unchecked Sendable {
     private let supportDirectory: URL
     private let identityProblem: String?
     private var cached: SecIdentity?
+    /// The certificate found by a later re-read, when the launch-time identity
+    /// came back empty. Guarded by `lock`.
+    private var reloadedCertificatePEM: Data?
+    private let reloadCertificate: @Sendable () throws -> Data
     private let lock = NSLock()
 
+    /// `reloadCertificate` is for tests; the default re-reads the keychain on
+    /// iOS and reports the launch problem on macOS.
     init(identity: ClientIdentity, supportDirectory: URL? = nil,
-         identityProblem: String? = IdentityStore.identityProblem) {
+         identityProblem: String? = IdentityStore.identityProblem,
+         reloadCertificate: (@Sendable () throws -> Data)? = nil) {
         self.identity = identity
         self.supportDirectory = supportDirectory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VibeLight", isDirectory: true)
         self.identityProblem = identityProblem
+        self.reloadCertificate = reloadCertificate ?? Self.defaultReload(problem: identityProblem)
     }
 
     /// The mTLS identity, building + caching it on first use.
@@ -109,10 +117,57 @@ final class ClientIdentityProvider: @unchecked Sendable {
         return key
     }
 
-    /// The client certificate PEM (for the pairing handshake wire format).
-    var certificatePEM: Data { identity.certificatePEM }
+    /// The client certificate PEM for the pairing handshake, read when pairing
+    /// starts — never a launch-time snapshot.
+    ///
+    /// On iOS a launch before the first unlock gets an EMPTY identity (the
+    /// keychain can't answer, and generating would destroy the real one). That
+    /// empty certificate used to be copied into every pairing for the life of
+    /// the process: the PC asked for the PIN, then stage 3 failed with
+    /// "Couldn't read the client certificate." until a relaunch. Now an empty
+    /// launch identity is re-read here, kept once found, and a keychain that
+    /// still can't answer throws a message saying to unlock and retry — before
+    /// the PC is ever contacted. (audit ERR-ios-pairing-empty-cert-snapshot)
+    func pairingCertificatePEM() throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        if !identity.certificatePEM.isEmpty { return identity.certificatePEM }
+        if let reloadedCertificatePEM { return reloadedCertificatePEM }
+        let cert = try reloadCertificate()
+        guard !cert.isEmpty else { throw IdentityError.unavailable(Self.noIdentityMessage) }
+        reloadedCertificatePEM = cert
+        return cert
+    }
 
     static let noIdentityMessage = "VibeLight has no client identity yet. Quit and reopen VibeLight, then try again."
+
+    private static func defaultReload(problem: String?) -> @Sendable () throws -> Data {
+        #if os(iOS)
+        return { try ClientIdentityProvider.certificateForPairing(from: IOSKeychainIdentity.loadPEMs(in: .production)) }
+        #else
+        // macOS reads files, not a keychain that unlocks later: an empty
+        // identity stays empty until the launch problem is fixed and the app
+        // reopened, so say what that problem was.
+        let message = problem ?? noIdentityMessage
+        return { throw IdentityError.unavailable(message) }
+        #endif
+    }
+
+    #if os(iOS)
+    static let keychainLockedMessage =
+        "VibeLight couldn't read its identity because this device was locked. Unlock it, then try pairing again."
+
+    /// What a pairing-time keychain re-read means. Read-only: an `.absent`
+    /// here is NOT a cue to generate (that happens only at launch, in
+    /// IdentityStore), so it asks for a relaunch instead.
+    static func certificateForPairing(from lookup: IOSKeychainIdentity.Lookup) throws -> Data {
+        switch lookup {
+        case .found(let cert, _) where !cert.isEmpty: return cert
+        case .unavailable: throw IdentityError.unavailable(keychainLockedMessage)
+        case .found, .absent: throw IdentityError.unavailable(noIdentityMessage)
+        }
+    }
+    #endif
 
     #if os(macOS)
     // MARK: - P12 cache (macOS)

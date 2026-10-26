@@ -164,4 +164,72 @@ final class IdentitySafetyTests: XCTestCase {
         }
     }
     #endif
+
+    // MARK: - Pairing reads the certificate when it starts (audit ERR-ios-pairing-empty-cert-snapshot)
+
+    private final class Calls: @unchecked Sendable { var count = 0 }
+
+    private func emptyProvider(_ reload: @escaping @Sendable () throws -> Data) -> ClientIdentityProvider {
+        ClientIdentityProvider(
+            identity: ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: "test"),
+            supportDirectory: dir, identityProblem: nil, reloadCertificate: reload)
+    }
+
+    /// iOS: launched before the first unlock, the identity came back empty. The
+    /// first pairing (still locked) must say so; once the keychain answers, the
+    /// next pairing must get the real certificate without a relaunch — and keep
+    /// it, rather than asking the keychain again every time.
+    func testAnEmptyLaunchCertificateIsReReadWhenPairingStarts() throws {
+        let calls = Calls()
+        let cert = Data("-----BEGIN CERTIFICATE-----\nreal\n".utf8)
+        let provider = emptyProvider {
+            calls.count += 1
+            if calls.count == 1 { throw ClientIdentityProvider.IdentityError.unavailable("locked") }
+            return cert
+        }
+
+        XCTAssertThrowsError(try provider.pairingCertificatePEM()) { error in
+            XCTAssertEqual(error.localizedDescription, "locked")
+        }
+        XCTAssertEqual(try provider.pairingCertificatePEM(), cert, "an unlock must be picked up without a relaunch")
+        XCTAssertEqual(try provider.pairingCertificatePEM(), cert)
+        XCTAssertEqual(calls.count, 2, "a certificate once found is kept")
+
+        // A re-read that comes back empty is still "no certificate", never sent.
+        XCTAssertThrowsError(try emptyProvider { Data() }.pairingCertificatePEM())
+    }
+
+    func testALaunchCertificateIsUsedAsIs() throws {
+        let calls = Calls()
+        let cert = Data("CERT".utf8)
+        let provider = ClientIdentityProvider(
+            identity: ClientIdentity(certificatePEM: cert, privateKeyPEM: Data("KEY".utf8), uniqueID: "test"),
+            supportDirectory: dir, reloadCertificate: { calls.count += 1; return Data() })
+        XCTAssertEqual(try provider.pairingCertificatePEM(), cert)
+        XCTAssertEqual(calls.count, 0)
+    }
+
+    #if os(macOS)
+    func testMacPairingWithoutAnIdentityReportsTheLaunchProblem() {
+        let provider = ClientIdentityProvider(
+            identity: ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: "test"),
+            supportDirectory: dir, identityProblem: "VibeLight can't read its identity file (x).")
+        XCTAssertThrowsError(try provider.pairingCertificatePEM()) { error in
+            XCTAssertEqual(error.localizedDescription, "VibeLight can't read its identity file (x).")
+        }
+    }
+    #endif
+
+    /// Without a certificate, pairing stops BEFORE phase 1 — the request that
+    /// makes the PC ask for a PIN. The address is deliberately not a valid host
+    /// name: any network attempt fails instantly as `.unreachable`, so getting
+    /// the identity message back proves nothing was sent.
+    func testPairingWithoutACertificateStopsBeforeThePCAsksForAPIN() async {
+        let provider = emptyProvider {
+            throw ClientIdentityProvider.IdentityError.unavailable("Unlock it, then try pairing again.")
+        }
+        let result = await HostPairing(identityProvider: provider, uniqueID: "test")
+            .pair(address: "not a host", pin: "1234")
+        XCTAssertEqual(result, .failed("Unlock it, then try pairing again."))
+    }
 }

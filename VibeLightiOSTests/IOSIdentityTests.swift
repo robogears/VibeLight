@@ -178,5 +178,21 @@ final class IOSIdentityTests: XCTestCase {
         XCTAssertEqual(generateCalls, 1, "a found identity is used, never regenerated")
         XCTAssertEqual(existing.certificatePEM, Data("OLD".utf8))
     }
+
+    /// Pairing's re-read of an empty launch identity: a keychain that still
+    /// can't answer says to unlock and retry; nothing there asks for a relaunch
+    /// (which is where generation happens). (audit ERR-ios-pairing-empty-cert-snapshot)
+    func testPairingReReadSaysWhatToDo() throws {
+        typealias P = ClientIdentityProvider
+        XCTAssertEqual(try P.certificateForPairing(from: .found(cert: Data("C".utf8), key: Data())), Data("C".utf8))
+
+        XCTAssertThrowsError(try P.certificateForPairing(from: .unavailable(errSecInteractionNotAllowed))) {
+            XCTAssertEqual($0.localizedDescription, P.keychainLockedMessage)
+        }
+        XCTAssertThrowsError(try P.certificateForPairing(from: .absent)) {
+            XCTAssertEqual($0.localizedDescription, P.noIdentityMessage)
+        }
+        XCTAssertThrowsError(try P.certificateForPairing(from: .found(cert: Data(), key: Data())))
+    }
 }
 #endif
