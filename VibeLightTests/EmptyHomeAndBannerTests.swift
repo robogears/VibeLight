@@ -244,4 +244,32 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         XCTAssertTrue(chip.contains(".lineLimit(2)"))
         XCTAssertFalse(chip.contains(".lineLimit(1)"), "one line cut the reassurance off with '…'")
     }
+
+    /// Removing your only computer must not leave its error on the empty
+    /// panel ("fix the computer you just removed"); a warning about the
+    /// saved list itself stays (3H last review).
+    func testRemovingTheSelectedComputerDropsItsErrorButKeepsTheListWarning() throws {
+        XCTAssertNil(AppState.hostErrorAfterRemovingSelected("Gaming PC refused the connection."))
+        XCTAssertNil(AppState.hostErrorAfterRemovingSelected(nil))
+        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.savedHostsUnreadableMessage),
+                       AppState.savedHostsUnreadableMessage)
+        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.someSavedHostsUnreadableMessage),
+                       AppState.someSavedHostsUnreadableMessage)
+        let app = try source("VibeLight/App/AppState.swift")
+        let remove = try body(of: "let wasSelected = selectedHostID == host.id", until: "rebuildFocus()", in: app)
+        XCTAssertTrue(remove.contains("hostError = Self.hostErrorAfterRemovingSelected(hostError)"), String(remove))
+    }
+
+    /// A refresh that fails after the person switched computers (or removed
+    /// the one being checked) must write nothing onto the new selection — the
+    /// removed computer's games used to stay on the shelf with no computer
+    /// selected (3H last review). Checked by source only.
+    func testAFailedRefreshForAComputerNoLongerSelectedChangesNothing() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let typed = try body(of: "} catch let error as HostAPIError {", until: "serverInfo = nil", in: app)
+        XCTAssertTrue(typed.contains("guard selectionStillThisHost() else { return }"), String(typed))
+        let other = try body(of: "apps = displayApps(from: rememberedApps(for: host))\n            selectedHostChecked = true\n        } catch {",
+                             until: "serverInfo = nil", in: app)
+        XCTAssertTrue(other.contains("guard selectionStillThisHost() else { return }"), String(other))
+    }
 }

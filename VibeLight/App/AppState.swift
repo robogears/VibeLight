@@ -282,6 +282,14 @@ final class AppState {
         return unreadableCount > 0 ? someSavedHostsUnreadableMessage : nil
     }
 
+    /// The banner error to keep once the selected computer is removed: its own
+    /// error named the computer that is gone, and with none left the empty
+    /// panel would tell the person to fix it. A saved-computers warning is
+    /// about the list, not that computer, so it stays (3H last review).
+    nonisolated static func hostErrorAfterRemovingSelected(_ error: String?) -> String? {
+        error == savedHostsUnreadableMessage || error == someSavedHostsUnreadableMessage ? error : nil
+    }
+
     /// What the selected computer's header chip says beside its name.
     enum HostBanner: Equatable, Sendable {
         case error(String)    // orange, up to two lines
@@ -1532,6 +1540,7 @@ final class AppState {
             serverInfo = nil; hostAddress = nil
             selectedHostChecked = false
             clearHostNotice()   // it named the removed computer
+            hostError = Self.hostErrorAfterRemovingSelected(hostError)
             apps = displayApps(from: selectedHost?.apps ?? [])
             Task { await refreshSelectedHost() }
         }
@@ -1645,6 +1654,21 @@ final class AppState {
             hostsNeedingRepair.remove(host.id)
             rememberApps(fresh, for: host)
         } catch let error as HostAPIError {
+            // The host is reachable but refuses our identity — remember it so
+            // selecting this computer offers PAIRING again instead of just
+            // switching to it (see needsPairing). Without this the banner tells
+            // the user to pair again and nothing in the UI lets them. Keyed by
+            // host, so it holds even if the selection moved on.
+            switch error {
+            case .hostIdentityChanged, .notAuthorized: hostsNeedingRepair.insert(host.id)
+            default: break
+            }
+            // A computer switched away from (or removed) during the await must
+            // not write its error, address or games onto the new selection: a
+            // removed computer's games stayed on the shelf with no computer
+            // selected, while focus offered an Add Computer button no view drew
+            // (3H last review).
+            guard selectionStillThisHost() else { return }
             serverInfo = nil
             hostAddress = nil
             // A wedged host is NOT the normal asleep case — surface it, and
@@ -1656,26 +1680,19 @@ final class AppState {
                 hostError = error.localizedDescription
                 clearHostNotice()   // a real error replaces any progress notice
             }
-            // The host is reachable but refuses our identity — remember it so
-            // selecting this computer offers PAIRING again instead of just
-            // switching to it (see needsPairing). Without this the banner tells
-            // the user to pair again and nothing in the UI lets them.
-            switch error {
-            case .hostIdentityChanged, .notAuthorized: hostsNeedingRepair.insert(host.id)
-            default: break
-            }
             // Fall back to the last app list we actually saw for this host.
             // This used to read `host.apps`, which is ALWAYS empty in the
             // shipping app (streamHost(from:) hardcodes `apps: []` and the
             // Moonlight plist import was removed in v0.2.0) — so the "cache"
             // was `apps = []`, and any hiccup blanked the whole shelf.
             apps = displayApps(from: rememberedApps(for: host))
-            if selectionStillThisHost() { selectedHostChecked = true }
+            selectedHostChecked = true
         } catch {
+            guard selectionStillThisHost() else { return }
             serverInfo = nil
             hostAddress = nil
             hostNotResponding = false
-            if selectionStillThisHost() { selectedHostChecked = true }
+            selectedHostChecked = true
         }
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
