@@ -158,6 +158,24 @@ enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Settings ▸ Themes ▸ Interface Size: multiplies the launcher's canvas scale
+/// (`RootView.uiScale`), the custom-UI way to enlarge text Apple accepts in
+/// place of Dynamic Type (UX-ios-scale-shrinks-text-targets). A GLOBAL
+/// appearance preference like `BackgroundTheme`, so loading a stream preset
+/// never changes it. Raw values persist in UserDefaults — never rename.
+enum InterfaceSize: String, Codable, CaseIterable, Sendable {
+    case `default`, large
+
+    var factor: CGFloat { self == .large ? 1.25 : 1.0 }
+
+    var label: String {
+        switch self {
+        case .default: "Default"
+        case .large:   "Large"
+        }
+    }
+}
+
 struct StreamSettings: Sendable, Codable, Equatable {
     // Video
     var width: Int
