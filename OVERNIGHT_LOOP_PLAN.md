@@ -5,8 +5,9 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED  (resumed by th
 PROJECT_PATH: ~/Developer/VibeLight
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792610686
-LAST_TURN_EPOCH: 1793026665
+LAST_TURN_EPOCH: 1793035474
 CEILING_EPOCH: none
+STOP_WHEN: MasterTasks done (owner, 26 Oct 21:20: "stop when you've finished your mt") — i.e. MT-8 (all 13 visual changes: 3H, 3I left) and MT-2b (fix groups G2, G3, G4, G6, G8, G9) merged and verified; MT-P1/MT-P2 wait on the owner and do not block. Then run On stop. Never generate ladder work (no Rung 1–3) before stopping.
 BASE_BRANCH: main
 BRANCH: codeX
 RUNG: mission               # mission | 1-qa | 2-audit | 3-qol
