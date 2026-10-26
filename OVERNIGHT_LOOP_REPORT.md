@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN (135) · last: 3 visual fixes merged (stream controls, keyboard hints, iPad icon)
+STATUS: LOOPING · cycle 0 · 5 done · build+tests GREEN (153 Mac + 10 iOS) · last: fix group 1 merged — saved data is never lost
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -21,6 +21,14 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN (135) · last: 3 visua
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 16:10 Fix group 1 merged. Saved data is never lost now:
+  - one unreadable saved computer, Restart PC pairing or preset is kept exactly as stored, and changes to everything else still save (before, one bad entry froze the computer list for good or wiped presets);
+  - a store that can't be read at all is copied aside before anything is written over it;
+  - damaged saved sizes, frame rates or bitrates are pulled back into range instead of crashing Settings;
+  - Frame Rate arrows step correctly from an unusual saved value;
+  - a bad Restart PC port shows "Enter a port from 1 to 65535" instead of crashing.
+  - Reviewed, skeptic-checked, and polished for 2 points (a second damaged copy is now also kept; a portrait screen's Native resolution survives a relaunch). 153 Mac tests + 10 iOS tests green.
+- 26 Oct 16:05 A usage limit interrupted fix group 5 and the Computers-menu job. Their partial work was kept (a WIP commit for group 5), and both resumed from where they stopped.
 - 26 Oct 14:15 Three visual fixes merged into codeX after code + apple-design review and skeptics:
   - iPad stream: when the ✕ and keyboard buttons hide, a faint pill stays at the top-right edge, and tapping it brings them back (the swipe still works). With VoiceOver or Switch Control on, the buttons never hide, and "Leave the Stream" is an accessibility action. Under Reduce Motion they fade instead of sliding. Increase Contrast makes the pill brighter and outlines it.
   - Mac: using the keyboard shows keyboard hints (⏎/⎋) even with a controller plugged in. Touch the controller and its buttons come back.
@@ -45,7 +53,7 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN (135) · last: 3 visua
 - Cycle 0: mission in progress
 
 ## Completed
-- Total: 4 · recent: ✅ Audit finished (dry) + visual page — 25m · ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
+- Total: 5 · recent: ✅ Fix group 1 (saved data) · ✅ Audit finished (dry) + visual page — 25m · ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
 
 ## Blocked (environment)
 - (none)
@@ -68,6 +76,8 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN (135) · last: 3 visua
 - ~/Documents is iCloud-synced — that's almost certainly where the `AppState 2.swift` / `Info 2.plist` duplicates CLAUDE.md warns about came from (sync-conflict copies). Moving out of iCloud should end them.
 
 ## Live checks for you (things only your eyes or devices can confirm)
+- Saved data (best on a copy of your preferences): break one saved computer's record, relaunch — Home says some couldn't be read; add a computer, relaunch — it's still there.
+- Restart PC setup: type -1, 0 or 70000 as the port and press Pair — a message asks for 1–65535, nothing crashes; a blank port still pairs on 59999.
 - iPad stream: wait 7 s after a game starts — the buttons slide away and a faint white pill stays at the top-right edge. Tap it: they come back. **Your call:** is the pill too visible over gameplay? (one-line fallback: dimmer, white at 0.35)
 - iPad stream with VoiceOver on: the buttons never hide; the Actions rotor offers "Leave the Stream".
 - Mac with a controller plugged in: press arrow keys/Return — the hint bar shows ⏎/⎋; touch the controller — it shows Ⓐ/Ⓑ again.
@@ -95,6 +105,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 4, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 5, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```
