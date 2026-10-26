@@ -8,14 +8,19 @@ enum Theme {
     static let accentGlow = Color(red: 0.35, green: 0.62, blue: 1.0).opacity(0.55)
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.6)
-    /// Ink on a full-strength `accent` fill (6.8:1). White on the accent is 2.7:1 — under the 3:1
-    /// bold minimum — so every label, glyph and secondary line that sits on `Theme.accent` uses
-    /// this (UX-white-on-accent-contrast). The setup wizard's Continue button set the precedent.
+    /// Ink on a solid or near-solid `accent` fill (6.8:1 on the full accent). White on the full
+    /// accent is 2.7:1 — under the 3:1 bold minimum — so every label, glyph and secondary line on
+    /// `Theme.accent` uses this (UX-white-on-accent-contrast). On a near-solid fill (0.85–0.9) navy
+    /// always passes (≥ 4.6:1) but white is only ~3.2–3.5:1, so white may stay there for LARGE
+    /// text alone (the 18–19 pt bold Settings and setup quality rows, which need 3:1); any small
+    /// text takes navy (the 0.85 setup-wizard preset chip's 11–13 pt line; the 0.9 PIN tiles are
+    /// navy too). The setup wizard's Continue button set the precedent.
     static let onAccent = Color(red: 0.04, green: 0.08, blue: 0.16)   // #0A1429
 
-    /// The ink on a lit surface: navy only on a FULL-strength accent fill. A merely tinted fill
-    /// (the accent at 0.35 over the dark backdrop) or the destructive red would swallow navy,
-    /// so those keep white (UX-white-on-accent-contrast).
+    /// The ink on a lit surface: navy on a full-strength accent fill, white on a light tint (the
+    /// accent at 0.35–0.4 over the dark backdrop, where navy falls to ~2:1) or the destructive red
+    /// (UX-white-on-accent-contrast). Near-solid 0.85–0.9 fills don't use this switch; they pick
+    /// their ink by text size — see `onAccent`.
     nonisolated static func labelInk(onSolidAccent solid: Bool) -> Color {
         solid ? onAccent : .white
     }
