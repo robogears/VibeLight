@@ -59,6 +59,98 @@ final class UpdateSwapSafetyTests: XCTestCase {
         XCTAssertEqual(p.terminationStatus, 0, "fixture signing failed")
     }
 
+    /// What `unpackAndValidate` records for a bundle at download time.
+    private func stagedRecord(for app: URL) throws -> UpdateService.StagedUpdate {
+        let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        return UpdateService.StagedUpdate(app: app, version: info?["CFBundleShortVersionString"] as? String,
+                                          fingerprint: try UpdateService.bundleFingerprint(of: app))
+    }
+
+    private func assertStagedChanged(_ staged: UpdateService.StagedUpdate,
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(try UpdateService.revalidateStagedBundle(staged), file: file, line: line) { error in
+            guard case UpdateError.stagedChanged = error else {
+                return XCTFail("expected .stagedChanged, got \(error)", file: file, line: line)
+            }
+        }
+    }
+
+    // MARK: FS-update-swap-unchecked-stage
+
+    func testUntouchedStagePassesTheRestartCheck() throws {
+        let app = try makeBundle(at: root.appendingPathComponent("stage/VibeLight.app"))
+        XCTAssertNoThrow(try UpdateService.revalidateStagedBundle(try stagedRecord(for: app)))
+    }
+
+    func testStageRemovedFromTempIsRefused() throws {
+        let app = try makeBundle(at: root.appendingPathComponent("stage/VibeLight.app"))
+        let staged = try stagedRecord(for: app)
+        try FileManager.default.removeItem(at: app)          // macOS pruned the temp folder
+        assertStagedChanged(staged)
+    }
+
+    func testDamagedResourceIsRefused() throws {
+        let app = try makeBundle(at: root.appendingPathComponent("stage/VibeLight.app"))
+        let staged = try stagedRecord(for: app)
+        try FileManager.default.removeItem(at: app.appendingPathComponent("Contents/Resources/art.txt"))
+        assertStagedChanged(staged)
+    }
+
+    func testDifferentButValidlySignedBundleIsRefused() throws {
+        // A consistent bundle that isn't the one checked at download (an older
+        // leftover in the same place): signature fine, fingerprint isn't.
+        let app = try makeBundle(at: root.appendingPathComponent("stage/VibeLight.app"))
+        let staged = try stagedRecord(for: app)
+        try makeBundle(at: app, executable: "/usr/bin/false")
+        assertStagedChanged(staged)
+    }
+
+    func testVersionOrIdentityChangeIsRefused() throws {
+        let app = try makeBundle(at: root.appendingPathComponent("stage/VibeLight.app"))
+        let staged = try stagedRecord(for: app)
+        try writeInfo(app, version: "0.2.9", identifier: "com.vibelight.app"); try sign(app)
+        assertStagedChanged(staged)
+        try writeInfo(app, version: "0.3.1", identifier: "com.example.other"); try sign(app)
+        assertStagedChanged(staged)
+    }
+
+    // MARK: FS-update-rollback-opens-self-deleting-copy
+
+    func testSweepSparesTheFolderTheRunningAppLivesIn() throws {
+        let fm = FileManager.default
+        let running = root.appendingPathComponent("vibelight-update-AAA/VibeLight.app")
+        try fm.createDirectory(at: running, withIntermediateDirectories: true)
+        let otherStage = root.appendingPathComponent("vibelight-update-BBB")
+        try fm.createDirectory(at: otherStage, withIntermediateDirectories: true)
+        let zip = root.appendingPathComponent("vibelight-update-CCC.zip")
+        try Data().write(to: zip)
+        let unrelated = root.appendingPathComponent("someone-elses-file")
+        try Data().write(to: unrelated)
+
+        let entries = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        let swept = UpdateService.staleArtifacts(in: entries, runningBundle: running)
+            .map(\.lastPathComponent).sorted()
+        XCTAssertEqual(swept, ["vibelight-update-BBB", "vibelight-update-CCC.zip"])
+    }
+
+    func testSweepRecognisesTheRunningAppThroughTheVarSymlink() throws {
+        // Temp paths arrive as /var/folders/… from FileManager and as
+        // /private/var/folders/… from a resolved bundle URL.
+        let folder = root.appendingPathComponent("vibelight-update-AAA")
+        let running = folder.appendingPathComponent("VibeLight.app")
+        try FileManager.default.createDirectory(at: running, withIntermediateDirectories: true)
+        let resolved = running.resolvingSymlinksInPath()
+        XCTAssertEqual(UpdateService.staleArtifacts(in: [folder], runningBundle: resolved), [])
+        XCTAssertEqual(UpdateService.staleArtifacts(in: [folder.resolvingSymlinksInPath()],
+                                                    runningBundle: running), [])
+    }
+
+    func testSweepStillClearsAFolderWhoseNameIsOnlyAPrefixOfTheRunningOne() {
+        let running = root.appendingPathComponent("vibelight-update-AAAB/VibeLight.app")
+        let lookalike = root.appendingPathComponent("vibelight-update-AAA")
+        XCTAssertEqual(UpdateService.staleArtifacts(in: [lookalike], runningBundle: running), [lookalike])
+    }
+
     // MARK: FS-relocate-replaces-newer-copy
 
     func testRelocationNeverReplacesANewerOrEqualInstall() {
