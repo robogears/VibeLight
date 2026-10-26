@@ -126,6 +126,15 @@ final class AppState {
         return "hostmenu:\(selectedID)"
     }
 
+    /// The row to land on when leaving the pair panel for the list: the
+    /// computer that was being paired if it is still listed (a cancelled
+    /// pairing never changed the selection, so that's the row you came from),
+    /// else the computer you're on.
+    nonisolated static func hostMenuReturnFocusID(hosts: [StreamHost], pairedID: String?, selectedID: String?) -> String? {
+        if let pairedID, hosts.contains(where: { $0.id == pairedID }) { return "hostmenu:\(pairedID)" }
+        return hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedID)
+    }
+
     /// Whether the menu draws the divider under its first row: only when the
     /// selected computer was lifted to the top AND other computers follow it.
     nonisolated static func hostMenuHasDivider(hosts: [StreamHost], selectedID: String?) -> Bool {
@@ -918,16 +927,19 @@ final class AppState {
     }
 
     func cancelPairing() {
+        let pairedID = pairing?.hostID
         pairingTask?.cancel()
         pairingTask = nil
         pairing = nil
         setPairingKeepAwake(false)
         rebuildFocus()
-        // Back on the Computers list: land on the computer you're on, as
-        // openHostMenu does. The engine would restore its remembered row
-        // NUMBER, and pairing may have moved a different computer to the top.
+        // Back on the Computers list: land on the computer whose pairing you
+        // just left — by ID, not the engine's remembered row NUMBER, because a
+        // successful pairing selects that computer and moves it to the top.
+        // If its ID changed mid-pairing (upgradeAddedHost learns the real
+        // UUID), fall back to the computer you're on, as openHostMenu does.
         if case .hosts = overlay,
-           let id = Self.hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedHostID) {
+           let id = Self.hostMenuReturnFocusID(hosts: hosts, pairedID: pairedID, selectedID: selectedHostID) {
             focus.focus(itemID: id)
         }
         if focus.focusedItemID == nil { focus.focusFirst() }

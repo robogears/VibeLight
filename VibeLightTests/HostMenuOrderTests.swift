@@ -91,4 +91,17 @@ final class HostMenuOrderTests: XCTestCase {
         XCTAssertEqual(focus.focusedItemID, "hostmenu:pc-b",
                        "the menu must open on the computer you're on, not on whatever now sits at the remembered row")
     }
+
+    /// Leaving the pair panel lands on the computer being paired, by ID: a
+    /// cancelled pairing never changed the selection, so that's the row you
+    /// came from; a successful one moved it to the top, where the ID still
+    /// finds it. If the ID vanished mid-pairing, fall back to the selection.
+    func testLeavingPairingReturnsToTheComputerBeingPaired() {
+        let list = hosts.map(host)
+        XCTAssertEqual(AppState.hostMenuReturnFocusID(hosts: list, pairedID: "pc-b", selectedID: "pc-a"),
+                       "hostmenu:pc-b", "cancelling pc-b's pairing must land back on pc-b, not the selected pc-a")
+        XCTAssertEqual(AppState.hostMenuReturnFocusID(hosts: list, pairedID: "gone", selectedID: "pc-a"),
+                       "hostmenu:pc-a", "an ID that changed mid-pairing falls back to the computer you're on")
+        XCTAssertNil(AppState.hostMenuReturnFocusID(hosts: list, pairedID: nil, selectedID: nil))
+    }
 }
