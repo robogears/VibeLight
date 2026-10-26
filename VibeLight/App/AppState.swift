@@ -101,6 +101,45 @@ final class AppState {
         }
         return hosts.first?.id
     }
+
+    /// The Computers menu's row order: the selected computer (persisted, so
+    /// also the last one used) first, then the rest in their existing order
+    /// (owner, 26 Oct 2026: "the last used PC should be at the top with a
+    /// little bar that seperates it from the other PCS"). The ONE source of
+    /// that order — HostMenuCard draws it and rebuildFocus emits it, so the
+    /// controller's up/down always walks the rows as drawn.
+    nonisolated static func hostMenuOrder(hosts: [StreamHost], selectedID: String?) -> [StreamHost] {
+        guard let selectedID, let i = hosts.firstIndex(where: { $0.id == selectedID }) else { return hosts }
+        var ordered = hosts
+        ordered.insert(ordered.remove(at: i), at: 0)
+        return ordered
+    }
+
+    /// The row the Computers menu opens on: the computer you're on. The rows
+    /// reorder whenever the selection changes, so the focus engine's
+    /// remembered row NUMBER can point at a different computer after a
+    /// selection made while the menu wasn't listing (pairing a new computer
+    /// selects it behind the pair panel) — audit finding HM. Nil when nothing
+    /// is selected, so the engine's own repair decides.
+    nonisolated static func hostMenuOpeningFocusID(hosts: [StreamHost], selectedID: String?) -> String? {
+        guard let selectedID, hosts.contains(where: { $0.id == selectedID }) else { return nil }
+        return "hostmenu:\(selectedID)"
+    }
+
+    /// The row to land on when leaving the pair panel for the list: the
+    /// computer that was being paired if it is still listed (a cancelled
+    /// pairing never changed the selection, so that's the row you came from),
+    /// else the computer you're on.
+    nonisolated static func hostMenuReturnFocusID(hosts: [StreamHost], pairedID: String?, selectedID: String?) -> String? {
+        if let pairedID, hosts.contains(where: { $0.id == pairedID }) { return "hostmenu:\(pairedID)" }
+        return hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedID)
+    }
+
+    /// Whether the menu draws the divider under its first row: only when the
+    /// selected computer was lifted to the top AND other computers follow it.
+    nonisolated static func hostMenuHasDivider(hosts: [StreamHost], selectedID: String?) -> Bool {
+        hosts.count > 1 && hosts.contains { $0.id == selectedID }
+    }
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
     private(set) var hostError: String?
@@ -734,6 +773,9 @@ final class AppState {
     func openHostMenu() {
         addHostError = nil
         presentOverlay(.hosts)
+        if let id = Self.hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedHostID) {
+            focus.focus(itemID: id)
+        }
     }
 
     private static let addedHostsKey = "vibelight.addedHosts"
@@ -869,11 +911,21 @@ final class AppState {
     }
 
     func cancelPairing() {
+        let pairedID = pairing?.hostID
         pairingTask?.cancel()
         pairingTask = nil
         pairing = nil
         setPairingKeepAwake(false)
         rebuildFocus()
+        // Back on the Computers list: land on the computer whose pairing you
+        // just left — by ID, not the engine's remembered row NUMBER, because a
+        // successful pairing selects that computer and moves it to the top.
+        // If its ID changed mid-pairing (upgradeAddedHost learns the real
+        // UUID), fall back to the computer you're on, as openHostMenu does.
+        if case .hosts = overlay,
+           let id = Self.hostMenuReturnFocusID(hosts: hosts, pairedID: pairedID, selectedID: selectedHostID) {
+            focus.focus(itemID: id)
+        }
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
@@ -1569,7 +1621,9 @@ final class AppState {
                 }
                 sections = [FocusSection(id: "pair", kind: .vList, itemIDs: ids)]
             } else {
-                var ids = hosts.map { "hostmenu:\($0.id)" }
+                // Same order HostMenuCard draws (selected computer first).
+                var ids = Self.hostMenuOrder(hosts: hosts, selectedID: selectedHostID)
+                    .map { "hostmenu:\($0.id)" }
                 if hosts.count < Self.maxHosts { ids.append("hostmenu:add") }
                 sections = [FocusSection(id: "hosts", kind: .vList, itemIDs: ids)]
             }
@@ -1687,11 +1741,12 @@ final class AppState {
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
-    /// Listed explicitly, not applied blanket: `.hosts` SHOULD remember which
-    /// computer you were on, `.sessionEnded` picks its own headline action
-    /// right after presenting, and the HUD / cheat sheet deliberately leave the
-    /// home screen's focus untouched underneath them (rebuildFocus returns
-    /// early for those, so forcing focus would move the shelf behind the card).
+    /// Listed explicitly, not applied blanket: `.hosts` opens on the computer
+    /// you're on, by ID (`openHostMenu`), `.sessionEnded` picks its own
+    /// headline action right after presenting, and the HUD / cheat sheet
+    /// deliberately leave the home screen's focus untouched underneath them
+    /// (rebuildFocus returns early for those, so forcing focus would move the
+    /// shelf behind the card).
     private func opensOnDeclaredFirstChoice(_ overlay: Overlay) -> Bool {
         switch overlay {
         case .confirmRemoveHost, .confirmClearPreset, .confirmOverridePreset,

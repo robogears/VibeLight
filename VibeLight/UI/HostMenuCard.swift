@@ -12,6 +12,7 @@ struct HostMenuCard: View {
     /// DISABLED (cannot become first responder, so no keyboard) until the user
     /// explicitly taps it. macOS is unaffected — AppKit never auto-focuses.
     @State private var ipFieldActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -56,11 +57,25 @@ struct HostMenuCard: View {
                     .foregroundStyle(Theme.textSecondary)
             }
 
+            // The computer you're on comes first, set off by a hairline from
+            // the others (owner, 26 Oct 2026). Order comes from
+            // AppState.hostMenuOrder — the same list rebuildFocus emits — so
+            // D-pad up/down walks the rows exactly as drawn.
+            let ordered = AppState.hostMenuOrder(hosts: state.hosts, selectedID: state.selectedHostID)
+            let divided = AppState.hostMenuHasDivider(hosts: state.hosts, selectedID: state.selectedHostID)
             VStack(spacing: 10) {
-                ForEach(state.hosts) { host in
+                ForEach(Array(ordered.enumerated()), id: \.element.id) { index, host in
                     HostRow(host: host)
+                    if divided && index == 0 {
+                        Rectangle()
+                            .fill(.white.opacity(0.08))
+                            .frame(height: 1)
+                            .padding(.horizontal, 18)   // aligns with the rows' content inset
+                            .accessibilityHidden(true)
+                    }
                 }
             }
+            .animation(reduceMotion ? nil : Theme.focusSpring, value: ordered.map(\.id))
 
             if state.hosts.count < AppState.maxHosts {
                 addComputerField
