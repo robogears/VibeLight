@@ -46,6 +46,7 @@ struct StreamControls: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     /// Assistive tech is driving: the controls stay put, as they do while the
     /// keyboard is up. AssistiveTouch has no environment value, so it is read
@@ -131,13 +132,20 @@ struct StreamControls: View {
     /// hit area. The pill's centre (24 pt down + half of 44) lines up with
     /// where the ✕ sits when revealed, so it reads as "the buttons are tucked
     /// in here". White 0.5 on black is 5.3:1; the black shadow keeps its edge
-    /// over bright video.
+    /// over bright video. That ratio only holds over dark frames — over snow or
+    /// sky it is near 1:1 — so under Increase Contrast the pill goes near-solid
+    /// and gains a black outline, and never depends on faintness to be seen.
     private var grabStrip: some View {
         Color.clear
             .frame(width: Self.grabWidth, height: Self.grabHeight)
             .overlay(alignment: .topTrailing) {
                 Capsule()
-                    .fill(.white.opacity(0.5))
+                    .fill(.white.opacity(contrast == .increased ? 0.85 : 0.5))
+                    .overlay {
+                        if contrast == .increased {
+                            Capsule().stroke(.black, lineWidth: 1)
+                        }
+                    }
                     .frame(width: 4, height: 44)
                     .shadow(color: .black.opacity(0.5), radius: 2)
                     .padding(.top, 24)
