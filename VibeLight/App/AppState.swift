@@ -289,6 +289,23 @@ final class AppState {
         }
     }
 
+    /// Settings ▸ Audio ▸ Menu Sounds (on by default). Its own key, like
+    /// `interfaceSize`, so loading a preset can't switch the launcher's sounds
+    /// back on and turning them off doesn't deselect the active preset.
+    /// (UX-menu-sounds-no-toggle)
+    var menuSounds: Bool = true {
+        didSet {
+            sfx.isEnabled = menuSounds
+            guard oldValue != menuSounds else { return }
+            UserDefaults.standard.set(menuSounds, forKey: Self.menuSoundsKey)
+        }
+    }
+
+    /// The saved Menu Sounds choice; a missing or non-Bool value reads as On.
+    static func storedMenuSounds(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: menuSoundsKey) as? Bool ?? true
+    }
+
     // MARK: First-run setup wizard
 
     /// The current setup-wizard step, or nil when the launcher is live. Non-nil
@@ -347,6 +364,7 @@ final class AppState {
     private static let settingsKey = "vibelight.streamSettings"
     private static let backgroundThemeKey = "vibelight.backgroundTheme"
     private static let interfaceSizeKey = "vibelight.interfaceSize"
+    static let menuSoundsKey = "vibelight.menuSounds"
     private static let setupVersionKey = "vibelight.setupVersion"
 
     // MARK: - Boot
@@ -403,6 +421,8 @@ final class AppState {
            let size = InterfaceSize(rawValue: raw) {
             interfaceSize = size
         }
+        menuSounds = Self.storedMenuSounds(in: .standard)
+        sfx.isEnabled = menuSounds   // didSet doesn't fire during init
         // Show the setup wizard when the user hasn't completed the CURRENT
         // required version (fresh install → 0; a bump forces a redo for all).
         let completedSetup = UserDefaults.standard.integer(forKey: Self.setupVersionKey)
@@ -2458,7 +2478,7 @@ final class AppState {
 
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
-        case audio, muteHostSpeakers, muteOnFocusLoss
+        case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case background, interfaceSize
@@ -2483,6 +2503,7 @@ final class AppState {
             case .audio: "Audio"
             case .muteHostSpeakers: "Mute Host Speakers"
             case .muteOnFocusLoss: "Mute When Inactive"
+            case .menuSounds: "Menu Sounds"
             case .touchControls: "Touch Control"
             case .touchWithController: "Touch With Controller"
             case .externalDisplay: "Use TV / Monitor"
@@ -2530,7 +2551,8 @@ final class AppState {
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
-            case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss]
+            // Stream audio first, the launcher's own sounds last.
+            case .audio: [.audio, .muteHostSpeakers, .muteOnFocusLoss, .menuSounds]
             case .input:
                 #if os(iOS)
                 [.touchControls, .touchWithController, .absoluteMouse, .swapMouseButtons, .reverseScrolling, .captureSystemKeys, .swapGamepadButtons, .backgroundGamepad]
@@ -2655,6 +2677,7 @@ final class AppState {
         case .audio: settings.audio.label
         case .muteHostSpeakers: settings.muteHostSpeakers ? "On" : "Off"
         case .muteOnFocusLoss: settings.muteOnFocusLoss ? "On" : "Off"
+        case .menuSounds: menuSounds ? "On" : "Off"
         case .touchControls: settings.touchControls ? "On" : "Off"
         case .touchWithController: settings.touchWithController ? "On" : "Off"
         case .externalDisplay: settings.externalDisplay ? "On" : "Off"
@@ -2734,6 +2757,9 @@ final class AppState {
         case .yuv444: settings.yuv444.toggle()
         case .muteHostSpeakers: settings.muteHostSpeakers.toggle()
         case .muteOnFocusLoss: settings.muteOnFocusLoss.toggle()
+        // The tick above is gated by the old value, so switching sounds back
+        // on ticks once now — every press makes exactly one sound.
+        case .menuSounds: menuSounds.toggle(); if menuSounds { sfx.play(.move) }
         case .touchControls: settings.touchControls.toggle()
         case .touchWithController: settings.touchWithController.toggle()
         case .externalDisplay: settings.externalDisplay.toggle()

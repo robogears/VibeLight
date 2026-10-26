@@ -31,6 +31,16 @@ final class MenuSFX {
     /// file is ever missing from the bundle.
     private var quackPlayer: AVAudioPlayer?
 
+    /// Settings ▸ Audio ▸ Menu Sounds. The Mac has no silent switch and these
+    /// sounds ignore its "Play user interface sound effects" setting, so
+    /// without this the only way to silence them was muting the whole Mac —
+    /// game audio included. (UX-menu-sounds-no-toggle) Haptics stay on.
+    var isEnabled = true
+    #if DEBUG
+    /// Test hook: how many `play` calls got past the Menu Sounds gate.
+    private(set) var playsPastGate = 0
+    #endif
+
     private static let sampleRate: Double = 44_100
 
     init() {
@@ -69,6 +79,10 @@ final class MenuSFX {
     }
 
     func play(_ effect: Effect) {
+        guard isEnabled else { return }
+        #if DEBUG
+        playsPastGate += 1
+        #endif
         // The quack plays the bundled recording; everything else is synth PCM.
         if effect == .quack, let quackPlayer {
             quackPlayer.currentTime = 0
