@@ -307,10 +307,10 @@ private struct MiniPresetChip: View {
         VStack(spacing: 6) {
             Text("\(index + 1)")
                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(highlighted ? .white : Theme.textSecondary)
+                .foregroundStyle(highlighted ? Theme.onAccent : Theme.textSecondary)
             Text(label ?? "Empty")
                 .font(.system(size: Theme.labelSize(11), weight: .medium, design: .rounded))
-                .foregroundStyle(highlighted ? .white.opacity(0.9) : Theme.textSecondary.opacity(0.6))
+                .foregroundStyle(highlighted ? Theme.onAccent.opacity(0.9) : Theme.textSecondary.opacity(0.6))
                 .lineLimit(1)
         }
         .frame(width: Theme.perPlatform(iOS: 112, macOS: 96),
@@ -380,7 +380,7 @@ private struct OnboardingButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(prominent ? Color(red: 0.04, green: 0.08, blue: 0.16) : Theme.textPrimary)
+                .foregroundStyle(prominent ? Theme.onAccent : Theme.textPrimary)
                 .padding(.horizontal, 34)
                 .padding(.vertical, 14)
                 .background(prominent ? Theme.accent : Theme.surface.opacity(0.7),

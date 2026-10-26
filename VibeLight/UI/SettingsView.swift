@@ -110,6 +110,7 @@ private struct SettingsTabBar: View {
 private struct TabChip: View {
     @Environment(AppState.self) private var state
     let tab: AppState.SettingsTab
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
 
     private var selected: Bool { state.settingsTab == tab }
@@ -117,7 +118,8 @@ private struct TabChip: View {
     var body: some View {
         Text(tab.title)
             .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundStyle(selected ? .white : Theme.textSecondary)
+            .foregroundStyle(selected ? Theme.onAccent
+                             : (contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))
             .fixedSize()
             .padding(.horizontal, 20)
             .padding(.vertical, 9)
@@ -129,7 +131,7 @@ private struct TabChip: View {
             .overlay {
                 Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
             }
-            .scaleEffect(selected ? 1.0 : (hovering && state.inputMode == .pointer ? 1.03 : 1.0))
+            // Hover brightens, never scales (owner rule: nothing zooms on hover).
             .contentShape(Capsule())
             .onHover { hovering = $0 }
             .onTapGesture { state.setSettingsTab(tab) }
@@ -152,14 +154,17 @@ private struct SettingsPresetSlot: View {
     private var focusID: String { "presetslot:\(slot)" }
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
     private var lit: Bool { isActive || isFocused }
+    /// Only the ACTIVE slot is filled with the full-strength accent; a merely
+    /// focused one is a 0.4 tint and keeps white (UX-white-on-accent-contrast).
+    private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }
 
     var body: some View {
         VStack(spacing: 3) {
             Text("\(slot + 1)")
                 .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .foregroundStyle(lit || isFilled ? .white : Theme.textSecondary)
+                .foregroundStyle(lit || isFilled ? ink : Theme.textSecondary)
             Circle()
-                .fill(isFilled ? (lit ? Color.white : Theme.accent) : .clear)
+                .fill(isFilled ? (lit ? ink : Theme.accent) : .clear)
                 .frame(width: 5, height: 5)
         }
         .frame(width: 44, height: 44)
@@ -204,6 +209,7 @@ private struct SettingsPresetSlot: View {
 
 private struct SettingsRowView: View {
     @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
     let row: AppState.SettingsRow
 
     private var isFocused: Bool { state.focus.focusedItemID == row.focusID }
@@ -262,7 +268,7 @@ private struct SettingsRowView: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.white.opacity(isFocused ? 0.3 : 0.06), lineWidth: 1)
+                .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
         }
         .scaleEffect(isFocused ? 1.015 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)

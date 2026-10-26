@@ -289,6 +289,7 @@ struct OverlayButton: View {
     let symbol: String
     var destructive = false
 
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
     private var isFocused: Bool { state.focus.focusedItemID == id }
     /// Hover feedback only reads while the mouse is the active device, so a
@@ -303,7 +304,8 @@ struct OverlayButton: View {
                 .font(.system(size: 17, weight: .bold, design: .rounded))
             Spacer()
         }
-        .foregroundStyle(isFocused ? .white : Theme.textPrimary.opacity(0.85))
+        // Navy on the blue, white on the red (UX-white-on-accent-contrast).
+        .foregroundStyle(isFocused ? Theme.labelInk(onSolidAccent: !destructive) : Theme.textPrimary.opacity(0.85))
         .padding(.horizontal, 22)
         .padding(.vertical, 15)
         .frame(width: 360)
@@ -315,9 +317,11 @@ struct OverlayButton: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(.white.opacity(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08)), lineWidth: 1)
+                .strokeBorder(Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast),
+                              lineWidth: 1)
         }
-        .scaleEffect(isFocused ? 1.04 : (hoverActive ? 1.02 : 1.0))
+        // Hover brightens; only focus scales (owner rule: nothing zooms on hover).
+        .scaleEffect(isFocused ? 1.04 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: hoverActive)
         .onHover { hovering = $0
@@ -326,6 +330,11 @@ struct OverlayButton: View {
         // Click activates THIS button (focus it first), not whatever the
         // controller last focused.
         .onTapGesture { state.pointerSelect(id) }
+        // A tap-gesture stack, not a Button: tell VoiceOver what it is and
+        // what activating it does.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isFocused ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { state.pointerSelect(id) }
     }
 }
 
@@ -383,7 +392,7 @@ private struct ConfirmClearPresetCard: View {
             }
             VStack(spacing: 12) {
                 OverlayButton(id: "clearpreset:cancel", title: "Keep It", symbol: "xmark")
-                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill")
+                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill", destructive: true)
             }
         }
         .padding(48).frame(width: 460)
@@ -418,7 +427,8 @@ private struct ConfirmRemoveHostCard: View {
             }
             VStack(spacing: 12) {
                 OverlayButton(id: "removehost:cancel", title: "Keep It", symbol: "xmark")
-                OverlayButton(id: "removehost:yes", title: "Forget Computer", symbol: "trash.fill")
+                OverlayButton(id: "removehost:yes", title: "Forget Computer", symbol: "trash.fill",
+                              destructive: true)
             }
         }
         .padding(48).frame(width: 460)
