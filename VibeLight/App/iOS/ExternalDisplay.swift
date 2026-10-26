@@ -26,7 +26,8 @@ final class ExternalDisplay {
     /// The external display's native pixel size — what the stream targets.
     private(set) var pixelSize: CGSize?
     /// Human-readable geometry the OS reports for the display (pixels, points,
-    /// scale) — shown on the companion screen so the exact numbers are visible.
+    /// scale) — logged on connect for tuning the TV UI. Not shown to the user
+    /// (UX-companion-geometry-readout: diagnostic text, nothing to act on).
     private(set) var geometrySummary: String?
 
     @ObservationIgnored private var window: UIWindow?
@@ -56,6 +57,14 @@ final class ExternalDisplay {
         for scene in UIApplication.shared.connectedScenes {
             if let ws = scene as? UIWindowScene { sceneConnected(ws) }
         }
+        #if DEBUG
+        // Simulator instrument: a "connected" TV with no window, so the iPad's
+        // companion-panel gate can be seen without a display (see DebugInstruments).
+        if DebugInstruments.fakeTV, !isConnected {
+            name = "Living Room TV"
+            isConnected = true
+        }
+        #endif
     }
 
     /// Called once by the app (in the scene `.task`) so the TV can render the
@@ -92,7 +101,7 @@ final class ExternalDisplay {
         self.isConnected = true
         // The launcher super-samples to ≥2× (see `launcherRenderScale`); surface
         // that as a distinct fact so the panel's honest @1× and the render scale
-        // both read clearly on the companion screen.
+        // both read clearly in the log.
         let renderScale = max(2, scale)
         self.geometrySummary =
             "\(Int(px.width))×\(Int(px.height)) px  ·  \(Int(bounds.width))×\(Int(bounds.height)) pt @\(scale.clean)×"

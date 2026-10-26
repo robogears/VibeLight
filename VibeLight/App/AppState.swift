@@ -1826,6 +1826,26 @@ final class AppState {
         route(.select)
     }
 
+    // MARK: - TV companion panel (iOS)
+
+    /// Whether the iPad hands the launcher to the TV and shows only the
+    /// companion panel. The TV takes no touch, so without a gamepad to drive
+    /// it the launcher stays under the user's finger on the iPad (the TV keeps
+    /// mirroring it) — UX-tv-attached-touch-dead-end. Streaming has its own
+    /// companion (trackpad), so this is the idle case only.
+    nonisolated static func companionPanelOwnsIPad(
+        useTV: Bool, tvConnected: Bool, streaming: Bool, hasGamepad: Bool
+    ) -> Bool {
+        useTV && tvConnected && !streaming && hasGamepad
+    }
+
+    /// The companion panel's "Use the iPad Instead": turns Use TV / Monitor
+    /// off (persisted by `settings.didSet`; Settings ▸ Video turns it back on).
+    func useIPadInsteadOfTV() {
+        settings.externalDisplay = false
+        sfx.play(.select)
+    }
+
     // MARK: - Onboarding
 
     /// True if any preset slot is filled — used to skip the presets tutorial for
