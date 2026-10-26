@@ -14,26 +14,33 @@ final class ClientIdentityProvider: @unchecked Sendable {
         case opensslFailed(String)
         case importFailed(OSStatus)
         case noIdentityInBundle
+        /// There is no usable identity right now; the message says why and what
+        /// to do.
+        case unavailable(String)
 
         var errorDescription: String? {
             switch self {
             case .opensslFailed(let msg): "Could not build client identity bundle: \(msg)"
             case .importFailed(let status): "Identity import failed (OSStatus \(status))."
             case .noIdentityInBundle: "Identity bundle contained no usable identity."
+            case .unavailable(let msg): msg
             }
         }
     }
 
     private let identity: ClientIdentity
     private let supportDirectory: URL
+    private let identityProblem: String?
     private var cached: SecIdentity?
     private let lock = NSLock()
 
-    init(identity: ClientIdentity, supportDirectory: URL? = nil) {
+    init(identity: ClientIdentity, supportDirectory: URL? = nil,
+         identityProblem: String? = IdentityStore.identityProblem) {
         self.identity = identity
         self.supportDirectory = supportDirectory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VibeLight", isDirectory: true)
+        self.identityProblem = identityProblem
     }
 
     /// The mTLS identity, building + caching it on first use.
@@ -52,6 +59,12 @@ final class ClientIdentityProvider: @unchecked Sendable {
         cached = identity
         return identity
         #else
+        // An empty identity means IdentityStore refused or failed at launch.
+        // Say why, instead of running openssl on empty files and surfacing its
+        // stderr. (audit FS-identity-read-loss)
+        if identity.certificatePEM.isEmpty || identity.privateKeyPEM.isEmpty {
+            throw IdentityError.unavailable(identityProblem ?? Self.noIdentityMessage)
+        }
         // A cached bundle that no longer imports is not a permanent verdict —
         // it is a corrupt file. openssl killed mid-write (log out, crash, disk
         // full) leaves a short or truncated .p12 that `fileExists` happily
@@ -98,6 +111,8 @@ final class ClientIdentityProvider: @unchecked Sendable {
 
     /// The client certificate PEM (for the pairing handshake wire format).
     var certificatePEM: Data { identity.certificatePEM }
+
+    static let noIdentityMessage = "VibeLight has no client identity yet. Quit and reopen VibeLight, then try again."
 
     #if os(macOS)
     // MARK: - P12 cache (macOS)
