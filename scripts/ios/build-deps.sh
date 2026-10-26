@@ -33,7 +33,7 @@ command -v cmake >/dev/null || { echo "cmake missing: brew install cmake"; exit 
 # ── Vendor the moonlight-common-c source the MoonlightCore target compiles ──
 # Copied from the fork (kept out of git; this re-syncs it). SIMDe IS required:
 # nanors' obl/oblas_lite.c includes simde/x86/ssse3.h (portable SIMD shims).
-FORK="$HOME/Documents/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c"
+FORK="${VIBELIGHT_HELPER_DIR:-$ROOT/../vibelight-moonlight-helper}/moonlight-common-c/moonlight-common-c"
 CORE="$ROOT/ThirdParty/moonlight-common-c"
 if [[ -d "$FORK/src" ]]; then
   echo "── vendoring moonlight-common-c source ──"
@@ -112,7 +112,7 @@ if [[ "${vendored:-0}" != "1" ]]; then
   # then failed much later with a confusing missing-header error.
   echo "=== INCOMPLETE ==="
   echo "moonlight-common-c was NOT vendored — the iOS build WILL fail."
-  echo "Set \$FORK (line 36) to your moonlight-common-c checkout, or clone"
+  echo "Set VIBELIGHT_HELPER_DIR to your helper checkout, or clone"
   echo "robogears/vibelight-moonlight-helper next to this repo, then re-run."
   ls -d "$OUT"/*.xcframework 2>/dev/null || true
   exit 1

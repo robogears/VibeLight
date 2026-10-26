@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 1 done · build+tests GREEN · last: kickoff committed — audit running
+STATUS: LOOPING · cycle 0 · 2 done · build+tests GREEN · last: helper repo repointed; audit results recovered, final sweep running
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -10,12 +10,15 @@ STATUS: LOOPING · cycle 0 · 1 done · build+tests GREEN · last: kickoff commi
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
-- 💡 The helper repo tracks a generated build file, `app/Makefile.Debug`, that has your full home-folder path in it and is public on GitHub — why: it leaks the machine path and goes stale on every rebuild — how: in ~/Developer/vibelight-moonlight-helper, `git rm --cached app/Makefile.Debug`, add `app/Makefile.*` to .gitignore, commit, push. Not done unattended: it's another repo's `master`.
+- 💡 The helper repo tracks a generated build file, `app/Makefile.Debug`, that has your full home-folder path in it and is public on GitHub — why: it leaks the machine path, and since the move it points at the OLD location, so the helper's next `make` needs a fresh `qmake moonlight-qt.pro` first — how: in ~/Developer/vibelight-moonlight-helper, `git rm --cached app/Makefile.Debug`, add `app/Makefile.*` to .gitignore, commit, push. Not done unattended: it's another repo's `master`.
 - 💡 Stale Xcode build cache for the old ~/Documents path (588 MB, `~/Library/Developer/Xcode/DerivedData/VibeLight-gbkjmozetujwozebxnxfvkmtocuj`) — why: nothing uses it any more — how: delete it from Xcode ▸ Settings ▸ Locations, or Finder. Not done unattended: it's your disk.
-- 💡 `_dump/` inside the repo (231 MB, 5,141 files, gitignored) holds iCloud sync-conflict copies such as `VibeLight 2.xcodeproj` — why: the repo is out of iCloud now, so they should stop appearing — how: look through it once, then delete it. Not done unattended: it might hold something you meant to keep.
+- 💡 `_dump/` inside the repo (231 MB, 5,141 files, gitignored) is the quarantine from an earlier cleanup pass (sync-conflict copies such as `VibeLight 2.xcodeproj`); `_dump/undo.sh` restores everything — why: the repo is out of iCloud now, so these should stop appearing — how: once you're happy nothing is missing, delete `_dump/`. Not done unattended: it's your quarantine.
+- 💡 Seven iCloud conflict copies of git's own index file sit in `.git/` (`index 2` … `index 8`) — why: harmless leftovers from when the repo lived in iCloud, but they're junk inside git's folder — how: `rm ".git/index "[2-8]` once you've seen this.
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 12:50 VibeLight now finds the stream helper beside it in ~/Developer (scripts look next to the repo, with a `VIBELIGHT_HELPER_DIR` override), the temporary link at the old path is gone, and the Mac build is green.
+- 26 Oct 12:30 Resumed after a reboot and a usage-limit pause. The audit's result file was wiped by the reboot; all 120 verified items were rebuilt from the run's journal. Its last sweep (3 finders) had died on the usage limit and is re-running. An attempt to resume the whole run re-started it from scratch instead of replaying, so I stopped it within a minute.
 - 23:30 `moonlight-ios-reference` moved back to ~/Documents (you asked: not needed — it's a documentation-only reference; nothing builds from it). Unchanged: same commit, 561 files, git healthy.
 - 23:25 Kickoff on `codeX`. Baseline (tests + builds) started in the background.
 - 23:23 Moved `vibelight-moonlight-helper` and `moonlight-ios-reference` from ~/Documents (iCloud) to ~/Developer — HEAD, file counts and git health identical before and after; auto-mode config updated. Temporary links left at the old paths until VibeLight's own references are repointed (mission item 2).
@@ -28,7 +31,7 @@ STATUS: LOOPING · cycle 0 · 1 done · build+tests GREEN · last: kickoff commi
 - Cycle 0: mission in progress
 
 ## Completed
-- Total: 1 · recent: ✅ Stray `f` removed from FocusEngineTests.swift — 1m
+- Total: 2 · recent: ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
 
 ## Blocked (environment)
 - (none)
@@ -70,6 +73,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 1, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 2, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 APP="${1:?usage: embed-helper.sh /path/to/VibeLight.app}"
-FORK="$HOME/Documents/vibelight-moonlight-helper"
+FORK="${VIBELIGHT_HELPER_DIR:-$(cd "$(dirname "$0")/.." && pwd)/../vibelight-moonlight-helper}"
 SRC="$FORK/app/Moonlight.app"
 
 [[ -d "$APP" ]] || { echo "VibeLight bundle not found: $APP"; exit 1; }

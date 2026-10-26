@@ -48,7 +48,7 @@ Swift 6 strict concurrency is ON everywhere. macOS 15+ / iOS 17+ targets. No
 sandbox on macOS (we exec the stream helper).
 
 **macOS streaming helper**: our moonlight-qt fork at
-`~/Documents/vibelight-moonlight-helper` (chromeless, headless `@VL` protocol,
+`~/Developer/vibelight-moonlight-helper` (chromeless, headless `@VL` protocol,
 LSUIElement agent — see its FORK-CHANGES.md). Build it with
 `git submodule update --init --recursive && python3 setup-deps.py` (MANDATORY
 before qmake), then `export PATH="$(brew --prefix qt)/bin:$PATH" && qmake

@@ -76,7 +76,7 @@ final class StreamSessionManager: StreamEngine {
             Bundle.main.bundleURL
                 .appendingPathComponent("Contents/Helpers/StreamHelper.app/Contents/MacOS/Moonlight"),
             URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Documents/vibelight-moonlight-helper/app/Moonlight.app/Contents/MacOS/Moonlight"),
+                .appendingPathComponent("Developer/vibelight-moonlight-helper/app/Moonlight.app/Contents/MacOS/Moonlight"),
         ]
         // Stock /Applications/Moonlight.app used to be a third fallback. It is
         // gone deliberately: VibeLight is separate from Moonlight, and the stock

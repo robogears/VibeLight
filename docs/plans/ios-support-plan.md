@@ -129,7 +129,7 @@ Everything the C core needs already exists on iOS:
 ### 2.1 Dependency graph (verified against the vendored source)
 
 `moonlight-common-c` at
-`~/Documents/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c/`
+`~/Developer/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c/`
 is a **C library**. Its `CMakeLists.txt` and `src/` reveal these dependencies:
 
 | Dependency | How satisfied today | iOS plan |
@@ -596,7 +596,7 @@ independently shippable change that unblocks the entire iOS Core in Phase 1.
 - `project.yml` — restructure into shared + per-platform targets.
 
 **The C core (vendored):**
-- `~/Documents/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c/src/Limelight.h` — the entire public API (`LiStartConnection`, callback structs, `LiSend*`).
+- `~/Developer/vibelight-moonlight-helper/moonlight-common-c/moonlight-common-c/src/Limelight.h` — the entire public API (`LiStartConnection`, callback structs, `LiSend*`).
 - `.../src/PlatformCrypto.c` — confirms **mbedTLS** dependency.
 - `.../CMakeLists.txt` — confirms **enet** (vendored) + **nanors** (vendored); `USE_MBEDTLS` option.
 - `.../src/FakeCallbacks.c` — no-op callbacks for the Phase-2 link test.
