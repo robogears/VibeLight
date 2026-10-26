@@ -232,7 +232,7 @@ private struct CheatSheetCard: View {
             }
 
             Text("Press any button to close")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: Theme.labelSize(12), weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
         }
         .padding(48)

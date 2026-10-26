@@ -38,7 +38,7 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let scale = Self.uiScale(for: geo.size)
+            let scale = Self.uiScale(for: geo.size, interfaceSize: state.interfaceSize)
             // On iOS the stream is an OVERLAY, so the launcher underneath is
             // never unmounted — and seven of the ten background themes
             // (including the default) animate every display frame. That kept a
@@ -207,23 +207,51 @@ struct RootView: View {
     /// - macOS: 1.0 through the normal Mac range (design flexes comfortably at
     ///   ≥ 1440×860 pt); SHRINK to fit a smaller window; scale UP on 4K/5K so
     ///   fixed-size elements aren't tiny.
-    /// - iOS/iPadOS: fit the ~1920×1080 design to the (landscape) screen.
-    static let macDesignMin = CGSize(width: 1440, height: 860)
+    /// - iOS/iPadOS: fit the same 1440×860 canvas to the (landscape) screen. It
+    ///   used to fit 1920×1080 × 1.25, which shrank every label on iPad below
+    ///   Apple's 11 pt minimum (UX-ios-scale-shrinks-text-targets).
+    /// Settings ▸ Themes ▸ Interface Size then multiplies the result, but never
+    /// past the point where the virtual canvas would drop under `canvasFloor`.
+    nonisolated static let designMin = CGSize(width: 1440, height: 860)
+    /// Below this canvas Home's fixed vertical stack (header, hero, shelf,
+    /// preset row, hint bar ≈ 800 pt) overflows, so "Large" is "as large as
+    /// the layout allows" — on a screen already at the floor it changes nothing.
+    nonisolated static let canvasFloor = CGSize(width: 1000, height: 860)
 
-    static func uiScale(for size: CGSize) -> CGFloat {
+    /// Which branch of the rule to use — a parameter so the macOS test target
+    /// can check the iOS numbers too.
+    enum Platform: Sendable {
+        case macOS, iOS
+        static var current: Platform {
+            #if os(macOS)
+            .macOS
+            #else
+            .iOS
+            #endif
+        }
+    }
+
+    nonisolated static func uiScale(for size: CGSize, interfaceSize: InterfaceSize = .default,
+                                    platform: Platform = .current) -> CGFloat {
         guard size.width > 0, size.height > 0 else { return 1 }
-        #if os(macOS)
-        // Shrink to fit when the window is smaller than the design canvas…
-        let fit = min(size.width / macDesignMin.width, size.height / macDesignMin.height)
-        if fit < 1 { return max(fit, 0.3) }
-        // …otherwise 1.0 in the normal range, scaling up only on huge displays.
-        return min(max(size.width / 2000, 1.0), 2.5)
-        #else
-        // iOS/iPadOS: fit the ~1920×1080 design to the (landscape) screen, then
-        // zoom 1.25× so the big-picture UI reads larger on iPhone/iPad.
-        let fit = min(size.width / 1920, size.height / 1080)
-        return min(max(fit * 1.25, 0.3), 1.6)
-        #endif
+        let base = baseScale(for: size, platform: platform)
+        let canvas = CGSize(width: size.width / base, height: size.height / base)
+        let cap = min(canvas.width / canvasFloor.width, canvas.height / canvasFloor.height)
+        return base * min(interfaceSize.factor, max(cap, 1))
+    }
+
+    /// The Default-size scale for each platform.
+    nonisolated private static func baseScale(for size: CGSize, platform: Platform) -> CGFloat {
+        let fit = min(size.width / designMin.width, size.height / designMin.height)
+        switch platform {
+        case .macOS:
+            // Shrink to fit when the window is smaller than the design canvas…
+            if fit < 1 { return max(fit, 0.3) }
+            // …otherwise 1.0 in the normal range, scaling up only on huge displays.
+            return min(max(size.width / 2000, 1.0), 2.5)
+        case .iOS:
+            return min(max(fit, 0.3), 1.6)
+        }
     }
 }
 
