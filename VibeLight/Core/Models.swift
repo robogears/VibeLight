@@ -204,11 +204,21 @@ struct StreamSettings: Sendable, Codable, Equatable {
     static let fpsRange = 1...240
     static let bitrateRange = 10_000...200_000
 
+    /// What a SAVED size is clamped to: wider than the custom entry's ranges,
+    /// because the Resolution row also offers the display's Native size, and a
+    /// portrait 5K panel's Native (2880×5120) is taller than 4320 — clamping
+    /// it on the next launch stretched it to 2880×4320 and the row stopped
+    /// reading "Native". 16384 is the largest texture macOS and iOS render, so
+    /// no real display exceeds it, and 16384² can't overflow anything.
+    /// (review of DAT-stored-size-overflow: Native clamp)
+    static let storedWidthRange = widthRange.lowerBound...16384
+    static let storedHeightRange = heightRange.lowerBound...16384
+
     /// This value with every number pulled into its legal range.
     func clampedToLegalRanges() -> StreamSettings {
         var s = self
-        s.width = s.width.clamped(to: Self.widthRange)
-        s.height = s.height.clamped(to: Self.heightRange)
+        s.width = s.width.clamped(to: Self.storedWidthRange)
+        s.height = s.height.clamped(to: Self.storedHeightRange)
         s.fps = s.fps.clamped(to: Self.fpsRange)
         s.bitrateKbps = s.bitrateKbps.clamped(to: Self.bitrateRange)
         return s

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// How VibeLight reads its own saved JSON stores (saved computers, Restart PC
@@ -12,21 +13,33 @@ import Foundation
 ///   record froze a whole list for good (audit DAT-added-hosts-latch-forever,
 ///   DAT-buddy-config-latch-silent), and a preset path that wrote unreadable
 ///   slots back as empty (audit DAT-preset-recovery-loss).
-/// - A blob that isn't even the right kind of JSON container is copied once to
-///   a backup key before anything is written over it.
+/// - A blob that isn't even the right kind of JSON container is copied to a
+///   backup key (one per distinct blob) before anything is written over it.
 ///
 /// Pure functions over `Data` so the rules are testable without the app.
 enum SavedDataRecovery {
 
     // MARK: - Backup
 
-    /// Copies `data` to `key` unless a backup is already there. One-shot on
-    /// purpose: a later copy may be of an already-damaged blob, and the first
-    /// rescue copy is the one worth keeping. Returns true when it wrote.
+    /// Keeps `data` aside before the caller lets a save write over it — once
+    /// per distinct blob. The first rescue copy lives at `key` and is never
+    /// replaced; a DIFFERENT blob that fails to read later goes beside it under
+    /// `key.<sha256 of the blob>`. It used to be dropped when `key` was taken,
+    /// and since saves now go ahead (no latch), that newer blob — pinned certs
+    /// and all — was then written over with no copy anywhere.
+    /// (review of DAT-added-hosts-latch-forever: one-shot backup)
+    /// Returns true when it wrote; false when this exact blob is already kept.
     @discardableResult
     static func backUpOnce(_ data: Data, to key: String, in defaults: UserDefaults) -> Bool {
-        guard defaults.object(forKey: key) == nil else { return false }
-        defaults.set(data, forKey: key)
+        guard defaults.object(forKey: key) != nil else {
+            defaults.set(data, forKey: key)
+            return true
+        }
+        if defaults.data(forKey: key) == data { return false }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let incidentKey = "\(key).\(digest)"
+        guard defaults.object(forKey: incidentKey) == nil else { return false }
+        defaults.set(data, forKey: incidentKey)
         return true
     }
 

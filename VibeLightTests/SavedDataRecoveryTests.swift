@@ -73,11 +73,41 @@ final class SavedDataRecoveryTests: XCTestCase {
 
     // MARK: - Whole-blob backup (all stores, incl. DAT-settings-reset-overwrites-original)
 
-    func testUnreadableBlobIsBackedUpOnceAndAnEarlierBackupIsNeverOverwritten() {
+    /// Every copy kept under `key` or beside it (`key.<hash>`).
+    private func backups(under key: String) -> [Data] {
+        defaults.dictionaryRepresentation()
+            .filter { $0.key == key || $0.key.hasPrefix(key + ".") }
+            .sorted { $0.key < $1.key }
+            .compactMap { $0.value as? Data }
+    }
+
+    func testUnreadableBlobIsBackedUpAndAnEarlierBackupIsNeverOverwritten() {
         let key = "vibelight.addedHosts.unreadable"
         XCTAssertTrue(SavedDataRecovery.backUpOnce(json("first damaged"), to: key, in: defaults))
-        XCTAssertFalse(SavedDataRecovery.backUpOnce(json("later, more damaged"), to: key, in: defaults))
+        SavedDataRecovery.backUpOnce(json("later, more damaged"), to: key, in: defaults)
         XCTAssertEqual(defaults.data(forKey: key), json("first damaged"))
+    }
+
+    // Saves no longer refuse to run after a failed read, so a second, different
+    // unreadable blob must be kept too — it used to be dropped because the one
+    // backup slot was taken, then written over by the next save.
+    func testASecondDifferentUnreadableBlobIsKeptBesideTheFirst() {
+        let key = "vibelight.addedHosts.unreadable"
+        SavedDataRecovery.backUpOnce(json("first damaged"), to: key, in: defaults)
+        XCTAssertTrue(SavedDataRecovery.backUpOnce(json("second, different"), to: key, in: defaults))
+        XCTAssertEqual(defaults.data(forKey: key), json("first damaged"))
+        XCTAssertTrue(backups(under: key).contains(json("second, different")),
+                      "the newer unreadable blob must survive somewhere before it is written over")
+        XCTAssertEqual(backups(under: key).count, 2)
+    }
+
+    func testTheSameUnreadableBlobIsNotKeptTwice() {
+        let key = "vibelight.addedHosts.unreadable"
+        SavedDataRecovery.backUpOnce(json("first damaged"), to: key, in: defaults)
+        SavedDataRecovery.backUpOnce(json("second, different"), to: key, in: defaults)
+        XCTAssertFalse(SavedDataRecovery.backUpOnce(json("first damaged"), to: key, in: defaults))
+        XCTAssertFalse(SavedDataRecovery.backUpOnce(json("second, different"), to: key, in: defaults))
+        XCTAssertEqual(backups(under: key).count, 2, "a launch that fails on the same blob again adds nothing")
     }
 
     // MARK: - Restart PC configs (DAT-buddy-config-latch-silent)
@@ -157,8 +187,8 @@ final class SavedDataRecoveryTests: XCTestCase {
         let max = Int.max
         let stored = json(#"{"width": \#(max), "height": \#(max), "fps": \#(max), "bitrateKbps": \#(max)}"#)
         let s = try JSONDecoder().decode(StreamSettings.self, from: stored)
-        XCTAssertEqual(s.width, 7680)
-        XCTAssertEqual(s.height, 4320)
+        XCTAssertEqual(s.width, 16384)
+        XCTAssertEqual(s.height, 16384)
         XCTAssertEqual(s.fps, 240)
         XCTAssertEqual(s.bitrateKbps, 200_000)
 
@@ -171,8 +201,22 @@ final class SavedDataRecoveryTests: XCTestCase {
         let max = Int.max
         let stored = json(#"{"id":"p","name":"Broken","settings":{"width":\#(max),"height":\#(max),"bitrateKbps":\#(max)}}"#)
         let p = try JSONDecoder().decode(StreamPreset.self, from: stored)
-        XCTAssertEqual(p.settings.width, 7680)
+        XCTAssertEqual(p.settings.width, 16384)
         XCTAssertEqual(p.settings.bitrateKbps, 200_000)
+    }
+
+    // The Resolution row offers the display's Native size; a portrait 5K or
+    // Pro Display XDR's is taller than the custom entry's 4320 limit, and it
+    // must come back from a relaunch exactly as picked, not stretched.
+    func testPortraitNativeSizeSurvivesARelaunchUnclamped() throws {
+        for (w, h) in [(2880, 5120), (3384, 6016)] {
+            let saved = try JSONEncoder().encode(StreamSettings(width: w, height: h))
+            let s = try JSONDecoder().decode(StreamSettings.self, from: saved)
+            XCTAssertEqual([s.width, s.height], [w, h])
+            let preset = try JSONEncoder().encode(StreamPreset(id: "p", name: "Portrait", settings: StreamSettings(width: w, height: h)))
+            let p = try JSONDecoder().decode(StreamPreset.self, from: preset)
+            XCTAssertEqual([p.settings.width, p.settings.height], [w, h])
+        }
     }
 
     func testResolutionListSortDoesNotTrapOnAHugeSize() {

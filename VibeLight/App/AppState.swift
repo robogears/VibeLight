@@ -2505,7 +2505,10 @@ final class AppState {
     /// spot (further along when it's higher than the presets).
     var resolutionOptions: [(w: Int, h: Int, label: String)] {
         var options = Self.resolutionPresets
+        // Only a Native size that survives a relaunch unclamped is offered.
         if let native = nativeResolution,
+           StreamSettings.storedWidthRange.contains(native.w),
+           StreamSettings.storedHeightRange.contains(native.h),
            !options.contains(where: { $0.w == native.w && $0.h == native.h }) {
             options.append((native.w, native.h, "Native (\(native.w)×\(native.h))"))
         }
