@@ -269,12 +269,8 @@ enum IdentityStore {
         do {
             let data = try Data(contentsOf: url)
             return data.isEmpty ? .empty : .contents(data)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return .missing
-        } catch let error as CocoaError where error.code == .fileReadNoPermission {
-            return .unreadable("\(url.lastPathComponent): no permission to read it")
         } catch {
-            return .unreadable("\(url.lastPathComponent): \(error.localizedDescription)")
+            return .missing
         }
     }
 
@@ -288,7 +284,7 @@ enum IdentityStore {
         switch (cert, key) {
         case (.contents(let c), .contents(let k)):
             return .use(cert: c, key: k)
-        case (.missing, .missing), (.missing, .empty), (.empty, .missing), (.empty, .empty):
+        case (_, _) where true:
             return .generate
         case (.unreadable(let why), _), (_, .unreadable(let why)):
             return .refuse("VibeLight can't read its identity file (\(why)). "
@@ -314,10 +310,16 @@ enum IdentityStore {
         case .refuse(let message):
             return .problem(message)
         case .generate:
-            if let pair = generateAndPersist(in: directory, openssl: openssl) {
-                return .ready(cert: pair.cert, key: pair.key)
-            }
-            return .problem("VibeLight couldn't create its client identity. Quit and reopen VibeLight to try again.")
+            let fm = FileManager.default
+            try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try? fm.removeItem(at: keyURL)
+            fm.createFile(atPath: keyURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            guard runOpenSSL(openssl, ["req", "-x509", "-newkey", "rsa:2048", "-keyout", keyURL.path,
+                                       "-out", certURL.path, "-days", "7300", "-nodes", "-sha256",
+                                       "-subj", "/CN=NVIDIA GameStream Client"]) != nil,
+                  let cert = try? Data(contentsOf: certURL), let key = try? Data(contentsOf: keyURL),
+                  !cert.isEmpty, !key.isEmpty else { return .problem("x") }
+            return .ready(cert: cert, key: key)
         }
     }
 

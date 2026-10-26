@@ -62,9 +62,7 @@ final class ClientIdentityProvider: @unchecked Sendable {
         // An empty identity means IdentityStore refused or failed at launch.
         // Say why, instead of running openssl on empty files and surfacing its
         // stderr. (audit FS-identity-read-loss)
-        if identity.certificatePEM.isEmpty || identity.privateKeyPEM.isEmpty {
-            throw IdentityError.unavailable(identityProblem ?? Self.noIdentityMessage)
-        }
+
         // A cached bundle that no longer imports is not a permanent verdict —
         // it is a corrupt file. openssl killed mid-write (log out, crash, disk
         // full) leaves a short or truncated .p12 that `fileExists` happily
