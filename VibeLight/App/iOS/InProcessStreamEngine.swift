@@ -103,11 +103,12 @@ final class InProcessStreamEngine: StreamEngine {
             // so the rule below keeps the frame then.
             // (QUA-keyboard-hide-clears-undocked-frame)
             let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-            let screen = (note.object as? UIScreen)?.bounds
+            let keyboardScreen = note.object as? UIScreen   // iOS 16.1+: the keyboard's screen
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.keyboardFrameInScreen = Self.keyboardFrame(
-                    afterHideEndingAt: end, current: self.keyboardFrameInScreen, screen: screen)
+                    afterHideEndingAt: end, current: self.keyboardFrameInScreen,
+                    screen: keyboardScreen?.bounds)
             }
         }
     }
