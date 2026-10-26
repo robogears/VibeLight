@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 5 done · build+tests GREEN (153 Mac + 10 iOS) · last: fix group 1 merged — saved data is never lost
+STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (162 Mac) · last: Computers menu order merged (your request)
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -21,6 +21,7 @@ STATUS: LOOPING · cycle 0 · 5 done · build+tests GREEN (153 Mac + 10 iOS) · 
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 16:45 Your Computers-menu request is merged: the computer you're on is listed first, a thin divider separates it from the others, and the controller moves through the rows in the order they're drawn. The menu opens on the computer you're on, and leaving the pairing panel lands back on the computer you were pairing. The review caught two focus slips along the way (one from me), both fixed and tested. 162 Mac tests green.
 - 26 Oct 16:10 Fix group 1 merged. Saved data is never lost now:
   - one unreadable saved computer, Restart PC pairing or preset is kept exactly as stored, and changes to everything else still save (before, one bad entry froze the computer list for good or wiped presets);
   - a store that can't be read at all is copied aside before anything is written over it;
@@ -53,7 +54,7 @@ STATUS: LOOPING · cycle 0 · 5 done · build+tests GREEN (153 Mac + 10 iOS) · 
 - Cycle 0: mission in progress
 
 ## Completed
-- Total: 5 · recent: ✅ Fix group 1 (saved data) · ✅ Audit finished (dry) + visual page — 25m · ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
+- Total: 6 · recent: ✅ Computers menu order (your request) · ✅ Fix group 1 (saved data) · ✅ Audit finished (dry) + visual page — 25m · ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
 
 ## Blocked (environment)
 - (none)
@@ -83,6 +84,9 @@ STATUS: LOOPING · cycle 0 · 5 done · build+tests GREEN (153 Mac + 10 iOS) · 
 - Mac with a controller plugged in: press arrow keys/Return — the hint bar shows ⏎/⎋; touch the controller — it shows Ⓐ/Ⓑ again.
 - iPad Home Screen: the VibeLight icon fills its rounded square with no black frame.
 
+- Computers menu (2+ computers saved): choose one that isn't first, reopen Computers — it's at the top with a thin line under it; D-pad down walks the rows in the order drawn; with one computer there's no line.
+- Start pairing a computer that isn't selected, then press Back — focus returns to that computer's row.
+
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
   - macOS: full suite 132 tests, 0 failures. Runtime note: 3 PinDurabilityTests log "should not be called on the main thread".
@@ -105,6 +109,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 5, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 6, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```

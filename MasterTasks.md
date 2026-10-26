@@ -15,7 +15,6 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-10 | 26 Oct | "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on" | 🔨 | Built and first-reviewed on branch `loop/computers-order`: the selected PC first, a hairline divider, then the rest; controller focus follows the same order; the menu opens on the PC you're on. Last review (incl. apple-design) running, then merge. |
 | MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 3 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon). Building now: iPad/iPhone text and touch-target sizes. Next: TV dead end, then accent labels, menu-sound switch, empty Home, banner, setup hints. |
 | MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Fix group 1 merged (saved data never lost, bad values can't crash — 7 findings). Group 5 (client identity safety) building. Groups 2–4, 6–9 queued. |
 | MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
@@ -26,6 +25,7 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | Done |
 |---|---|---|---|
+| MT-10 | 26 Oct | "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on" | Merged into `codeX`: the computer you're on is first, a thin divider follows, the controller walks the rows in the drawn order, and the menu opens (and returns from pairing) on the right computer. Live check in the loop report. |
 | MT-11 | 26 Oct | "dont stop what you're doing … add it to … MasterTasks" | Standing rule; this file. |
 | MT-9 | 26 Oct | "are you also looking at this from an /apple-design perspective?" | Yes — the audit's UI review used apple-design; every fix that changes wording or UI now gets an apple-design check in review. |
 | MT-7 | 26 Oct | "can you explain the visual changes you'd like to do?" | Explained in chat (13 items, grouped). |

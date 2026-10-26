@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED  (resumed by th
 PROJECT_PATH: ~/Developer/VibeLight
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792610686
-LAST_TURN_EPOCH: 1793016543
+LAST_TURN_EPOCH: 1793018247
 CEILING_EPOCH: none
 BASE_BRANCH: main
 BRANCH: codeX
@@ -41,7 +41,7 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
      [>] N. <item> — <reason> · shelved: overnight-loop/shelved/<slug>
      [!] N. <item> — blocked by <reason> (morning command in the report) -->
 
-- [~] 4. Computers menu order (owner, 26 Oct: "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on") — done when: the selected PC is first, a hairline divider follows, the rest keep their order, controller focus order matches, unit-tested, apple-design reviewed — STARTED 1793008689 · attempt 1 · approach: one pure ordering function used by both the menu and the focus tree · active: 2m · wip: none · built + first review done (1 Low upheld, polished in 7efdfcc); last review interrupted by a usage limit · delegated (resumed): workflow wf_4f537160-666 (task wcf72sb69), last review only · ~/Developer/VibeLight-lane-hm · loop/computers-order
+- [x] 4. Computers menu order (owner, 26 Oct) — 50m. The computer you're on is listed first with a hairline divider, controller order = drawn order, the menu opens on it and returns from pairing to the right computer. 9 tests; reviewed (code + apple-design), skeptic-checked; last-review Medium fixed directly and independently checked; merged, 162 Mac tests green.
 
 ## Ladder backlog (self-generated when the mission is exhausted)
 <!-- Fix-pass groups from the 26 Oct audit. IDs + one-line titles only — the full report stays private in <git-dir>/overnight-loop/.
