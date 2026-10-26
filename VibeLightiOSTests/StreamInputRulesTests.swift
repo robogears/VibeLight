@@ -42,5 +42,33 @@ final class StreamInputRulesTests: XCTestCase {
         XCTAssertTrue(Receiver.textInputTakes(hardwareKey: false, hardwareKeyboardForwarded: true))
         XCTAssertTrue(Receiver.textInputTakes(hardwareKey: false, hardwareKeyboardForwarded: false))
     }
+
+    // MARK: - Characters with no US key (QUA-onscreen-keyboard-assumes-us-pc-layout)
+
+    /// Accented letters, CJK and emoji used to be dropped silently; they now
+    /// reach the PC as typed text, which its keyboard layout can't change.
+    func testCharactersWithNoUSKeyAreSentAsText() {
+        for character: Character in ["é", "ß", "中", "🙂", "👍🏽", "👩‍💻"] {
+            XCTAssertEqual(KeyboardMap.route(for: character), .text(String(character)),
+                           "\(character) must arrive as text, not be dropped")
+        }
+    }
+
+    /// Characters a US key types stay real key presses: games bind keys, and
+    /// text can't trigger a binding.
+    func testCharactersWithAUSKeyStayKeyPresses() {
+        XCTAssertEqual(KeyboardMap.route(for: "w"), .key(vk: 0x57, shift: false))
+        XCTAssertEqual(KeyboardMap.route(for: "W"), .key(vk: 0x57, shift: true))
+        XCTAssertEqual(KeyboardMap.route(for: "@"), .key(vk: 0x32, shift: true))
+        XCTAssertEqual(KeyboardMap.route(for: " "), .key(vk: 0x20, shift: false))
+        XCTAssertEqual(KeyboardMap.route(for: "\n"), .key(vk: 0x0D, shift: false))
+    }
+
+    /// Invisible control and format characters are not something to type.
+    func testInvisibleCharactersAreDropped() {
+        for character: Character in ["\u{200B}", "\u{FEFF}", "\u{07}"] {
+            XCTAssertNil(KeyboardMap.route(for: character))
+        }
+    }
 }
 #endif

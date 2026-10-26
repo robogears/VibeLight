@@ -96,11 +96,21 @@ enum KeyboardMap {
     /// be turned back into the key press that would have produced it —
     /// `("A")` → VK 0x41 **with shift**, `("@")` → VK 0x32 **with shift**.
     ///
-    /// US layout, deliberately. The host applies its OWN layout to the virtual-key
-    /// codes it receives, so mapping through any other layout here would double
-    /// up the translation and land the wrong character. Anything unmapped
-    /// (accented letters, emoji, CJK) returns nil and is dropped rather than
-    /// guessed at — a wrong keystroke in a game is worse than a missing one.
+    /// US layout, deliberately: moonlight-common-c declares these codes as key
+    /// POSITIONS on a US English keyboard, and the host then types whatever its
+    /// own layout puts at that position. Anything unmapped (accented letters,
+    /// emoji, CJK) returns nil here rather than being guessed at — a wrong
+    /// keystroke in a game is worse than a missing one — and `route(for:)`
+    /// sends it as text instead.
+    ///
+    /// Known limit, shared with Moonlight (QUA-onscreen-keyboard-assumes-us-pc-layout):
+    /// on a PC set to a non-US layout (UK, German, French…), symbols and some
+    /// letters land as whatever that layout has at the US key's position (UK:
+    /// "@" arrives as a double quote; German: y and z swap), and with Caps Lock
+    /// on at the PC, shifted letters arrive lowercase. Sending everything as
+    /// text would avoid that but stops games that read raw keys from seeing
+    /// W/A/S/D, so it stays a Recommendation (an optional "type as text"
+    /// setting), not the default.
     static func keyStroke(for character: Character) -> (vk: Int16, shift: Bool)? {
         // Letters: same VK either way; case is carried by shift.
         if let ascii = character.asciiValue {
@@ -162,6 +172,30 @@ enum KeyboardMap {
         case "\u{2013}", "\u{2014}": return (0xBD, false)   // – —  → -
         default:   return nil
         }
+    }
+
+    /// How one on-screen-keyboard character reaches the host.
+    enum TypedRoute: Equatable {
+        /// A real key press (with Shift around it when needed): games bind keys.
+        case key(vk: Int16, shift: Bool)
+        /// Typed text, for characters no US key produces. Text can't trigger a
+        /// game's key binding, so it is never a wrong keystroke.
+        case text(String)
+    }
+
+    /// The route for `character`: a key press when a US key types it, text
+    /// otherwise (é, ß, CJK, emoji), and nothing for invisible control or
+    /// format characters (a zero-width space is not something to type).
+    /// Before, unmapped characters were silently dropped.
+    /// (QUA-onscreen-keyboard-assumes-us-pc-layout, non-drastic part)
+    static func route(for character: Character) -> TypedRoute? {
+        if let stroke = keyStroke(for: character) {
+            return .key(vk: stroke.vk, shift: stroke.shift)
+        }
+        let invisible = character.unicodeScalars.allSatisfy {
+            $0.properties.generalCategory == .control || $0.properties.generalCategory == .format
+        }
+        return invisible ? nil : .text(String(character))
     }
 
     /// VK_BACK — the on-screen keyboard's delete key.

@@ -600,7 +600,17 @@ final class InProcessStreamEngine: StreamEngine {
     /// a modifier mask, because a host that reads the mask alone still needs the
     /// shift key's own down/up to produce an uppercase letter in most games.
     func typeCharacter(_ character: Character) {
-        guard let session, let stroke = KeyboardMap.keyStroke(for: character) else { return }
+        guard let session, let route = KeyboardMap.route(for: character) else { return }
+        let stroke: (vk: Int16, shift: Bool)
+        switch route {
+        case .key(let vk, let shift):
+            stroke = (vk, shift)
+        case .text(let text):
+            // No US key types it (é, emoji): send the character itself, which
+            // the PC's layout can't change. (QUA-onscreen-keyboard-assumes-us-pc-layout)
+            session.sendText(text)
+            return
+        }
         let shiftVK: Int16 = 0xA0   // VK_LSHIFT
         var mods = keyboardModifiers
         if stroke.shift {
