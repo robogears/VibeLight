@@ -80,6 +80,11 @@ struct HintChip: View {
             .padding(.vertical, Theme.perPlatform(iOS: 8, macOS: 5))
             .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
+            // A glyph + label row with a tap gesture: one element, announced as
+            // a button, as the wizard's Back/Continue were before they shared
+            // this chip (UX-onboarding-hints-generic-glyphs follow-up).
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
         }
     }
 

@@ -66,6 +66,29 @@ final class OnboardingHintsTests: XCTestCase {
         XCTAssertFalse(hints.contains("Button("), "taps must route through HintChip → state.route")
     }
 
+    /// In glyph mode (the Mac, or a pad/keyboard driving on iPad) the chip is a
+    /// tappable row, so VoiceOver must hear one button — the wizard's Back and
+    /// Continue were real Buttons before they shared this chip. The d-pad
+    /// "Change" hint does nothing on tap, so it drops the trait
+    /// (UX-onboarding-hints-generic-glyphs follow-up).
+    func testGlyphChipsAreButtonsAndTheChangeHintIsNot() throws {
+        let bar = try source("VibeLight/UI/HintBarView.swift")
+        let glyphBranch = try body(of: "let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)",
+                                   until: "\n    }\n", in: bar)
+        XCTAssertTrue(glyphBranch.contains(
+            ".contentShape(Rectangle())\n            // A glyph + label row with a tap gesture"), String(glyphBranch))
+        XCTAssertTrue(glyphBranch.contains(
+            ".accessibilityElement(children: .combine)\n            .accessibilityAddTraits(.isButton)\n        }"),
+            String(glyphBranch))
+
+        let flow = try source("VibeLight/UI/OnboardingFlow.swift")
+        let hints = try body(of: "private struct OnboardingHints: View {", until: "\n}\n", in: flow)
+        XCTAssertTrue(hints.contains(
+            "HintChip(event: .move(.left), label: \"Change\", touch: false)\n"
+            + "                    .allowsHitTesting(false)\n"
+            + "                    .accessibilityRemoveTraits(.isButton)"), String(hints))
+    }
+
     /// The main bar reads the same rule, so the two bars can't drift.
     func testMainHintBarUsesTheSharedTouchRule() throws {
         let bar = try source("VibeLight/UI/HintBarView.swift")

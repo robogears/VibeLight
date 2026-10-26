@@ -431,6 +431,7 @@ private struct OnboardingHints: View {
             if !touch && (step == .theme || step == .quality) {
                 HintChip(event: .move(.left), label: "Change", touch: false)
                     .allowsHitTesting(false)
+                    .accessibilityRemoveTraits(.isButton)   // a hint, not a control
             }
             HintChip(event: .select, label: step == .finish ? "Jump in" : "Continue", touch: touch)
         }
