@@ -1,5 +1,19 @@
 # Moonlight-qt Fork Plan (VibeLight v2)
 
+> **Status (note added 2026-10-26): historical plan — not as built.** The body
+> below is the plan as written, kept for its research; the fork shipped
+> differently. There is no control socket: no `--vlctl`, and no QUIT_GAME /
+> DISCONNECT / RAISE commands (VibeLight gives the helper no input at all —
+> stdin is `/dev/null`). The helper runs as
+> `VibeLight.app/Contents/Helpers/StreamHelper.app/Contents/MacOS/Moonlight` and
+> reports only through `@VL` lines on stdout. Its exit codes are not trusted
+> (error paths can still exit 0); host polling is the source of truth. Quitting
+> the game is `GET /cancel` from VibeLight, disconnecting is SIGTERM to the
+> helper, and VibeLight brings the stream window forward itself using the
+> helper's process ID. The helper uses VibeLight's own identity, copied into its
+> own preferences domain (`com.vibelight.StreamHelper`) — never Moonlight's.
+> What shipped: CLAUDE.md, and FORK-CHANGES.md in the helper repo.
+
 **First milestone:** M1: Get the stock (unmodified) fork building and streaming first, to de-risk the toolchain before any code changes. Concretely: `brew install qt`; create the public GitHub fork and clone it; `git submodule update --init --recursive`; `python3 setup-deps.py` (MANDATORY before qmake — app.pro:55-62 hard-errors without libs/mac); `export PATH="$(brew --prefix qt)/bin:$PATH"`; `qmake moonlight-qt.pro && make -j$(sysctl -n hw.logicalcpu) release`; then run `app/Moonlight.app/Contents/MacOS/Moonlight stream <host> "<app>"` against the live Vibepollo host and confirm you see the game stream. This proves the (highest-friction) build environment works before you touch a single source file.
 
 **Top risks:**

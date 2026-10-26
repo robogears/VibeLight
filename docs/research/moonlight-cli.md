@@ -1,5 +1,13 @@
 # moonlight-qt 6.1.0 CLI on this Mac — complete findings
 
+> **Note added 2026-10-26: historical research.** Wherever this document plans to
+> read the client certificate/key or hosts from Moonlight's plist
+> (`com.moonlight-stream.Moonlight`), or to drive stock Moonlight, that is not
+> what VibeLight does: since v0.2.0 it uses only its own client identity, pairs
+> each computer in-app by PIN, and streams through its own helper fork, never
+> stock Moonlight. The protocol findings themselves still stand. What shipped:
+> CLAUDE.md.
+
 Binary: `/Applications/Moonlight.app/Contents/MacOS/Moonlight` — reports `Moonlight 6.1.0` via `--version`. Every invocation prints `Redirecting log output to /tmp/Moonlight-<epochSecs>.log` to **stderr** first (Qt log messages go to that file; only 10 most recent log files are kept, 10 MB cap). CLI status/error text is printed with plain fputs to stdout/stderr, NOT to the log file. For failed `list`/`quit` runs the log file stayed 0 bytes.
 
 ## Actions (top-level `--help`)

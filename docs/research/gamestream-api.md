@@ -1,5 +1,13 @@
 # GameStream-compatible HTTP(S) API — Sunshine / Apollo / Vibepollo, as consumed by Moonlight
 
+> **Note added 2026-10-26: historical research.** Wherever this document plans to
+> read the client certificate/key or hosts from Moonlight's plist
+> (`com.moonlight-stream.Moonlight`), or to drive stock Moonlight, that is not
+> what VibeLight does: since v0.2.0 it uses only its own client identity, pairs
+> each computer in-app by PIN, and streams through its own helper fork, never
+> stock Moonlight. The protocol findings themselves still stand. What shipped:
+> CLAUDE.md.
+
 All findings verified directly against current source: `LizardByte/Sunshine src/nvhttp.cpp + nvhttp.h + crypto.cpp` (master, fetched 2026-07-03), `Nonary/Vibepollo src/nvhttp.cpp + nvhttp.h + crypto.h` (master), and `moonlight-stream/moonlight-qt app/backend/{nvhttp.cpp,nvhttp.h,nvcomputer.cpp,nvaddress.h,identitymanager.cpp,nvpairingmanager.cpp,main.cpp}`. Vibepollo (github.com/Nonary/Vibepollo) is a fork of Apollo (ClassicOldSong/Apollo), itself a Sunshine fork; its nvhttp is Apollo's, with the same core GameStream API plus extensions (documented below).
 
 ## 1. Ports

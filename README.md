@@ -69,9 +69,9 @@ VibeLight is the shell Moonlight never had.
   cursor, native multi-touch passthrough on supported hosts — toggle in
   Settings ▸ Input). Hold **Start + Select + L1 + R1** together for about a
   second (progress ring) or tap the on-screen ✕ to leave a stream; a
-  Moonlight-parity **performance HUD** (Settings ▸ Advanced) shows fps, bitrate, latency, and drops. The screen
-  stays awake while you play, and quitting the app can cleanly stop the game
-  on the PC.
+  Moonlight-parity **performance HUD** (Settings ▸ Advanced) shows fps,
+  bitrate, latency, and drops. The screen stays awake while you play, and
+  quitting the app can cleanly stop the game on the PC.
 - **Controller / mouse input-mode switching.** The cursor vanishes on
   controller or keyboard input and returns the instant you move the mouse.
   On-screen hints adapt to Xbox / PlayStation / Nintendo / generic glyphs
