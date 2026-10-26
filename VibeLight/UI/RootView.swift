@@ -27,6 +27,13 @@ struct RootView: View {
                                         hasGamepad: state.controller.hasGamepad)
     }
 
+    /// Screen edges whose system swipes (Home, app switcher, Control Center,
+    /// Notification Center) wait for a second swipe: every edge while a stream
+    /// is live, none in the launcher. (UX-stream-edge-gestures-not-deferred)
+    static func deferredSystemEdges(streaming: Bool) -> Edge.Set {
+        streaming ? .all : []
+    }
+
     #endif
 
     /// True when an opaque stream is covering the launcher on THIS screen — so
@@ -182,6 +189,15 @@ struct RootView: View {
         // actually animates (the .transition above never ran without it) —
         // the launcher now fades back in when the stream ends.
         .animation(.easeInOut(duration: 0.45), value: isStreamingPhase)
+        // Mid-game, a drag that starts at a screen edge must reach the game
+        // first: without deferral one bottom-edge swipe goes Home, which ends
+        // the stream and (with Quit Game on App Exit, the default) closes the
+        // game on the PC. Deferred, iOS needs a second swipe, as in Moonlight.
+        // Streaming only: the launcher keeps normal one-swipe gestures. The
+        // stream controls' grab pill is a tap/drag target inside the edge, so
+        // deferral only makes it MORE reliably ours.
+        // (UX-stream-edge-gestures-not-deferred)
+        .defersSystemGestures(on: Self.deferredSystemEdges(streaming: isStreamingPhase))
         // Accidental case: the app's OWN window is on an external screen (Stage
         // Manager extended display, launched from the TV). Guide the user back to
         // the iPad. Last overlay → wins the z-order; safe-by-default so it can
