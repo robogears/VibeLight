@@ -249,15 +249,20 @@ final class EmptyHomeAndBannerTests: XCTestCase {
     /// panel ("fix the computer you just removed"); a warning about the
     /// saved list itself stays (3H last review).
     func testRemovingTheSelectedComputerDropsItsErrorButKeepsTheListWarning() throws {
-        XCTAssertNil(AppState.hostErrorAfterRemovingSelected("Gaming PC refused the connection."))
-        XCTAssertNil(AppState.hostErrorAfterRemovingSelected(nil))
-        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.savedHostsUnreadableMessage),
+        XCTAssertNil(AppState.hostErrorAfterRemovingSelected("Gaming PC refused the connection.", computersLeft: 0))
+        XCTAssertNil(AppState.hostErrorAfterRemovingSelected("Gaming PC refused the connection.", computersLeft: 2))
+        XCTAssertNil(AppState.hostErrorAfterRemovingSelected(nil, computersLeft: 0))
+        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.savedHostsUnreadableMessage, computersLeft: 0),
                        AppState.savedHostsUnreadableMessage)
-        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.someSavedHostsUnreadableMessage),
+        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.someSavedHostsUnreadableMessage, computersLeft: 1),
                        AppState.someSavedHostsUnreadableMessage)
+        // No readable computer left: "your other computers still work" would be false.
+        XCTAssertEqual(AppState.hostErrorAfterRemovingSelected(AppState.someSavedHostsUnreadableMessage, computersLeft: 0),
+                       AppState.savedHostsUnreadableMessage)
         let app = try source("VibeLight/App/AppState.swift")
         let remove = try body(of: "let wasSelected = selectedHostID == host.id", until: "rebuildFocus()", in: app)
-        XCTAssertTrue(remove.contains("hostError = Self.hostErrorAfterRemovingSelected(hostError)"), String(remove))
+        XCTAssertTrue(remove.contains("hostError = Self.hostErrorAfterRemovingSelected(hostError, computersLeft: hosts.count)"),
+                      String(remove))
     }
 
     /// A refresh that fails after the person switched computers (or removed
@@ -268,6 +273,12 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         let app = try source("VibeLight/App/AppState.swift")
         let typed = try body(of: "} catch let error as HostAPIError {", until: "serverInfo = nil", in: app)
         XCTAssertTrue(typed.contains("guard selectionStillThisHost() else { return }"), String(typed))
+        // The re-pair mark is per computer and must survive a switch: it comes
+        // BEFORE the guard, or a computer switched away from mid-check would
+        // lose it.
+        let repair = try XCTUnwrap(typed.range(of: "hostsNeedingRepair.insert(host.id)"), String(typed))
+        let guardLine = try XCTUnwrap(typed.range(of: "guard selectionStillThisHost() else { return }"))
+        XCTAssertLessThan(repair.lowerBound, guardLine.lowerBound, "the re-pair mark must come before the guard")
         let other = try body(of: "apps = displayApps(from: rememberedApps(for: host))\n            selectedHostChecked = true\n        } catch {",
                              until: "serverInfo = nil", in: app)
         XCTAssertTrue(other.contains("guard selectionStillThisHost() else { return }"), String(other))

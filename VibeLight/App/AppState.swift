@@ -285,9 +285,14 @@ final class AppState {
     /// The banner error to keep once the selected computer is removed: its own
     /// error named the computer that is gone, and with none left the empty
     /// panel would tell the person to fix it. A saved-computers warning is
-    /// about the list, not that computer, so it stays (3H last review).
-    nonisolated static func hostErrorAfterRemovingSelected(_ error: String?) -> String? {
-        error == savedHostsUnreadableMessage || error == someSavedHostsUnreadableMessage ? error : nil
+    /// about the list, not that computer, so it stays (3H last review) — in
+    /// its whole-list wording once no readable computer is left, since "your
+    /// other computers still work" would then be false.
+    nonisolated static func hostErrorAfterRemovingSelected(_ error: String?, computersLeft: Int) -> String? {
+        if error == someSavedHostsUnreadableMessage {
+            return computersLeft == 0 ? savedHostsUnreadableMessage : error
+        }
+        return error == savedHostsUnreadableMessage ? error : nil
     }
 
     /// What the selected computer's header chip says beside its name.
@@ -1540,7 +1545,7 @@ final class AppState {
             serverInfo = nil; hostAddress = nil
             selectedHostChecked = false
             clearHostNotice()   // it named the removed computer
-            hostError = Self.hostErrorAfterRemovingSelected(hostError)
+            hostError = Self.hostErrorAfterRemovingSelected(hostError, computersLeft: hosts.count)
             apps = displayApps(from: selectedHost?.apps ?? [])
             Task { await refreshSelectedHost() }
         }
