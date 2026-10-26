@@ -57,6 +57,14 @@ final class ExternalDisplay {
         for scene in UIApplication.shared.connectedScenes {
             if let ws = scene as? UIWindowScene { sceneConnected(ws) }
         }
+        #if DEBUG
+        // Simulator instrument: a "connected" TV with no window, so the iPad's
+        // companion-panel gate can be seen without a display (see DebugInstruments).
+        if DebugInstruments.fakeTV, !isConnected {
+            name = "Living Room TV"
+            isConnected = true
+        }
+        #endif
     }
 
     /// Called once by the app (in the scene `.task`) so the TV can render the

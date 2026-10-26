@@ -36,6 +36,16 @@ final class ControllerManager {
     /// GameController reports those separately).
     private(set) var connectedControllers: [GCController] = []
 
+    /// True while a full gamepad is attached — something that can drive the
+    /// launcher on a TV, which takes no touch (UX-tv-attached-touch-dead-end).
+    /// Observable through `connectedControllers`.
+    var hasGamepad: Bool {
+        #if DEBUG
+        if DebugInstruments.fakePad != nil { return true }   // Simulator instrument
+        #endif
+        return connectedControllers.contains { $0.extendedGamepad != nil }
+    }
+
     /// Which device produced the last directed (focus-moving) input.
     enum DirectedSource: Sendable { case pad, keyboard }
 

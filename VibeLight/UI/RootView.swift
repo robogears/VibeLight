@@ -17,6 +17,16 @@ struct RootView: View {
         return false
     }
 
+    /// Idle and a TV owns the launcher: the iPad shows only the companion
+    /// panel. Needs a gamepad — the TV takes no touch, so without one the
+    /// launcher stays on the iPad and the TV mirrors it.
+    private var companionOwnsIPad: Bool {
+        AppState.companionPanelOwnsIPad(useTV: state.settings.externalDisplay,
+                                        tvConnected: ExternalDisplay.shared.isConnected,
+                                        streaming: isStreamingPhase,
+                                        hasGamepad: state.controller.hasGamepad)
+    }
+
     #endif
 
     /// True when an opaque stream is covering the launcher on THIS screen — so
@@ -66,17 +76,18 @@ struct RootView: View {
         #if os(iOS)
         // While a TV owns the display, the iPad is a companion screen — the
         // launcher shows ONLY on the TV. Shown the instant a display connects
-        // (isConnected is observable), and only when not streaming (the stream
-        // overlay below provides its own placeholder + trackpad).
+        // (isConnected is observable), only when not streaming (the stream
+        // overlay below provides its own placeholder + trackpad), and only
+        // while a gamepad can drive the TV (UX-tv-attached-touch-dead-end):
+        // a pad dropping out puts the launcher back under the user's finger.
         .overlay {
-            let tvActive = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
-            let idle: Bool = { if case .streaming = state.session.phase { false } else { true } }()
-            if tvActive && idle {
-                ExternalDisplayPlaceholder(streaming: false)
+            if companionOwnsIPad {
+                ExternalDisplayPlaceholder(streaming: false,
+                                           onUseIPad: { state.useIPadInsteadOfTV() })
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: ExternalDisplay.shared.isConnected)
+        .animation(.easeInOut(duration: 0.25), value: companionOwnsIPad)
         // Live stream covers the whole screen (unscaled) while it's up.
         .overlay {
             if case .streaming = state.session.phase {
@@ -297,10 +308,15 @@ struct ExternalDisplayContent: View {
 /// The iPad companion screen shown whenever a TV / monitor is driving the
 /// display — VibeLight itself lives on the big screen, so the iPad is a calm
 /// status panel. While streaming it's also a trackpad (touches pass through);
-/// while idle it just says "use your controller".
+/// while idle it says "use your controller" and offers "Use the iPad Instead".
 private struct ExternalDisplayPlaceholder: View {
     @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
     var streaming = true
+    /// Idle only: the always-present way out (UX-tv-attached-touch-dead-end) —
+    /// turns Use TV / Monitor off so the launcher comes back to the iPad. Touch
+    /// only by construction (the TV owns the focus engine), so no focus ID.
+    var onUseIPad: (() -> Void)? = nil
 
     /// Whether companion touches actually reach the host: the phantom-cursor
     /// gate suppresses touch while a gamepad is connected (unless the user
@@ -361,12 +377,41 @@ private struct ExternalDisplayPlaceholder: View {
                          : "Use your controller to navigate on the big screen.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
+                    if !streaming, let onUseIPad {
+                        useIPadButton(onUseIPad)
+                            .padding(.top, 28 - 16)   // 28 pt from the line above (stack spacing is 16)
+                    }
                     // No pixel/point readout here (UX-companion-geometry-readout):
                     // it was a TV-sizing aid, too faint to read and nothing the
                     // user can act on. `ExternalDisplay` still logs it on connect.
                 }
                 .offset(x: dx * 40, y: dy * 34)             // content drifts gently too
             }
+        }
+    }
+
+    /// The escape hatch, deliberately quiet: a hairline capsule, not the accent
+    /// (that's for primary actions). Drifts with the OLED content — intended.
+    private func useIPadButton(_ action: @escaping () -> Void) -> some View {
+        let increased = contrast == .increased
+        return VStack(spacing: 8) {
+            Button(action: action) {
+                Text("Use the iPad Instead")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 44)   // the 44 pt touch-target floor (DESIGN.md §6)
+                    .background(.white.opacity(0.10), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(increased ? 0.35 : 0.14), lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Use the iPad Instead")
+            .accessibilityHint("Turns off Use TV / Monitor.")
+            Text("Turns off Use TV / Monitor (Settings ▸ Video).")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
         }
     }
 }
