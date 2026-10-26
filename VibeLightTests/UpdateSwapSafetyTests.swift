@@ -139,10 +139,23 @@ final class UpdateSwapSafetyTests: XCTestCase {
         let folder = root.appendingPathComponent("vibelight-update-AAA")
         let running = folder.appendingPathComponent("VibeLight.app")
         try FileManager.default.createDirectory(at: running, withIntermediateDirectories: true)
-        let resolved = running.resolvingSymlinksInPath()
-        XCTAssertEqual(UpdateService.staleArtifacts(in: [folder], runningBundle: resolved), [])
-        XCTAssertEqual(UpdateService.staleArtifacts(in: [folder.resolvingSymlinksInPath()],
-                                                    runningBundle: running), [])
+        // Both spellings are built by hand: resolvingSymlinksInPath() strips a
+        // leading /private again when the shorter path exists, so it would hand
+        // back the same /var path and never put the two forms side by side.
+        // (review finding on this test, G7 polish)
+        let shortFolder = URL(fileURLWithPath: Self.withoutPrivatePrefix(folder.path), isDirectory: true)
+        let shortRunning = URL(fileURLWithPath: Self.withoutPrivatePrefix(running.path), isDirectory: true)
+        let privateFolder = URL(fileURLWithPath: "/private" + shortFolder.path, isDirectory: true)
+        let privateRunning = URL(fileURLWithPath: "/private" + shortRunning.path, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: privateRunning.path),
+                      "the temp folder should live under /var, a symlink to /private/var")
+        XCTAssertNotEqual(shortRunning.pathComponents, privateRunning.pathComponents)
+        XCTAssertEqual(UpdateService.staleArtifacts(in: [shortFolder], runningBundle: privateRunning), [])
+        XCTAssertEqual(UpdateService.staleArtifacts(in: [privateFolder], runningBundle: shortRunning), [])
+    }
+
+    private static func withoutPrivatePrefix(_ path: String) -> String {
+        path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
     }
 
     func testSweepStillClearsAFolderWhoseNameIsOnlyAPrefixOfTheRunningOne() {
