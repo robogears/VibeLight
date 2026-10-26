@@ -22,5 +22,25 @@ enum DebugInstruments {
         default: nil
         }
     }()
+
+    /// A synthetic selected computer, "Gaming PC", for the empty-shelf states.
+    enum FakeHost: String {
+        case asleep, offline, unpaired
+        case onlineEmpty = "online-empty"
+        case notResponding = "notresponding"
+    }
+
+    /// `VL_FAKE_HOST=asleep|offline|unpaired|online-empty|notresponding` —
+    /// replaces the computer list with one synthetic "Gaming PC" in that state
+    /// and no games; it is never refreshed, woken or persisted.
+    static let fakeHost: FakeHost? =
+        ProcessInfo.processInfo.environment["VL_FAKE_HOST"].flatMap(FakeHost.init(rawValue:))
+
+    enum FakeHostError: String { case long, restarting }
+
+    /// `VL_FAKE_HOST_ERROR=long|restarting` — the header chip shows the
+    /// longest saved-computers warning, or the grey "Restarting Gaming PC…".
+    static let fakeHostError: FakeHostError? =
+        ProcessInfo.processInfo.environment["VL_FAKE_HOST_ERROR"].flatMap(FakeHostError.init(rawValue:))
 }
 #endif

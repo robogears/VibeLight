@@ -107,8 +107,12 @@ final class ThemeContrastTests: XCTestCase {
         XCTAssertTrue(row.contains(".foregroundStyle(isFocused ? Theme.onAccent : Theme.textPrimary)"))
         let tab = try source(of: "private struct TabChip: View {", in: "VibeLight/UI/SettingsView.swift")
         XCTAssertTrue(tab.contains(".foregroundStyle(selected ? Theme.onAccent"))
-        let add = try source(of: "private struct AddComputerButton: View {", in: "VibeLight/UI/HomeView.swift")
-        XCTAssertTrue(add.contains(".foregroundStyle(Theme.onAccent)"))
+        // The corner "Add Computer" pill became the empty shelf's card button
+        // (UX-empty-home-no-invitation); its focused fill takes navy ink too.
+        let add = try source(of: "private struct EmptyShelfPanel: View {", in: "VibeLight/UI/HomeView.swift")
+        XCTAssertTrue(add.contains("OverlayButton(id: \"header:addhost\", title: \"Add Computer\", symbol: \"plus.circle.fill\")"))
+        let card = try source(of: "struct OverlayButton: View {", in: "VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(card.contains("Theme.labelInk(onSolidAccent: !destructive)"))
         let wizard = try source(of: "private struct OnboardingButton: View {", in: "VibeLight/UI/OnboardingFlow.swift")
         XCTAssertTrue(wizard.contains(".foregroundStyle(prominent ? Theme.onAccent : Theme.textPrimary)"))
     }

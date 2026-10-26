@@ -75,6 +75,9 @@ final class AppState {
     private(set) var selectedHostID: String? {
         didSet {
             guard selectedHostID != oldValue else { return }
+            #if DEBUG
+            if DebugInstruments.fakeHost != nil { return }   // never persist the synthetic host
+            #endif
             UserDefaults.standard.set(selectedHostID, forKey: Self.selectedHostKey)
             // Also stash the host's stable address. A host's `id` changes
             // representation across launches (added:<ip> ↔ real uuid, Moonlight
@@ -143,6 +146,15 @@ final class AppState {
     private(set) var serverInfo: ServerInfo?
     private(set) var hostAddress: String?
     private(set) var hostError: String?
+    /// Normal progress about the selected computer ("Restarting Gaming PC…").
+    /// Kept apart from `hostError` so it's drawn in the neutral secondary
+    /// colour with a spinner, not error orange (UX-host-banner-truncates).
+    private(set) var hostNotice: String?
+    @ObservationIgnored private var noticeClearTask: Task<Void, Never>?
+    /// The selected computer has answered at least once since it was selected
+    /// (games list, or a failure saying why not) — so an empty shelf means
+    /// something. Reset on every selection change (UX-empty-home-no-invitation).
+    private(set) var selectedHostChecked = false
     private(set) var isRefreshing = false
     /// Apps to render: fresh from the host when online, else the plist cache.
     private(set) var apps: [StreamApp] = []
@@ -247,6 +259,113 @@ final class AppState {
     /// packet is noise — the fix there is restarting its streaming service.
     var canWakeSelectedHost: Bool {
         !hostOnline && !hostNotResponding && selectedHost?.macAddress != nil
+    }
+
+    // The saved-computers warnings lead with what happened and stay within the
+    // banner's two lines (~130 characters at 420 pt): the old 150-character
+    // text lost its reassuring half to "…" (UX-host-banner-truncates).
+    nonisolated static let someSavedHostsUnreadableMessage =
+        "Some saved computers couldn't be read, so they're hidden. Nothing was deleted, and your other computers still work."
+    nonisolated static let savedHostsUnreadableMessage =
+        "Your saved computers couldn't be read, so the list starts empty. Nothing was deleted — the original is kept aside."
+
+    /// The saved-computers warning to show at launch, if any. With NO readable
+    /// computer left, the "some" wording's "your other computers still work"
+    /// would be false (the no-computer panel shows it), so every-record-failed
+    /// reads like the whole list failing — which, to the person, it did
+    /// (3H review: unreadable warning on the no-computer panel).
+    nonisolated static func savedHostsWarning(blobUnreadable: Bool, unreadableCount: Int,
+                                              readableCount: Int) -> String? {
+        if blobUnreadable || (unreadableCount > 0 && readableCount == 0) {
+            return savedHostsUnreadableMessage
+        }
+        return unreadableCount > 0 ? someSavedHostsUnreadableMessage : nil
+    }
+
+    /// The banner error to keep once the selected computer is removed: its own
+    /// error named the computer that is gone, and with none left the empty
+    /// panel would tell the person to fix it. A saved-computers warning is
+    /// about the list, not that computer, so it stays (3H last review) — in
+    /// its whole-list wording once no readable computer is left, since "your
+    /// other computers still work" would then be false.
+    nonisolated static func hostErrorAfterRemovingSelected(_ error: String?, computersLeft: Int) -> String? {
+        if error == someSavedHostsUnreadableMessage {
+            return computersLeft == 0 ? savedHostsUnreadableMessage : error
+        }
+        return error == savedHostsUnreadableMessage ? error : nil
+    }
+
+    /// What the selected computer's header chip says beside its name.
+    enum HostBanner: Equatable, Sendable {
+        case error(String)    // orange, up to two lines
+        case notice(String)   // normal progress: secondary colour + spinner
+        case status(String)   // "asleep" / "offline"
+    }
+
+    /// A real error wins over a progress notice — it must never hide behind
+    /// one, just as it must never masquerade as "asleep".
+    nonisolated static func hostBanner(error: String?, notice: String?,
+                                       online: Bool, hasMAC: Bool) -> HostBanner? {
+        if let error { return .error(error) }
+        if let notice { return .notice(notice) }
+        if !online { return .status(hasMAC ? "asleep" : "offline") }
+        return nil
+    }
+
+    var hostBanner: HostBanner? {
+        Self.hostBanner(error: hostError, notice: hostNotice, online: hostOnline,
+                        hasMAC: selectedHost?.macAddress != nil)
+    }
+
+    /// Why the games shelf is empty, so it can say so and offer the next step
+    /// instead of a blank row (UX-empty-home-no-invitation).
+    enum EmptyShelf: Equatable, Sendable {
+        case noComputer, notPaired, checking, asleep, waking, offline, notResponding, problem, noGames
+    }
+
+    nonisolated static func emptyShelf(hasHost: Bool, isPaired: Bool, checked: Bool, online: Bool,
+                                       notResponding: Bool, hasError: Bool,
+                                       canWake: Bool, waking: Bool) -> EmptyShelf {
+        guard hasHost else { return .noComputer }
+        if !isPaired { return .notPaired }
+        // Until the first answer (games list or failure) the shelf is empty only
+        // because nothing has loaded yet: an awake PC must not read "asleep" with
+        // a Wake button, nor "No games", while it's being asked.
+        if !checked { return .checking }
+        if online { return .noGames }
+        if notResponding { return .notResponding }
+        // An error (e.g. "pair it again") is never shown as "asleep"; the
+        // header chip spells it out.
+        if hasError { return .problem }
+        if waking { return .waking }
+        return canWake ? .asleep : .offline
+    }
+
+    /// The shelf's own focusable buttons while it's empty. SINGLE source of
+    /// truth: rebuildFocus emits these and HomeView's empty panel draws a
+    /// button only for these ids. (No computer: the panel's Add Computer
+    /// carries `header:addhost`, emitted in the header section.)
+    nonisolated static func emptyShelfFocusIDs(_ shelf: EmptyShelf) -> [String] {
+        switch shelf {
+        case .notPaired: ["shelf:pair"]
+        case .asleep: ["shelf:wake"]
+        default: []
+        }
+    }
+
+    /// nil while there are games to show.
+    var emptyShelf: EmptyShelf? {
+        guard apps.isEmpty else { return nil }
+        let host = selectedHost
+        // needsPairing, not isPaired: a computer whose certificate changed or
+        // that now refuses us needs pairing again too, and the shelf should
+        // offer Pair Computer rather than point at the header chip (3H review:
+        // broken pairing showed no button).
+        return Self.emptyShelf(hasHost: host != nil, isPaired: host.map { !needsPairing($0) } ?? false,
+                               checked: selectedHostChecked, online: hostOnline,
+                               notResponding: hostNotResponding,
+                               hasError: hostError != nil, canWake: canWakeSelectedHost,
+                               waking: host != nil && wakingHostID == host?.id)
     }
 
     // MARK: UI state
@@ -454,14 +573,12 @@ final class AppState {
         let savedHostAddr = UserDefaults.standard.string(forKey: Self.selectedHostAddrKey)
         selectedHostID = Self.resolveSelectedHostID(in: hosts, savedID: savedHostID, savedAddr: savedHostAddr)
         apps = displayApps(from: selectedHost?.apps ?? [])
-        if savedHosts.blobUnreadable {
-            hostError = "Your saved computers couldn't be read, so the list starts empty. "
-                + "The original is kept aside. Open the computer menu (top-right) to add one by IP."
-        } else if !savedHosts.unreadable.isEmpty {
-            hostError = "Some saved computers couldn't be read, so they're hidden. "
-                + "They're kept as they were, and changes to your other computers are still saved."
-        } else if hosts.isEmpty {
-            hostError = "No computers yet — open the computer menu (top-right) to add one by IP."
+        // (No "No computers yet" banner: with no computer the shelf itself
+        // says so and offers Add Computer — UX-empty-home-no-invitation.)
+        if let warning = Self.savedHostsWarning(blobUnreadable: savedHosts.blobUnreadable,
+                                                unreadableCount: savedHosts.unreadable.count,
+                                                readableCount: hosts.count) {
+            hostError = warning
         }
 
         let savedPresets = Self.loadPresets()
@@ -495,6 +612,26 @@ final class AppState {
                 SavedDataRecovery.backUpOnce(data, to: "\(Self.moonDeckConfigsKey).unreadable", in: .standard)
             }
         }
+
+        #if DEBUG
+        // Simulator instruments (see DebugInstruments). In-memory only: the
+        // selection's didSet skips persisting the synthetic host, and the
+        // refresh loop and wakeHost skip it on the network.
+        if let fake = Self.debugFakeHost() {
+            hosts = [fake.host]
+            selectedHostID = fake.host.id
+            apps = []
+            hostError = nil
+            hostNotResponding = fake.notResponding
+            serverInfo = fake.info
+            selectedHostChecked = true   // never refreshed, so mark it answered
+        }
+        switch DebugInstruments.fakeHostError {
+        case .long: hostError = Self.someSavedHostsUnreadableMessage
+        case .restarting: hostNotice = "Restarting \(selectedHost?.name ?? "Gaming PC")…"
+        case nil: break
+        }
+        #endif
 
         wireCallbacks()
         rebuildFocus()
@@ -1262,7 +1399,9 @@ final class AppState {
                 // The PC is rebooting; drop the live connection state so the UI
                 // shows it going offline rather than a stale "online".
                 serverInfo = nil
-                hostError = "Restarting \(host.name)…"
+                // Normal progress, not an error (UX-host-banner-truncates).
+                hostError = nil
+                showHostNotice("Restarting \(host.name)…")
                 // hostOnline just flipped false AFTER dismissOverlay()'s
                 // rebuildFocus already ran — rebuild again so the now-visible
                 // wake button's header:power id becomes focusable immediately
@@ -1293,6 +1432,25 @@ final class AppState {
                 presentOverlay(.error(message))
             }
         }
+    }
+
+    /// Shows a progress notice in the header chip until the computer answers,
+    /// a real error replaces it, you switch computers, or three minutes pass —
+    /// so a PC that never comes back doesn't spin "Restarting…" forever.
+    private func showHostNotice(_ text: String) {
+        hostNotice = text
+        noticeClearTask?.cancel()
+        noticeClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(180))
+            guard let self, !Task.isCancelled, self.hostNotice == text else { return }
+            self.hostNotice = nil
+        }
+    }
+
+    private func clearHostNotice() {
+        hostNotice = nil
+        noticeClearTask?.cancel()
+        noticeClearTask = nil
     }
 
     private func savePairedHost(ip: String, serverCertPEM: Data) {
@@ -1385,6 +1543,9 @@ final class AppState {
         if wasSelected {
             selectedHostID = hosts.first?.id
             serverInfo = nil; hostAddress = nil
+            selectedHostChecked = false
+            clearHostNotice()   // it named the removed computer
+            hostError = Self.hostErrorAfterRemovingSelected(hostError, computersLeft: hosts.count)
             apps = displayApps(from: selectedHost?.apps ?? [])
             Task { await refreshSelectedHost() }
         }
@@ -1441,6 +1602,9 @@ final class AppState {
 
     func refreshSelectedHost() async {
         guard let host = selectedHost else { return }
+        #if DEBUG
+        if DebugInstruments.fakeHost != nil { return }   // synthetic host: no network
+        #endif
         // The session manager owns host truth while a stream is active.
         guard session.phase == .idle else { return }
         isRefreshing = true
@@ -1467,10 +1631,14 @@ final class AppState {
             serverInfo = info
             hostAddress = address
             hostError = nil
+            clearHostNotice()   // it's back — "Restarting…" is over
             hostNotResponding = false
             if wakingHostID == host.id {   // it woke up — drop the transient state
                 wakingHostID = nil
                 wakeClearTask?.cancel()
+                // The empty shelf's Wake/spinner reads wakingHostID; rebuild now,
+                // not only at the end (the applist guard below can return early).
+                rebuildFocus()
             }
             // A freshly-added host reports its real name here — and its MAC,
             // which is what makes Wake-on-LAN possible for in-app-paired hosts.
@@ -1485,11 +1653,27 @@ final class AppState {
             let fresh = try await api.appList(for: host, at: address)
             guard selectionStillThisHost(), session.phase == .idle else { return }
             apps = displayApps(from: fresh)
+            selectedHostChecked = true
             // The host answered normally, so whatever identity trouble we saw
             // before is over.
             hostsNeedingRepair.remove(host.id)
             rememberApps(fresh, for: host)
         } catch let error as HostAPIError {
+            // The host is reachable but refuses our identity — remember it so
+            // selecting this computer offers PAIRING again instead of just
+            // switching to it (see needsPairing). Without this the banner tells
+            // the user to pair again and nothing in the UI lets them. Keyed by
+            // host, so it holds even if the selection moved on.
+            switch error {
+            case .hostIdentityChanged, .notAuthorized: hostsNeedingRepair.insert(host.id)
+            default: break
+            }
+            // A computer switched away from (or removed) during the await must
+            // not write its error, address or games onto the new selection: a
+            // removed computer's games stayed on the shelf with no computer
+            // selected, while focus offered an Add Computer button no view drew
+            // (3H last review).
+            guard selectionStillThisHost() else { return }
             serverInfo = nil
             hostAddress = nil
             // A wedged host is NOT the normal asleep case — surface it, and
@@ -1499,14 +1683,7 @@ final class AppState {
                 hostError = nil // asleep host is a normal state, not an error banner
             } else {
                 hostError = error.localizedDescription
-            }
-            // The host is reachable but refuses our identity — remember it so
-            // selecting this computer offers PAIRING again instead of just
-            // switching to it (see needsPairing). Without this the banner tells
-            // the user to pair again and nothing in the UI lets them.
-            switch error {
-            case .hostIdentityChanged, .notAuthorized: hostsNeedingRepair.insert(host.id)
-            default: break
+                clearHostNotice()   // a real error replaces any progress notice
             }
             // Fall back to the last app list we actually saw for this host.
             // This used to read `host.apps`, which is ALWAYS empty in the
@@ -1514,10 +1691,13 @@ final class AppState {
             // Moonlight plist import was removed in v0.2.0) — so the "cache"
             // was `apps = []`, and any hiccup blanked the whole shelf.
             apps = displayApps(from: rememberedApps(for: host))
+            selectedHostChecked = true
         } catch {
+            guard selectionStillThisHost() else { return }
             serverInfo = nil
             hostAddress = nil
             hostNotResponding = false
+            selectedHostChecked = true
         }
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
@@ -1634,6 +1814,8 @@ final class AppState {
         selectedHostID = id
         serverInfo = nil
         hostAddress = nil
+        selectedHostChecked = false
+        clearHostNotice()   // it named the previous computer
         apps = displayApps(from: selectedHost?.apps ?? [])
         rebuildFocus()
         focus.focusFirst()
@@ -1656,16 +1838,31 @@ final class AppState {
         guard let host = selectedHost, host.macAddress != nil, !hostOnline else { return }
         wakeHost(host)
         wakingHostID = host.id
+        let wasOnShelfWake = focus.focusedItemID == "shelf:wake"
+        // The empty shelf swaps its Wake Computer button (shelf:wake) for a
+        // spinner while waking — rebuild so the engine never holds an id no
+        // view draws (UX-empty-home-no-invitation).
+        rebuildFocus()
+        // With the shelf's button gone the engine would fall DOWN to a preset
+        // slot, and a second A (nothing seemed to happen) would apply it over
+        // the current settings. Land on the header's Wake button instead: it's
+        // still drawn while waking, and pressing it again only re-sends the
+        // wake (3H review: wake focus falls onto presets).
+        if wasOnShelfWake { focus.focus(itemID: "header:power") }
         wakeClearTask?.cancel()
         wakeClearTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(90))
             guard let self, self.wakingHostID == host.id else { return }
             self.wakingHostID = nil
+            self.rebuildFocus()   // the Wake button comes back
         }
     }
 
     func wakeHost(_ host: StreamHost) {
         guard let mac = host.macAddress else { return }
+        #if DEBUG
+        if DebugInstruments.fakeHost != nil { return }   // synthetic host: send nothing
+        #endif
         let targets = host.candidateAddresses
         // Burst off the main thread: hostname resolution can block, and Wi-Fi
         // drops broadcast UDP often enough that one packet is a coin flip —
@@ -1784,9 +1981,12 @@ final class AppState {
                         id: "header", kind: .shelf, itemIDs: ["header:addhost"]
                     ))
                 }
+                // An empty shelf offers its own next step instead (Pair or
+                // Wake Computer) — the same ids HomeView's empty panel draws.
                 sections.append(FocusSection(
                     id: "apps", kind: .shelf,
-                    itemIDs: apps.map { "app:\(appKey($0))" }
+                    itemIDs: emptyShelf.map(Self.emptyShelfFocusIDs)
+                        ?? apps.map { "app:\(appKey($0))" }
                 ))
                 // The six preset slots sit in a row UNDER the shelf — d-pad
                 // DOWN from a game reaches them, UP returns. Same section and
@@ -2114,8 +2314,15 @@ final class AppState {
                 applySlot(i)                    // no-op on an empty slot
             } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
-            } else if focus.focusedItemID == "header:power" {
+            } else if focus.focusedItemID == "header:power" || focus.focusedItemID == "shelf:wake" {
                 wakeSelectedHost()
+            } else if focus.focusedItemID == "shelf:pair" {
+                // "Pair Computer" starts pairing, as it says — not just the
+                // Computers menu with a second press still to make. The menu
+                // draws the PIN panel while pairing; Cancel lands back on this
+                // computer's row (3H review: Pair Computer only opened the menu).
+                openHostMenu()
+                if let host = selectedHost, needsPairing(host) { beginPairing(host) }
             } else if focus.focusedItemID == "header:restart" {
                 requestRestartPC()
             } else if let app = focusedApp {
@@ -2867,3 +3074,30 @@ final class AppState {
         }
     }
 }
+
+#if DEBUG
+extension AppState {
+    /// `VL_FAKE_HOST` (see DebugInstruments): one synthetic "Gaming PC" in the
+    /// requested state, plus the server info that state implies.
+    fileprivate static func debugFakeHost() -> (host: StreamHost, info: ServerInfo?, notResponding: Bool)? {
+        guard let fake = DebugInstruments.fakeHost else { return nil }
+        let host = StreamHost(
+            id: "debug:fake-host", name: "Gaming PC",
+            localAddress: "192.0.2.10", localPort: 47989,
+            remoteAddress: nil, remotePort: 47989,
+            manualAddress: "192.0.2.10", manualPort: 47989,
+            // RFC 7042 documentation MAC: present only where waking is possible.
+            macAddress: fake == .asleep ? Data([0x00, 0x00, 0x5E, 0x00, 0x53, 0x01]) : nil,
+            serverCertPEM: fake == .unpaired ? nil : Data("debug".utf8),
+            apps: [])
+        let info = fake == .onlineEmpty
+            ? ServerInfo(hostname: host.name, state: .free, currentGameID: 0,
+                         currentGameUUID: nil, pairStatus: true,
+                         serverCodecModeSupport: 0, httpsPort: 47984,
+                         appVersion: "debug", permissionMask: nil,
+                         virtualDisplayCapable: nil, macAddress: nil, hostUUID: nil)
+            : nil
+        return (host, info, fake == .notResponding)
+    }
+}
+#endif

@@ -55,6 +55,17 @@ struct HostMenuCard: View {
                 Text("\(state.hosts.count) of \(AppState.maxHosts)")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
+                // The header chip shows at most two lines of a problem; this is
+                // where it can always be read in full (UX-host-banner-truncates).
+                if let error = state.hostError {
+                    Text(error)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 420)
+                        .padding(.top, 4)
+                }
             }
 
             // The computer you're on comes first, set off by a hairline from
