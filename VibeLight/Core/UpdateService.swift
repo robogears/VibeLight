@@ -47,7 +47,19 @@ final class UpdateService {
     private(set) var phase: Phase = .idle
     private(set) var available: Release?
     /// The unpacked, verified new bundle waiting to be swapped in on Restart.
-    @ObservationIgnored private var stagedApp: URL?
+    @ObservationIgnored private var staged: StagedUpdate?
+
+    /// What was checked at download time, so Restart can confirm it is still
+    /// exactly that bundle. (audit FS-update-swap-unchecked-stage)
+    struct StagedUpdate: Sendable {
+        var app: URL
+        /// CFBundleShortVersionString as read from the staged bundle itself.
+        var version: String?
+        /// SHA-256 of the main executable. Its code signature binds the hashes
+        /// of Info.plist and every sealed resource, so with a passing
+        /// `codesign --verify` this pins the whole bundle as downloaded.
+        var fingerprint: String
+    }
 
     nonisolated private static let owner = "robogears"
     nonisolated private static let repo = "VibeLight"
@@ -106,7 +118,7 @@ final class UpdateService {
         // leftovers — never while THIS session holds (or is about to produce) a
         // staged bundle. Detached: recursively deleting a ~100 MB staged bundle
         // on the main actor would freeze the launcher.
-        if silent, stagedApp == nil {
+        if silent, staged == nil {
             Task.detached(priority: .utility) { Self.sweepStaleArtifacts() }
         }
         phase = .checking
@@ -170,7 +182,7 @@ final class UpdateService {
             // freezing the whole launcher (spinning beachball, dead controller
             // input) for the duration. The helpers are nonisolated pure
             // functions over their arguments, so the hop is safe.
-            stagedApp = try await Task.detached(priority: .userInitiated) {
+            staged = try await Task.detached(priority: .userInitiated) {
                 try Self.unpackAndValidate(zipURL: zip, expectedVersion: release.version)
             }.value
             phase = .readyToInstall
@@ -193,27 +205,53 @@ final class UpdateService {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: fm.temporaryDirectory, includingPropertiesForKeys: nil) else { return }
-        for entry in entries where entry.lastPathComponent.hasPrefix("vibelight-update-") {
+        for entry in staleArtifacts(in: entries, runningBundle: Bundle.main.bundleURL) {
             try? fm.removeItem(at: entry)
+        }
+    }
+
+    /// The sweep's pure rule: every "vibelight-update-" entry EXCEPT one that
+    /// holds the running app. When an install into an empty Applications folder
+    /// fails, the relauncher's rollback can only open the staged copy itself,
+    /// which lives in such a folder — and that copy's own launch sweep then
+    /// deleted the app it was running from (stream helper included).
+    /// Symlinks are resolved first because temp paths reach us both as
+    /// /var/folders/… and /private/var/folders/….
+    /// (audit FS-update-rollback-opens-self-deleting-copy)
+    nonisolated static func staleArtifacts(in entries: [URL], runningBundle: URL) -> [URL] {
+        let running = runningBundle.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        return entries.filter { entry in
+            guard entry.lastPathComponent.hasPrefix("vibelight-update-") else { return false }
+            let folder = entry.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            return !running.starts(with: folder)
         }
     }
 
     /// "Restart Now": swap the staged bundle into place and relaunch it. The
     /// relauncher waits for us to exit first, so we quit right after handing off.
     func installStagedUpdate() {
-        guard let newApp = stagedApp else { return }
+        guard let staged else { return }
         phase = .installing
         let destination = installDestination
+        let original = Bundle.main.bundleURL
         Task {
             do {
                 // Off-main for the same reason as unpackAndValidate — this spawns
                 // the relauncher and touches the filesystem.
                 try await Task.detached(priority: .userInitiated) {
-                    try Self.stageRelaunch(replacing: destination, with: newApp)
+                    // The staged copy may have waited days in the temp folder,
+                    // which macOS prunes. Confirm it is still exactly the bundle
+                    // that was checked at download before quitting for the swap
+                    // — the relauncher's own final verify only checks the
+                    // signature it has just re-applied. (audit FS-update-swap-unchecked-stage)
+                    try Self.revalidateStagedBundle(staged)
+                    try Self.stageRelaunch(replacing: destination, with: staged.app, original: original)
                 }.value
                 try? await Task.sleep(for: .milliseconds(400))
                 NSApp.terminate(nil)
             } catch {
+                // A stale stage is useless — drop it so "Try Again" downloads afresh.
+                if case UpdateError.stagedChanged = error { self.staged = nil }
                 phase = .failed(Self.message(for: error))
             }
         }
@@ -377,7 +415,7 @@ final class UpdateService {
 
     // MARK: - Unpack + validate
 
-    nonisolated private static func unpackAndValidate(zipURL: URL, expectedVersion: String) throws -> URL {
+    nonisolated private static func unpackAndValidate(zipURL: URL, expectedVersion: String) throws -> StagedUpdate {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("vibelight-update-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -406,20 +444,56 @@ final class UpdateService {
         // Integrity ONLY — the ad-hoc seal must be internally consistent (catches
         // a corrupt download). This is NOT an authenticity check (see class doc).
         try runTool("/usr/bin/codesign", ["--verify", "--deep", app.path])
+        let staged = StagedUpdate(app: app, version: info?["CFBundleShortVersionString"] as? String,
+                                  fingerprint: try bundleFingerprint(of: app))
         success = true
-        return app
+        return staged
+    }
+
+    /// SHA-256 of the bundle's main executable (named by CFBundleExecutable).
+    nonisolated static func bundleFingerprint(of app: URL) throws -> String {
+        let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        guard let executable = info?["CFBundleExecutable"] as? String, !executable.isEmpty else {
+            throw UpdateError.badPackage("The update is missing its app executable.")
+        }
+        return try sha256Hex(ofFileAt: app.appendingPathComponent("Contents/MacOS/\(executable)"))
+    }
+
+    /// Run just before the swap: the staged bundle must still exist, still be
+    /// VibeLight at the version it had then, still be byte-for-byte the executable
+    /// fingerprinted at download, and still pass the same integrity check — so
+    /// a pruned, half-deleted or swapped-out stage is refused BEFORE the app
+    /// quits and the installed copy is touched. Same `codesign --verify --deep`
+    /// flags as at download, which real releases are known to pass.
+    /// (audit FS-update-swap-unchecked-stage)
+    nonisolated static func revalidateStagedBundle(_ staged: StagedUpdate) throws {
+        let app = staged.app
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: app.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { throw UpdateError.stagedChanged }
+        let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        guard (info?["CFBundleIdentifier"] as? String) == "com.vibelight.app",
+              (info?["CFBundleShortVersionString"] as? String) == staged.version,
+              (try? bundleFingerprint(of: app)) == staged.fingerprint else {
+            throw UpdateError.stagedChanged
+        }
+        do {
+            try runTool("/usr/bin/codesign", ["--verify", "--deep", app.path])
+        } catch {
+            throw UpdateError.stagedChanged
+        }
     }
 
     // MARK: - Relaunch
 
     /// Writes a self-contained relauncher, launches it detached, and returns.
     /// Paths are passed as argv (never string-baked) so spaces/quotes are safe.
-    nonisolated private static func stageRelaunch(replacing dest: URL, with newApp: URL) throws {
+    nonisolated private static func stageRelaunch(replacing dest: URL, with newApp: URL, original: URL) throws {
         let script = """
         #!/bin/bash
-        # VibeLight self-updater relauncher. Args: <old-pid> <new-app> <dest>.
+        # VibeLight self-updater relauncher. Args: <old-pid> <new-app> <dest> <original-app>.
         trap '' HUP TERM
-        OLD_PID="$1"; NEW_APP="$2"; DEST="$3"
+        OLD_PID="$1"; NEW_APP="$2"; DEST="$3"; ORIG_APP="$4"
         LOGDIR="$HOME/Library/Logs/VibeLight"; mkdir -p "$LOGDIR"
         exec >> "$LOGDIR/update.log" 2>&1
         echo "=== $(date) update pid=$OLD_PID ==="
@@ -429,6 +503,15 @@ final class UpdateService {
         # Still alive after the wait? Abort — never swap a live bundle out.
         if kill -0 "$OLD_PID" 2>/dev/null; then
           echo "app did not exit; aborting"; open "$DEST"; cleanup; exit 1
+        fi
+        # Last look at the staged copy before anything is moved: the app checked
+        # it moments ago, but the post-install verify below can only confirm the
+        # signature it re-applies itself, so damage must be caught HERE, while
+        # the installed copy is still untouched. (FS-update-swap-unchecked-stage)
+        if ! codesign --verify --deep "$NEW_APP"; then
+          echo "staged update failed verification; nothing changed"
+          if [ -e "$DEST" ]; then open "$DEST"; else open "$ORIG_APP"; fi
+          cleanup; exit 1
         fi
         mkdir -p "$(dirname "$DEST")"
         # Back up an existing install; a fresh install to /Applications has none.
@@ -442,8 +525,12 @@ final class UpdateService {
           # $BAK is empty exactly when $DEST did not exist before the swap — a
           # first install into /Applications. Without a fallback that path
           # removed the half-written bundle, opened nothing, and left the user
-          # with no app at all after we had already quit.
+          # with no app at all after we had already quit. Reopen the copy the
+          # user was running (it was never touched); the staged copy is only
+          # the last resort, because it lives in a temp folder that gets
+          # cleaned up. (FS-update-rollback-opens-self-deleting-copy)
           if [ -n "$BAK" ]; then mv "$BAK" "$DEST"; open "$DEST"
+          elif [ -n "$ORIG_APP" ] && [ -d "$ORIG_APP" ]; then open "$ORIG_APP" 2>/dev/null || open "$NEW_APP" 2>/dev/null || true
           else open "$NEW_APP" 2>/dev/null || true; fi
           cleanup; exit 1
         }
@@ -462,7 +549,7 @@ final class UpdateService {
         cleanup
         """
         try Self.launchDetachedScript(script, prefix: "vibelight-relaunch", args: [
-            String(ProcessInfo.processInfo.processIdentifier), newApp.path, dest.path,
+            String(ProcessInfo.processInfo.processIdentifier), newApp.path, dest.path, original.path,
         ])
     }
 
@@ -517,6 +604,8 @@ enum UpdateError: Error {
     case noAsset
     case badPackage(String)
     case tool(String)
+    /// The downloaded update changed or vanished between download and Restart.
+    case stagedChanged
 
     var message: String {
         switch self {
@@ -526,6 +615,7 @@ enum UpdateError: Error {
         case .noAsset: "The latest release has no macOS download."
         case .badPackage(let why): "The update couldn't be verified: \(why)"
         case .tool(let why): "Update failed: \(why)"
+        case .stagedChanged: "The downloaded update was changed or removed since it was checked, so nothing was installed. Choose Try Again to download it again."
         }
     }
 }
