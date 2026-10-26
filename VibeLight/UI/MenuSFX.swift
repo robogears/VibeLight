@@ -41,7 +41,22 @@ final class MenuSFX {
     #if DEBUG
     /// Test hook: how many `play` calls got past the Menu Sounds gate.
     private(set) var playsPastGate = 0
+    /// Test hook: whether the engine is driving the audio output right now.
+    var isEngineRunning: Bool { engine.isRunning }
+    /// Test hook: silence the output so a test can start the engine without
+    /// making a sound.
+    func muteForTests() { engine.mainMixerNode.outputVolume = 0 }
     #endif
+
+    /// How long after the last sound finishes the engine keeps the output open.
+    /// A running engine renders silence to the speakers forever: it costs
+    /// battery, and on the Mac it keeps the audio hardware awake, which holds
+    /// off idle sleep even while the window is minimised. Pausing frees that,
+    /// and the next `play` restarts it. Ten seconds rather than two so a burst
+    /// of navigation with reading pauses in between never pays the restart on
+    /// its first tick. (LIF-menu-sfx-engine-never-paused)
+    var idlePauseDelay: Duration = .seconds(10)
+    private var idlePauseTask: Task<Void, Never>?
 
     private static let sampleRate: Double = 44_100
 
@@ -130,6 +145,23 @@ final class MenuSFX {
             }
         }
         player.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        pauseWhenIdle(afterSoundLasting: Double(buffer.frameLength) / Self.sampleRate)
+    }
+
+    /// Re-arms the one idle timer: each sound pushes the pause back, so the
+    /// engine only pauses once nothing has played for `idlePauseDelay` after
+    /// the latest sound ends — never mid-sound. `pause()` keeps the engine
+    /// prepared, and the `!engine.isRunning` branch in `play` restarts it.
+    /// (LIF-menu-sfx-engine-never-paused)
+    private func pauseWhenIdle(afterSoundLasting seconds: Double) {
+        idlePauseTask?.cancel()
+        let wait = Duration.milliseconds(Int(seconds * 1000)) + idlePauseDelay
+        idlePauseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self else { return }
+            self.idlePauseTask = nil
+            if self.engine.isRunning { self.engine.pause() }
+        }
     }
 
     /// Renders consecutive sine segments (`hz`, `duration`) into one buffer with
