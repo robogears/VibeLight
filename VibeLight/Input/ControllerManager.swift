@@ -111,6 +111,11 @@ final class ControllerManager {
     /// so PS/Home, Share and Options reach the game) to a controller that
     /// arrived after the stream had already started.
     @ObservationIgnored var onPadConnected: (@MainActor () -> Void)?
+    /// Fired when a hardware keyboard disconnects. A key held at that moment
+    /// never delivers its release (just like a vanished pad's buttons), so the
+    /// stream engine uses this to send key-ups for everything still down on
+    /// the host. (LIF-stream-keys-stuck-after-keyboard-loss)
+    @ObservationIgnored var onKeyboardDisconnected: (@MainActor () -> Void)?
 
     /// Stream passthrough. While non-nil, launcher navigation is fully unwired
     /// (no focus moves, no haptics, no chords) and every state change on any
@@ -274,7 +279,10 @@ final class ControllerManager {
         // A hardware keyboard connected/disconnected — (re)install the raw key
         // handler so mid-stream keyboard hot-plug forwards to the host.
         observe(.GCKeyboardDidConnect) { [weak self] in self?.wireKeyboard() }
-        observe(.GCKeyboardDidDisconnect) { [weak self] in self?.wireKeyboard() }
+        observe(.GCKeyboardDidDisconnect) { [weak self] in
+            self?.wireKeyboard()
+            self?.onKeyboardDisconnected?()
+        }
         // CRITICAL: releases are dropped while we are backgrounded (the
         // stream/OS owns the foreground), so any held/repeat state from before
         // the handoff is stale. Without this reset, a d-pad held across the

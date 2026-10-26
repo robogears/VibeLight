@@ -70,6 +70,17 @@ final class InProcessStreamEngine: StreamEngine {
                 MoonlightSession.resumeAudio()
             }
         }
+        // Control Center, Notification Center or an alert taking over the
+        // screen mid-stream: key releases made while we're inactive never
+        // reach us, so a key held as the overlay came down would stay held on
+        // the PC. Release everything: a key still physically down reads as
+        // up until it's pressed again, which beats one stuck down for good.
+        // (LIF-stream-keys-stuck-after-keyboard-loss)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.releaseHeldKeys() }
+        }
         // Track where the on-screen keyboard actually is, so only the area it
         // covers stops accepting stream touches. willChangeFrame covers every
         // case in one callback: appearing, dismissing, docking, undocking,
@@ -508,6 +519,11 @@ final class InProcessStreamEngine: StreamEngine {
                 // snapshot stays latched in the game otherwise.
                 self?.reconcileSlots()
             }
+            cm.onKeyboardDisconnected = { [weak self] in
+                // The keys it was holding will never report a release —
+                // send them now or the game keeps W (or Ctrl) held down.
+                self?.releaseHeldKeys()
+            }
             cm.onPadConnected = { [weak self] in
                 // A pad that arrives DURING a stream never went through the
                 // setup above, so its PS/Home, Share and Options presses kept
@@ -521,6 +537,7 @@ final class InProcessStreamEngine: StreamEngine {
             cm.streamForwarder = nil
             cm.keyboardForwarder = nil
             cm.onPadDisconnected = nil
+            cm.onKeyboardDisconnected = nil
             cm.onPadConnected = nil
             cancelQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
