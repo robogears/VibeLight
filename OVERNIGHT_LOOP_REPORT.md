@@ -1,6 +1,8 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 2 done · build+tests GREEN · last: helper repo repointed; audit results recovered, final sweep running
+**TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
+
+STATUS: STOPPED · cycle 0 · 3 done · build+tests GREEN · last: stopped by you — audit report delivered, fix pass not started
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -17,6 +19,8 @@ STATUS: LOOPING · cycle 0 · 2 done · build+tests GREEN · last: helper repo r
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 13:05 Stopped by you. Audit sweep 4, fix group 1 and the visual-page design were stopped; fix group 1 had made no changes, so its working copy was removed. The audit report was finalised with sweep 3 included and marked "not shown dry".
+- 26 Oct 12:55 Audit sweep 3 finished: 2 new low-severity iPad keyboard findings survived their skeptics (wrong symbols on non-US PC layouts; split or floating keyboards probably bypass the touch guard). Fix-pass backlog written into the plan.
 - 26 Oct 12:50 VibeLight now finds the stream helper beside it in ~/Developer (scripts look next to the repo, with a `VIBELIGHT_HELPER_DIR` override), the temporary link at the old path is gone, and the Mac build is green.
 - 26 Oct 12:30 Resumed after a reboot and a usage-limit pause. The audit's result file was wiped by the reboot; all 120 verified items were rebuilt from the run's journal. Its last sweep (3 finders) had died on the usage limit and is re-running. An attempt to resume the whole run re-started it from scratch instead of replaying, so I stopped it within a minute.
 - 23:30 `moonlight-ios-reference` moved back to ~/Documents (you asked: not needed — it's a documentation-only reference; nothing builds from it). Unchanged: same commit, 561 files, git healthy.
@@ -31,7 +35,7 @@ STATUS: LOOPING · cycle 0 · 2 done · build+tests GREEN · last: helper repo r
 - Cycle 0: mission in progress
 
 ## Completed
-- Total: 2 · recent: ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
+- Total: 3 · recent: ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
 
 ## Blocked (environment)
 - (none)
@@ -56,7 +60,7 @@ STATUS: LOOPING · cycle 0 · 2 done · build+tests GREEN · last: helper repo r
   - macOS: full suite 132 tests, 0 failures. Runtime note: 3 PinDurabilityTests log "should not be called on the main thread".
   - iOS: simulator build succeeds with 6 compiler warnings — `UIScreen.screens` deprecated (ExternalScenePlacement.swift:117); unused `resignFirstResponder()` result (StreamKeyboard.swift:43); main-actor call from a nonisolated context (VibeLightApp.swift:42); `PairTLSDelegate` / `PinnedTrust` must restate `@unchecked Sendable` (HostPairing.swift:270, MoonDeckBuddyClient.swift:264 — introduced in v0.2.1's byte-cap change); a doc-comment parameter mismatch (MoonlightSession.h:46).
   - iOS tests: 10 tests, 0 failures (`IOSIdentityTests` skipped on purpose).
-- Latest: same as baseline.
+- Latest (26 Oct, after the helper repoint): macOS build + 132 tests GREEN.
 
 ## Usage-limit waits
 - (none)
@@ -73,6 +77,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 2, "shelved": 0, "blocked": 0,
- "state": "looping", "build": "green"}
+ "cycles": 0, "done": 3, "shelved": 0, "blocked": 0,
+ "state": "stopped", "build": "green"}
 ```

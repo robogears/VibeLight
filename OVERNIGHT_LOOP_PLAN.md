@@ -1,11 +1,11 @@
 # Overnight Loop Plan — 2026-10-21
 
 <!-- run metadata — recovery reads this first; update it at the end of every turn -->
-STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
+STATE: STOPPED             # stopped by the owner, 26 Oct 2026
 PROJECT_PATH: ~/Developer/VibeLight
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792610686
-LAST_TURN_EPOCH: 1792614105
+LAST_TURN_EPOCH: 1793004200
 CEILING_EPOCH: none
 BASE_BRANCH: main
 BRANCH: codeX
@@ -30,9 +30,9 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 
 ## Mission (official items — do these first)
 - [x] 0. Remove the stray `f` at VibeLightTests/FocusEngineTests.swift:62 that stopped the test target compiling (baseline QUA-focus-test-typo-d5283e8d) — 1m. Restored the committed file exactly; no diff to commit.
-- [~] 1. Deep /audit, FULL scope ("look for everything, ui, ux, vulnerabilities, literally everything") — done when: Markdown report saved privately in <git-dir>/overnight-loop/audit-2026-10-21/, the visual breakdown published as a private Artifact, provenance + summary + findings index posted in chat, and every finding tagged New / Still-open / Fixed / Refuted against the 9 Sep baseline — STARTED 1792610300 · attempt 1 · approach: read-only workflow on the main checkout · active: 55m · wip: none · sweeps 1–3 done (122 items, every one skeptic-verified; sweep 3 still found 2 → not dry); sweep 4 running as workflow wf_4ad0b85e-329 (reads source at 8c51dc7, so fix lanes can proceed); visual page being designed by a background agent; report drafted privately
+- [x] 1. Deep /audit, FULL scope — 70m. Report written privately (<git-dir>/overnight-loop/audit-2026-10-21/AUDIT-REPORT-2026-10-26.md): 0 critical · 0 high · 18 medium · 70 low · 27 suggestion; 1 fixed since 9 Sep, 4 refuted, 2 unsettled; all 26 September findings re-checked. NOT finished: sweep 4 (the audit is not yet shown dry) and the visual page — both stopped with the loop.
 - [x] 2. Move the helper repo to ~/Developer and explain the sibling repos — 14m. Helper moved (HEAD, 1,810 files, fsck identical); `scripts/embed-helper.sh` and `scripts/ios/build-deps.sh` now find it beside the repo (`$ROOT/../vibelight-moonlight-helper`, override with `VIBELIGHT_HELPER_DIR`) instead of a hard-coded path; Swift dev-build fallback, CLAUDE.md and the iOS plan doc updated; temporary link removed; macOS build green. `moonlight-ios-reference` stays in ~/Documents (documentation-only, owner's call).
-- [~] 3. Fix pass on the audit's verified findings — done when: every Safe finding is fixed (with a test where testable) and committed as `loop: audit-fix — <ID>`; Needs-verification findings get their non-drastic version plus a Recommendation; design/visual findings are PARKED, not built; MARKETING_VERSION is 0.2.2. — STARTED 1793011400 · attempt 1 · approach: one fix group at a time, each through implement → review → skeptic → polish → last review in its own worktree lane, then merged, re-verified, committed, pushed · active: 5m · wip: none · delegated: workflow wf_65cf5f57-7b8 (task wjlumlbdb) · ~/Developer/VibeLight-lane-g1 · loop/g1-saved-data
+- [ ] 3. Fix pass on the audit's verified findings — done when: every Safe finding is fixed (with a test where testable) and committed as `loop: audit-fix — <ID>`; Needs-verification findings get their non-drastic version plus a Recommendation; design/visual findings are PARKED, not built; MARKETING_VERSION is 0.2.2. NOT STARTED: fix group 1 was launched and stopped within minutes with no changes made; its working copy was removed.
 <!-- open = [ ] or [~]; resume [~] first
      [~] N. <item> — STARTED <epoch> · attempt <n> · approach: <one line> · active: <m>m · wip: <hash|none> [· delegated: <task/run id> · <worktree/branch>] [· interrupted]
      [x] N. <item> — <active>m
@@ -42,7 +42,7 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 ## Ladder backlog (self-generated when the mission is exhausted)
 <!-- Fix-pass groups from the 26 Oct audit. IDs + one-line titles only — the full report stays private in <git-dir>/overnight-loop/.
      Security-related items are named by area, not by how they could be misused. -->
-- [~] G1. Saved data never lost, bad values can't crash — DAT-added-hosts-latch-forever-65fb270f, DAT-buddy-config-latch-silent-70e69eae, DAT-preset-recovery-loss-f4edc9a4, DAT-settings-reset-overwrites-original-a64bff9c, DAT-stored-size-overflow-a8df08bd, NET-negative-buddy-port-eb2859c2, QUA-fps-offgrid-jump-eeb0f080 — done when: unreadable saved entries survive every save, new changes persist, stored out-of-range values are clamped, tests prove each (fail without the fix)
+- [ ] G1. Saved data never lost, bad values can't crash — DAT-added-hosts-latch-forever-65fb270f, DAT-buddy-config-latch-silent-70e69eae, DAT-preset-recovery-loss-f4edc9a4, DAT-settings-reset-overwrites-original-a64bff9c, DAT-stored-size-overflow-a8df08bd, NET-negative-buddy-port-eb2859c2, QUA-fps-offgrid-jump-eeb0f080 — done when: unreadable saved entries survive every save, new changes persist, stored out-of-range values are clamped, tests prove each (fail without the fix)
 - [ ] G2. Pairing trust hardening — NET-unpinned-host-full-use-48acc13a, ERR-pairing-error-category-797eda5b, DAT-host-uuid-spoofs-synthetic-id-a209fe14, NET-buddy-pin-auto-dropped-490cdb57 — done when: an unpaired computer can only be asked whether it is paired; Forget also unpairs on the PC (best effort); pairing errors are labelled correctly
 - [ ] G3. Stream start/stop lifecycle — NET-wrong-game-resume-1203de39, LIF-stale-launch-restart-3aa8d709, LIF-quit-cancels-kept-game-950096d0, LIF-ios-background-quit-stuck-ending-b572b510, LIF-stale-session-callback-after-quit-32c8351a, ERR-silent-ios-quit-78297871, NET-stale-switch-snapshot-3c07c421, ERR-stale-host-error-7eadedb4, QUA-stream-end-flag-ignored-57e6197a — done when: switching games starts the chosen game, leaving/quitting cancels in-flight launches, stale results are ignored (non-drastic where device-only; live checks written)
 - [ ] G4. Keyboard and controller dead ends — QUA-keyboard-settings-tabs-553f2493, QUA-address-field-focus-27c153bd, QOL-controller-forget-computer-803c44b7, QUA-cmd-comma-repeat-toggles-settings-b9ce3c71, QUA-controller-pointer-mode-93ddc141, QUA-armed-destructive-confirms-d3559964, QUA-moondeck-cancel-becomes-restart-d0cf101d, QUA-touch-quit-hold-refires-7b5b2cc4, QUA-quit-app-hint-hides-hold-8f8a23ba, QUA-onboarding-back-hold-swallowed-34f18427, QUA-home-focus-lands-on-restart-67703195, QOL-select-toggles-row-3c32bb98, QUA-host-select-stale-id-89b0a9ab, LIF-held-input-survives-deactivation-446acd5f
