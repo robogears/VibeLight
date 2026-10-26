@@ -2,7 +2,7 @@ import Foundation
 import Security
 import CryptoKit
 
-/// Turns the PEM cert/key pair imported from Moonlight into a `SecIdentity`
+/// Turns VibeLight's own PEM cert/key pair (IdentityStore) into a `SecIdentity`
 /// usable for mTLS against the host's HTTPS API (port 47984).
 ///
 /// Strategy (verified on this machine): PEM → PKCS#12 via the system openssl
@@ -180,8 +180,9 @@ final class ClientIdentityProvider: @unchecked Sendable {
     // MARK: - P12 cache (macOS)
 
     /// Passphrase derived from the key material itself — stable across launches,
-    /// unique per pairing, never stored separately. The P12 sits beside a
-    /// plaintext-PEM Moonlight plist anyway; this is parity, not new exposure.
+    /// unique per pairing, never stored separately. The P12 sits beside the
+    /// plaintext-PEM identity files (and the helper's copy) anyway; this is
+    /// parity, not new exposure.
     private var p12Passphrase: String {
         let digest = SHA256.hash(data: identity.privateKeyPEM + identity.certificatePEM)
         return digest.map { String(format: "%02x", $0) }.prefix(4).joined()

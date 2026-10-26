@@ -698,7 +698,7 @@ final class InProcessStreamEngine: StreamEngine {
             flags |= 0x0010
         }
 
-        // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~2s (with a
+        // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~1s (with a
         // progress ring, like the launcher's hold-to-quit) so it's deliberate and
         // gives feedback. While held, the buttons are suppressed (not forwarded
         // to the game). The game keeps running on the PC.
