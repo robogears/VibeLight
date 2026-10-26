@@ -141,7 +141,7 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - Latest (26 Oct, after the helper repoint): macOS build + 132 tests GREEN.
 
 ## Usage-limit waits
-- (none)
+- 26 Oct ~20:30–21:00: the session limit hit while visual batch 3H was mid-build; its three agents stopped. Its half-done work was saved as an unverified WIP commit in its lane and the batch resumed at 21:05. The fix workflow now reports "not mergeable" whenever an agent didn't finish (before, it said mergeable even when nothing ran — caught here, nothing was merged).
 
 ## Morning merge — for YOU (the loop never runs these)
 ```sh
