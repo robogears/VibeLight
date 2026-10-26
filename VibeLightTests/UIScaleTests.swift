@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import VibeLight
 
 /// The launcher's canvas scale (UX-ios-scale-shrinks-text-targets): iPad and
@@ -74,5 +75,56 @@ final class UIScaleTests: XCTestCase {
         XCTAssertEqual(InterfaceSize.allCases.map(\.label), ["Default", "Large"])
         XCTAssertEqual(InterfaceSize.large.factor, 1.25)
         XCTAssertEqual(InterfaceSize.default.factor, 1.0)
+    }
+
+    /// Polish 1A: the 13 pt labels and 44 pt targets are for the scaled-down
+    /// iPad canvas. A Mac draws the canvas at 1.0× and keeps its original
+    /// sizes (10–12 pt labels, 34–38 pt arrows), never touch-sized targets.
+    func testMacKeepsItsSizesAndIOSGetsTouchSizes() {
+        for mac: CGFloat in [10, 11, 12] {
+            XCTAssertEqual(Theme.labelSize(mac, on: .macOS), mac, "Mac \(mac) pt label")
+            XCTAssertEqual(Theme.labelSize(mac, on: .iOS), 13, "iOS \(mac) pt label")
+        }
+        XCTAssertEqual(Theme.labelSize(15, on: .iOS), 15, "iOS never shrinks a bigger label")
+        XCTAssertEqual(Theme.perPlatform(iOS: CGFloat(44), macOS: 34, on: .macOS), 34)
+        XCTAssertEqual(Theme.perPlatform(iOS: CGFloat(44), macOS: 34, on: .iOS), 44)
+        let macTrash: CGFloat? = Theme.perPlatform(iOS: 44, macOS: nil, on: .macOS)
+        XCTAssertNil(macTrash, "the Mac trash glyph keeps its own size")
+        // This test target is the macOS app, so the defaults take the Mac branch.
+        XCTAssertEqual(Theme.labelSize(10), 10)
+        XCTAssertEqual(Theme.perPlatform(iOS: CGFloat(44), macOS: 34), 34)
+    }
+
+    /// Polish 1A: a preset chip on an iPad's 1440-wide canvas has about 134 pt
+    /// for its summary (about 107 pt on the active chip, beside the check mark),
+    /// and about 86 / 59 pt at Large on a 13-inch iPad. "1080p · 144 fps ·
+    /// 87 Mbps" is about 162 pt at 13 pt, so the chip needs shorter forms to
+    /// fall back to instead of cutting the line off with "…".
+    func testPresetSummaryHasShorterFormsForNarrowChips() {
+        let owner = StreamPreset(id: "p", name: "Mine",
+                                 settings: StreamSettings(width: 1920, height: 1080, fps: 144,
+                                                          bitrateKbps: 87_500))
+        XCTAssertEqual(owner.summary, "1080p · 144 fps · 87 Mbps")
+        XCTAssertEqual(owner.shortSummary, "1080p · 144 fps")
+        XCTAssertEqual(owner.resolutionLabel, "1080p")
+        let fourK = StreamPreset(id: "q", name: "TV",
+                                 settings: StreamSettings(width: 3840, height: 2160, fps: 60,
+                                                          bitrateKbps: 150_000))
+        XCTAssertEqual(fourK.summary, "4K · 60 fps · 150 Mbps")
+        XCTAssertEqual(fourK.shortSummary, "4K · 60 fps")
+        XCTAssertEqual(fourK.resolutionLabel, "4K")
+        let odd = StreamPreset(id: "r", name: "Odd", settings: StreamSettings(width: 1600, height: 900))
+        XCTAssertEqual(odd.resolutionLabel, "900p")
+
+        // Measured in the system font the chips use: the short form fits the
+        // active chip at Default on every iPad, the resolution fits at Large.
+        let font = NSFont.systemFont(ofSize: Theme.labelSize(11, on: .iOS), weight: .medium)
+        func width(_ s: String) -> CGFloat { (s as NSString).size(withAttributes: [.font: font]).width }
+        let widest = StreamPreset(id: "w", name: "W",
+                                  settings: StreamSettings(width: 2560, height: 1440, fps: 120,
+                                                           bitrateKbps: 150_000))
+        XCTAssertGreaterThan(width(widest.summary), 134, "the full summary really is too wide")
+        XCTAssertLessThan(width(widest.shortSummary), 107)
+        XCTAssertLessThan(width(widest.resolutionLabel), 59)
     }
 }

@@ -86,7 +86,7 @@ private struct SettingsTabBar: View {
                     .frame(width: 1, height: 26)
                     .padding(.horizontal, 6)
                 Text("PRESETS")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.system(size: Theme.labelSize(10), weight: .heavy, design: .rounded))
                     .tracking(1.5)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize()
@@ -225,7 +225,8 @@ private struct SettingsRowView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear)
-                        .frame(width: 44, height: 44)
+                        .frame(width: Theme.perPlatform(iOS: 44, macOS: 34),
+                               height: Theme.perPlatform(iOS: 44, macOS: 34))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -244,7 +245,8 @@ private struct SettingsRowView: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
                                          : (showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear))
-                        .frame(width: 44, height: 44)
+                        .frame(width: Theme.perPlatform(iOS: 44, macOS: 34),
+                               height: Theme.perPlatform(iOS: 44, macOS: 34))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)

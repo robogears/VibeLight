@@ -253,7 +253,8 @@ private struct OnboardingQualityRow: View {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(focused ? .white : .white.opacity(0.6))
-                .frame(width: 44, height: 44)
+                .frame(width: Theme.perPlatform(iOS: 44, macOS: 36),
+                       height: Theme.perPlatform(iOS: 44, macOS: 36))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -308,11 +309,12 @@ private struct MiniPresetChip: View {
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(highlighted ? .white : Theme.textSecondary)
             Text(label ?? "Empty")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .font(.system(size: Theme.labelSize(11), weight: .medium, design: .rounded))
                 .foregroundStyle(highlighted ? .white.opacity(0.9) : Theme.textSecondary.opacity(0.6))
                 .lineLimit(1)
         }
-        .frame(width: 112, height: 64)
+        .frame(width: Theme.perPlatform(iOS: 112, macOS: 96),
+               height: Theme.perPlatform(iOS: 64, macOS: 60))
         .background(highlighted ? Theme.accent.opacity(0.85) : Theme.surface.opacity(0.6),
                     in: RoundedRectangle(cornerRadius: 12))
         .overlay {

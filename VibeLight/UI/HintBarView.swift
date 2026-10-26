@@ -8,7 +8,7 @@ struct GlyphBadge: View {
     var body: some View {
         if let cap = glyph.keyCap {
             Text(cap)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: Theme.labelSize(12), weight: .heavy, design: .rounded))
                 .foregroundStyle(Theme.textPrimary.opacity(0.9))
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -58,7 +58,9 @@ private struct HintChip: View {
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary.opacity(0.95))
                 .padding(.horizontal, 18)
-                .padding(.vertical, 13)   // ≈ 44 pt tall, Apple's touch minimum (UX-ios-scale-shrinks-text-targets)
+                // Authored ≈ 44 pt tall; the iPad canvas scale draws it at
+                // 35–42 pt (UX-ios-scale-shrinks-text-targets). Touch only.
+                .padding(.vertical, 13)
                 .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
                 .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
                 .contentShape(Capsule())
@@ -71,7 +73,7 @@ private struct HintChip: View {
                     .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.vertical, Theme.perPlatform(iOS: 8, macOS: 5))
             .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }

@@ -211,10 +211,10 @@ private struct WakePCButton: View {
                     Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
                 }
                 .symbolEffect(.pulse, options: .repeating, isActive: waking)
-                // The 38 pt circle stays the look; the padding makes the tap
-                // area 44 pt, Apple's touch minimum once the canvas is scaled
-                // (UX-ios-scale-shrinks-text-targets).
-                .padding(3)
+                // The 38 pt circle stays the look; on iOS the padding authors a
+                // 44 pt tap area, which the iPad canvas scale draws at 35–42 pt
+                // (UX-ios-scale-shrinks-text-targets). The Mac keeps 38 pt.
+                .padding(Theme.perPlatform(iOS: 3, macOS: 0))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -245,7 +245,7 @@ private struct RestartPCButton: View {
                 .overlay {
                     Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
                 }
-                .padding(3)   // 44 pt tap area around the 38 pt circle, as Wake
+                .padding(Theme.perPlatform(iOS: 3, macOS: 0))   // as Wake
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -263,7 +263,7 @@ private struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 13, weight: .heavy, design: .rounded))
+            .font(.system(size: Theme.labelSize(12), weight: .heavy, design: .rounded))
             .tracking(1.2)
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
@@ -326,9 +326,10 @@ private struct PresetRow: View {
                 ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
                     PresetSlotChip(slot: slot)
                         // Equal flexible widths: six chips share the row and cap
-                        // at the old rail's 252pt (the full
-                        // "1440p · 120 fps · 100 Mbps" summary); on narrow
-                        // screens they compress together instead of wrapping.
+                        // at the old rail's 252pt (room for the full
+                        // "1440p · 120 fps · 100 Mbps" summary at 11 or 13 pt);
+                        // on narrow screens they compress together instead of
+                        // wrapping, and the summary shortens to fit.
                         .frame(maxWidth: 252)
                 }
             }
@@ -353,6 +354,13 @@ private struct PresetSlotChip: View {
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
     private var lit: Bool { isActive || isFocused }
 
+    private func summaryLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Theme.labelSize(11), weight: .medium))
+            .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
+            .lineLimit(1)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Text("\(slot + 1)")
@@ -368,10 +376,13 @@ private struct PresetSlotChip: View {
                                      : Theme.textSecondary.opacity(0.7))
                     .lineLimit(1)
                 if let preset {
-                    Text(preset.summary)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
-                        .lineLimit(1)
+                    // The first form that fits, so a narrow chip shows
+                    // "1080p · 144 fps" instead of "1080p · 144 fps · 8…".
+                    ViewThatFits(in: .horizontal) {
+                        summaryLine(preset.summary)
+                        summaryLine(preset.shortSummary)
+                        summaryLine(preset.resolutionLabel)
+                    }
                 } else {
                     // Invisible second line: keeps EMPTY chips the exact height
                     // of filled ones. Chips now sit side by side, where a
@@ -379,7 +390,7 @@ private struct PresetSlotChip: View {
                     // and the row's edges visibly wobble (fine in the old
                     // vertical rail, where heights never shared an edge).
                     Text(" ")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: Theme.labelSize(11), weight: .medium))
                         .hidden()
                 }
             }
