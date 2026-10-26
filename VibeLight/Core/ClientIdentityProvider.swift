@@ -126,8 +126,8 @@ final class ClientIdentityProvider: @unchecked Sendable {
     /// the process: the PC asked for the PIN, then stage 3 failed with
     /// "Couldn't read the client certificate." until a relaunch. Now an empty
     /// launch identity is re-read here, kept once found, and a keychain that
-    /// still can't answer throws a message saying to unlock and retry — before
-    /// the PC is ever contacted. (audit ERR-ios-pairing-empty-cert-snapshot)
+    /// still can't answer throws a message saying to retry — before the PC is
+    /// ever contacted. (audit ERR-ios-pairing-empty-cert-snapshot)
     func pairingCertificatePEM() throws -> Data {
         lock.lock()
         defer { lock.unlock() }
@@ -154,8 +154,15 @@ final class ClientIdentityProvider: @unchecked Sendable {
     }
 
     #if os(iOS)
-    static let keychainLockedMessage =
-        "VibeLight couldn't read its identity because this device was locked. Unlock it, then try pairing again."
+    /// Deliberately names no cause. The identity items are AfterFirstUnlock
+    /// and this runs when someone taps Pair, so the device is unlocked: an
+    /// `.unavailable` here comes from other keychain statuses (a missing
+    /// entitlement, errSecAuthFailed, errSecInternalError), and the old "this
+    /// device was locked, unlock it" named a cause and a fix that weren't true.
+    /// (audit ERR-ios-pairing-empty-cert-snapshot review)
+    static let keychainUnavailableMessage =
+        "VibeLight couldn't read its identity from this device's keychain. "
+        + "Try pairing again in a moment. If it keeps failing, quit and reopen VibeLight."
 
     /// What a pairing-time keychain re-read means. Read-only: an `.absent`
     /// here is NOT a cue to generate (that happens only at launch, in
@@ -163,7 +170,7 @@ final class ClientIdentityProvider: @unchecked Sendable {
     static func certificateForPairing(from lookup: IOSKeychainIdentity.Lookup) throws -> Data {
         switch lookup {
         case .found(let cert, _) where !cert.isEmpty: return cert
-        case .unavailable: throw IdentityError.unavailable(keychainLockedMessage)
+        case .unavailable: throw IdentityError.unavailable(keychainUnavailableMessage)
         case .found, .absent: throw IdentityError.unavailable(noIdentityMessage)
         }
     }

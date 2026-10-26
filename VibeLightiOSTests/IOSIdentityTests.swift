@@ -180,14 +180,21 @@ final class IOSIdentityTests: XCTestCase {
     }
 
     /// Pairing's re-read of an empty launch identity: a keychain that still
-    /// can't answer says to unlock and retry; nothing there asks for a relaunch
-    /// (which is where generation happens). (audit ERR-ios-pairing-empty-cert-snapshot)
+    /// can't answer says to retry; nothing there asks for a relaunch (which is
+    /// where generation happens). (audit ERR-ios-pairing-empty-cert-snapshot)
     func testPairingReReadSaysWhatToDo() throws {
         typealias P = ClientIdentityProvider
         XCTAssertEqual(try P.certificateForPairing(from: .found(cert: Data("C".utf8), key: Data())), Data("C".utf8))
 
-        XCTAssertThrowsError(try P.certificateForPairing(from: .unavailable(errSecInteractionNotAllowed))) {
-            XCTAssertEqual($0.localizedDescription, P.keychainLockedMessage)
+        // Pair is tapped on an unlocked device, so whatever status the keychain
+        // gives, the message must not claim the device was locked — it names
+        // no cause and says to try again. (review of the same finding)
+        for status in [errSecInteractionNotAllowed, errSecMissingEntitlement, errSecAuthFailed, errSecInternalError] {
+            XCTAssertThrowsError(try P.certificateForPairing(from: .unavailable(status))) {
+                let message = $0.localizedDescription
+                XCTAssertFalse(message.lowercased().contains("lock"), "status \(status): \(message)")
+                XCTAssertTrue(message.contains("Try pairing again"), message)
+            }
         }
         XCTAssertThrowsError(try P.certificateForPairing(from: .absent)) {
             XCTAssertEqual($0.localizedDescription, P.noIdentityMessage)
