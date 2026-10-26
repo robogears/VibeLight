@@ -923,6 +923,13 @@ final class AppState {
         pairing = nil
         setPairingKeepAwake(false)
         rebuildFocus()
+        // Back on the Computers list: land on the computer you're on, as
+        // openHostMenu does. The engine would restore its remembered row
+        // NUMBER, and pairing may have moved a different computer to the top.
+        if case .hosts = overlay,
+           let id = Self.hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedHostID) {
+            focus.focus(itemID: id)
+        }
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
