@@ -1,14 +1,13 @@
 import Foundation
 
-/// Resolves VibeLight's client identity, in priority order:
-/// 1. Moonlight's existing pairing (so users who already use Moonlight keep all
-///    their paired hosts working — zero setup).
-/// 2. VibeLight's own generated identity (persisted in Application Support).
-/// 3. A freshly generated RSA-2048 self-signed identity.
-///
-/// (3) is what lets a brand-new user — who has never installed Moonlight — pair
-/// hosts entirely inside VibeLight. Generation mirrors moonlight-qt's
-/// IdentityManager: CN="NVIDIA GameStream Client", 20-year self-signed cert.
+/// Resolves VibeLight's OWN client identity — never Moonlight's (v0.2.0 removed
+/// that import; see `resolve`):
+/// - macOS: the cert/key in Application Support, generated on first launch
+///   (RSA-2048 self-signed, mirroring moonlight-qt's IdentityManager:
+///   CN="NVIDIA GameStream Client", 20-year validity), then copied over the
+///   stream helper's identity in its own preferences domain.
+/// - iOS: an identity born in the keychain (see iOSIdentity).
+/// Every computer is paired with it in-app, by PIN.
 enum IdentityStore {
 
     static func resolve(moonlightIdentity: ClientIdentity?) -> ClientIdentity {
@@ -30,13 +29,14 @@ enum IdentityStore {
         // identity — generated on first launch, stored under Application
         // Support, mirrored only into VibeLight's own helper domain.
         //
-        // `moonlightIdentity` is ignored on purpose; the parameter stays so the
-        // iOS/macOS call sites keep one shape. A user coming from Moonlight
+        // `moonlightIdentity` is DEAD: every caller passes nil and it is
+        // ignored. Never wire it back up (see the paragraph above); remove it
+        // here and at its one app call site, AppState.init, together.
+        // (audit QUA-moonlight-import-dead-code) A user coming from Moonlight
         // pairs their hosts once, in-app, via PIN — no Moonlight required.
         _ = moonlightIdentity
         switch loadOrCreateOwn(in: directory) {
         case .ready(let cert, let key):
-            usingGeneratedIdentity = true
             let identity = ClientIdentity(certificatePEM: cert, privateKeyPEM: key, uniqueID: uniqueID())
             syncHelperIdentity(identity)
             return identity
@@ -62,14 +62,12 @@ enum IdentityStore {
     ) -> ClientIdentity {
         switch lookup() {
         case .found(let cert, let key):
-            usingGeneratedIdentity = true
             return ClientIdentity(certificatePEM: cert, privateKeyPEM: key, uniqueID: id)
 
         case .absent:
             // Genuinely nothing in the keychain — first run, or a half-formed
             // identity that cannot assemble either way. Safe to generate.
             if let pems = generate() {
-                usingGeneratedIdentity = true
                 return ClientIdentity(certificatePEM: pems.cert, privateKeyPEM: pems.key, uniqueID: id)
             }
             return ClientIdentity(certificatePEM: Data(), privateKeyPEM: Data(), uniqueID: id)
@@ -88,11 +86,6 @@ enum IdentityStore {
         }
     }
     #endif
-
-    /// True when VibeLight is running on its own generated identity (i.e. no
-    /// Moonlight was found) — used to tailor the empty state. Set once during
-    /// resolve() on the main actor at startup.
-    nonisolated(unsafe) static var usingGeneratedIdentity = false
 
     /// Why resolve() returned an empty identity, in words the person can act
     /// on, when it knows (macOS: identity files present but unreadable, or
@@ -124,16 +117,6 @@ enum IdentityStore {
     }
 
     #if os(macOS)
-    /// The stream helper (our moonlight-qt fork) deliberately reads its client
-    /// identity from Moonlight's preferences domain — that reuse is the whole
-    /// zero-setup story for existing Moonlight users. But on a Mac that never
-    /// had Moonlight, the domain is empty: VibeLight pairs with its OWN
-    /// generated cert while the helper mints a different one on first stream,
-    /// so the host answers "not paired" and streaming dead-ends (the standalone
-    /// pairing bug). Fix: whenever VibeLight runs on its own identity, mirror
-    /// the cert/key into the Moonlight domain so launcher + helper present one
-    /// identity. A real Moonlight install later reads this same plist, so
-    /// pairings keep working. Never overwrites an existing identity.
     /// The preferences domain the stream helper reads its client identity from.
     /// The helper is our moonlight-qt fork; it used to share Moonlight's own
     /// domain (com.moonlight-stream.Moonlight), which is exactly what entangled

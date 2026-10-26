@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - GameStream host API (port 47984, mTLS with reused Moonlight pairing)
+// MARK: - GameStream host API (port 47984, mTLS with VibeLight's own pairing)
 
 /// Live server state parsed from /serverinfo. Only trust `currentGameID`
 /// when `state` is `.busy` (Moonlight semantics).
@@ -28,7 +28,7 @@ struct ServerInfo: Sendable, Equatable {
     var permissionMask: UInt32?     // Vibepollo/Apollo extension
     var virtualDisplayCapable: Bool?
     /// Host NIC MAC from serverinfo — what makes Wake-on-LAN possible for
-    /// hosts paired in-app (imported Moonlight hosts carry theirs in the plist).
+    /// hosts paired in-app.
     var macAddress: Data?
     /// The HOST's own identifier (serverinfo `<uniqueid>`), not ours. The stream
     /// helper matches saved computers by it and logs "Found unexpected PC" when
@@ -78,8 +78,8 @@ enum HostAPIError: Error, LocalizedError, Sendable {
     }
 }
 
-/// GameStream protocol client. All calls hit HTTPS 47984 with the reused
-/// Moonlight client cert; serverinfo may fall back to HTTP 47989 to
+/// GameStream protocol client. All calls hit HTTPS 47984 with VibeLight's
+/// own client cert; serverinfo may fall back to HTTP 47989 to
 /// distinguish "unpaired" from "offline".
 protocol HostAPIProviding: Sendable {
     /// Queries candidate addresses in order; returns info from the first that responds.
@@ -100,9 +100,10 @@ protocol HostAPIProviding: Sendable {
 
 // MARK: - Stream session lifecycle
 
-/// One live streaming session driven through the Moonlight CLI.
+/// One live streaming session (macOS: the embedded stream helper, our
+/// moonlight-qt fork, driven by CLI args and its `@VL` stdout lines).
 /// Source of truth for remote state is serverinfo polling, NOT the child process
-/// (the CLI can hang on GUI error dialogs with meaningless exit codes).
+/// (its exit codes are not trusted; the CLI quit fallback can hang on a dialog).
 enum SessionPhase: Sendable, Equatable {
     case idle
     case reconciling                 // checking host state before launch

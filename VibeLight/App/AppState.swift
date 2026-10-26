@@ -69,7 +69,7 @@ final class AppState {
 
     // MARK: Library state
 
-    private(set) var hosts: [StreamHost] = []      // merged: Moonlight + user-added, capped at 4
+    private(set) var hosts: [StreamHost] = []      // the user-added hosts, de-duped, capped at 4
     /// Persisted so a relaunch reopens on the PC you last used (not whichever
     /// host happens to sort first). Restored in init when the host still exists.
     private(set) var selectedHostID: String? {
@@ -166,8 +166,8 @@ final class AppState {
     var addHostIP: String = ""
     var addHostError: String?
 
-    /// A computer the user added by IP (persisted separately from Moonlight's
-    /// read-only plist). `serverCert` is filled in once we pair with it.
+    /// A computer the user added by IP, in VibeLight's own saved hosts.
+    /// `serverCert` is filled in once we pair with it.
     struct AddedHost: Codable, Equatable, Sendable {
         var name: String
         var ip: String
@@ -1052,8 +1052,9 @@ final class AppState {
         }
     }
 
-    /// Merges Moonlight's paired hosts with the user-added ones, de-duped by
-    /// address/uuid and capped at `maxHosts`.
+    /// Builds the host list from the user-added hosts, de-duped by address/uuid
+    /// and capped at `maxHosts`. (`importedHosts` stays empty: the Moonlight
+    /// import was retired in v0.2.0.)
     private func rebuildHosts() {
         var merged = importedHosts
         for added in addedHosts {
@@ -1473,7 +1474,7 @@ final class AppState {
         }
     }
 
-    /// Whether a host was added by the user (removable) vs imported from Moonlight.
+    /// Whether a host is one of the user-added (removable) hosts.
     func isAddedHost(_ host: StreamHost) -> Bool {
         addedHosts.contains { $0.ip == host.manualAddress || "added:\($0.ip)" == host.id }
     }
@@ -1553,7 +1554,7 @@ final class AppState {
     }
 
     /// Once a probe learns an added host's real UUID/name, upgrade the stored
-    /// entry so it de-dupes against Moonlight and shows a friendly name.
+    /// entry so it de-dupes by UUID and shows a friendly name.
     private func upgradeAddedHost(ip: String, uuid: String?, name: String?, mac: Data? = nil) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         var changed = false

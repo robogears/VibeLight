@@ -431,8 +431,9 @@ final class StreamSessionManager: StreamEngine {
         process.arguments = Self.streamArguments(address: address, rawAppName: rawAppName, settings: settings)
         process.standardInput = FileHandle.nullDevice
 
-        // Ask the fork to run headless (chromeless, clean signals). Stock
-        // Moonlight ignores the var, so this is safe even on the fallback path.
+        // Ask the fork to run headless (chromeless, clean signals). Only our
+        // fork is ever launched — there is no stock-Moonlight fallback (see
+        // resolveStreamBinary).
         var environment = ProcessInfo.processInfo.environment
         environment["VIBELIGHT_HEADLESS"] = "1"
         // Strip Metal API Validation (and friends) from the CHILD's environment.
@@ -671,8 +672,8 @@ final class StreamSessionManager: StreamEngine {
                        clock.now >= earliestDeclare,
                        self.streamProcess?.isRunning == true {
                         // Fallback path: the helper's `@VL STARTED` usually
-                        // beats us here, but stock Moonlight (no `@VL`) relies
-                        // on this. enterStreaming is idempotent.
+                        // beats us here; this covers a missed or late line.
+                        // enterStreaming is idempotent.
                         self.enterStreaming(app: app, host: host, generation: gen)
                         return
                     }

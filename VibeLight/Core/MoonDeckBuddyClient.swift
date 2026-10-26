@@ -17,10 +17,9 @@ import os
 /// - Auth header on secure routes: `Authorization: basic <base64(clientId)>`
 ///
 /// TLS: MoonDeckBuddy presents a self-signed cert whose hostname never matches a
-/// LAN/Tailscale address, so the system trust evaluation can't pass. We accept
-/// the presented cert for the user-specified host:port — this is a private-network
-/// control channel and the clientId credential only controls that one host.
-/// (Pinning the shared `moondeck_cert.pem` is a possible future hardening.)
+/// LAN/Tailscale address, so the system trust evaluation can't pass. Instead the
+/// leaf is trusted on first use and pinned once pairing succeeds — every later
+/// request must present that exact cert (see `PinnedTrust` below).
 final class MoonDeckBuddyClient: Sendable {
     /// The API version VibeLight was written against. We accept this OR newer,
     /// down to `minSupportedAPIVersion` — the pairing/restart endpoints have been

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A paired streaming host imported from Moonlight (or added natively later).
+/// A streaming host the person added and paired in VibeLight.
 struct StreamHost: Identifiable, Hashable, Sendable {
     let id: String            // host UUID from pairing
     var name: String
@@ -53,12 +53,13 @@ struct StreamApp: Identifiable, Hashable, Sendable, Codable {
     }
 }
 
-/// The client-side pairing identity Moonlight established with hosts.
-/// Reused by VibeLight for mTLS against the host API — no re-pairing needed.
+/// VibeLight's own client-side pairing identity (IdentityStore), presented
+/// for mTLS against the host API and copied to the stream helper.
 struct ClientIdentity: Sendable {
     let certificatePEM: Data
     let privateKeyPEM: Data
-    /// Moonlight derives its uniqueid as "0123456789ABCDEF" (fixed) in modern versions.
+    /// VibeLight's `uniqueid` (IdentityStore.uniqueID), sent on every request;
+    /// hosts track paired clients by it.
     let uniqueID: String
 }
 
@@ -116,8 +117,9 @@ enum CaptureSystemKeys: String, Codable, CaseIterable, Sendable {
 }
 
 /// Full streaming configuration — mirrors the meaningful Moonlight settings so
-/// the couch UI has the same control the desktop app does. Imported defaults
-/// come from the user's Moonlight prefs; everything is persisted by VibeLight.
+/// the couch UI has the same control the desktop app does. Defaults are
+/// VibeLight's own (nothing is read from Moonlight); everything is persisted
+/// by VibeLight.
 ///
 /// Codable is DECODE-lenient (custom `init(from:)` with `decodeIfPresent`) so
 /// adding a field never invalidates a user's saved settings — missing keys just

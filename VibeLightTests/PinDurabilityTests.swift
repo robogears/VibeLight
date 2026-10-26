@@ -18,9 +18,21 @@ import XCTest
 /// the caller is stale, and is now ignored.
 final class PinDurabilityTests: XCTestCase {
 
-    private func client() -> HostAPIClient {
-        HostAPIClient(identityProvider: ClientIdentityProvider(
-            identity: IdentityStore.resolve(moonlightIdentity: nil)))
+    private var identityDir: URL!
+
+    override func setUp() {
+        identityDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vl-pin-identity-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDown() {
+        if let identityDir { try? FileManager.default.removeItem(at: identityDir) }
+    }
+
+    /// A throwaway identity, never the owner's real one. (audit
+    /// QUA-macos-tests-boot-real-app)
+    private func client() throws -> HostAPIClient {
+        try TestHostAPIClient.make(in: identityDir)
     }
 
     /// A self-signed PEM to stand in for a real pinned host certificate.
@@ -50,24 +62,25 @@ final class PinDurabilityTests: XCTestCase {
     // MARK: - The property
 
     func testAStaleUnpinnedSnapshotCannotUnpinALiveSession() throws {
-        let api = client()
+        let api = try client()
         let pem = try certPEM()
 
         // A paired host builds a PINNED session.
-        _ = try? api.warmSession(for: host(id: "h1", pin: pem))
+        let pinned = try api.warmSession(for: host(id: "h1", pin: pem))
         XCTAssertEqual(api.isSessionPinned(hostID: "h1"), true, "a paired host must build a pinned session")
 
         // Now a caller arrives holding the PRE-pairing copy of the same host.
-        _ = try? api.warmSession(for: host(id: "h1", pin: nil))
+        let afterStale = try api.warmSession(for: host(id: "h1", pin: nil))
         XCTAssertEqual(api.isSessionPinned(hostID: "h1"), true,
                        "a stale unpinned snapshot must NOT replace the pinned session")
+        XCTAssertTrue(afterStale === pinned, "the stale caller must be handed the existing pinned session")
     }
 
     func testAnUnpairedHostStillGetsItsTrustOnFirstUseSession() throws {
         // The guard must not break the legitimate never-paired case: a host with
         // no pin has nothing to protect, and needs a session to reach the XML
         // 401 that prompts pairing in the first place.
-        let api = client()
+        let api = try client()
         _ = try? api.warmSession(for: host(id: "h2", pin: nil))
         XCTAssertEqual(api.isSessionPinned(hostID: "h2"), false,
                        "a never-paired host still needs its unpinned session")
@@ -77,13 +90,20 @@ final class PinDurabilityTests: XCTestCase {
         // The guard blocks nil-over-pin only. A genuinely NEW pin (re-pair after
         // the host's streaming software was reinstalled) must still replace the
         // old session, or the app would keep rejecting a host it just re-paired.
-        let api = client()
+        let api = try client()
         let first = try certPEM(), second = try certPEM()
         XCTAssertNotEqual(first, second, "fixture sanity: two distinct certs")
 
-        _ = try? api.warmSession(for: host(id: "h3", pin: first))
-        XCTAssertEqual(api.isSessionPinned(hostID: "h3"), true)
-        _ = try? api.warmSession(for: host(id: "h3", pin: second))
+        let original = try api.warmSession(for: host(id: "h3", pin: first))
+        XCTAssertTrue(try api.warmSession(for: host(id: "h3", pin: first)) === original,
+                      "fixture sanity: the same pin reuses the cached session")
+        // Compare the sessions themselves: "pinned before and after" also holds
+        // when the old session — trusting the OLD certificate — is wrongly kept,
+        // so it could not catch the regression this test is named after.
+        // (audit QUA-pin-rebuild-test-cannot-fail)
+        let rePaired = try api.warmSession(for: host(id: "h3", pin: second))
+        XCTAssertFalse(rePaired === original,
+                       "a re-pair with a new certificate must replace the session that trusts the old one")
         XCTAssertEqual(api.isSessionPinned(hostID: "h3"), true,
                        "a re-pair must still produce a pinned session")
     }
@@ -91,7 +111,7 @@ final class PinDurabilityTests: XCTestCase {
     func testAnUnparseablePinFailsClosed() throws {
         // A stored pin that isn't valid PEM must throw, never silently downgrade
         // to accept-anything.
-        let api = client()
+        let api = try client()
         XCTAssertThrowsError(try api.warmSession(for: host(id: "h4", pin: Data("not a pem".utf8)))) { error in
             XCTAssertTrue("\(error)".contains("not valid PEM"), "unexpected error: \(error)")
         }

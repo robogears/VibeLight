@@ -5,7 +5,7 @@ import os
 /// GameStream protocol client for Sunshine-family hosts (Vibepollo).
 ///
 /// All calls go to HTTPS <base port − 5> (47984 for the default 47989) with
-/// mTLS using the client certificate Moonlight established at pairing. There
+/// mTLS using VibeLight's own client certificate, paired in-app. There
 /// is no token/cookie/header auth: possession of the certificate IS the
 /// authorization. Crucially, a rejected certificate still completes the TLS
 /// handshake — the server answers every request with XML
@@ -505,7 +505,7 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
     // MARK: - TLS delegate
 
     /// Answers both halves of the GameStream TLS dance:
-    /// - ClientCertificate → the reused Moonlight pairing identity (this is
+    /// - ClientCertificate → VibeLight's own pairing identity (this is
     ///   the entire authentication mechanism).
     /// - ServerTrust → byte-exact pin against the cert captured at pairing
     ///   (moonlight-qt behavior); the host's cert is self-signed, so system

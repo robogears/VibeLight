@@ -1,5 +1,13 @@
 # Box Art Strategy Research for VibeLight (Moonlight-family launcher)
 
+> **Note added 2026-10-26: historical research.** Wherever this document plans to
+> read the client certificate/key or hosts from Moonlight's plist
+> (`com.moonlight-stream.Moonlight`), or to drive stock Moonlight, that is not
+> what VibeLight does: since v0.2.0 it uses only its own client identity, pairs
+> each computer in-app by PIN, and streams through its own helper fork, never
+> stock Moonlight. The protocol findings themselves still stand. What shipped:
+> CLAUDE.md.
+
 ## (a) Sunshine / Apollo / Vibepollo `/appasset` endpoint
 
 **Protocol.** `GET https://<host>:47984/appasset?appid=<id>` — registered ONLY on the nvhttp **HTTPS** server (`https_server.resource["^/appasset$"]["GET"]`, Sunshine `src/nvhttp.cpp` ~line 1365; Vibepollo `src/nvhttp.cpp` line 3692). That means the request must present the paired client certificate (the same cert/key VibeLight imports from moonlight-qt's plist). It is NOT available on plain HTTP 47989. moonlight-qt's `NvHTTP::getBoxArt()` sends `appasset?uniqueid=...&uuid=...&appid=N&AssetType=2&AssetIdx=0`; the `AssetType/AssetIdx` args are GFE legacy and ignored by Sunshine-family hosts — only `appid` matters.

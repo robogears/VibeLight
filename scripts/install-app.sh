@@ -61,7 +61,12 @@ find "$HOME/Library/Developer/Xcode/DerivedData" -name 'VibeLight.app' \
 # isn't built — VibeLight then uses the fork dev build; there is no
 # stock-Moonlight fallback, so a missing helper is a clear error at stream time).
 if ! "$(dirname "$0")/embed-helper.sh" "$DEST"; then
-    echo "⚠️  Helper not embedded — VibeLight will use the dev-build/stock fallback."
+    # (audit QUA-install-stock-fallback-message: this used to promise a "stock
+    # fallback" that was removed on purpose.)
+    echo "⚠️  Helper not embedded — this copy can stream only on this Mac, and only while the"
+    echo "   helper dev build exists in ~/Developer/vibelight-moonlight-helper. There is no"
+    echo "   stock-Moonlight fallback. To fix: correct the error above (usually: build the helper —"
+    echo "   see CLAUDE.md), then run this again."
 fi
 
 echo "✅ Installed: $DEST"

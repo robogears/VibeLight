@@ -3,7 +3,7 @@
 **✅ SHIPPED & DEVICE-VERIFIED (2026-07-06):** in-process streaming on iPad works
 end-to-end — video (native 2752×2064@120 over a Tailscale DERP relay), game
 audio (Opus → RemoteIO), and controller input (full pad forwarding + the
-Start+Select+LB+RB leave-stream chord — held ~2s with a progress ring, like the
+Start+Select+LB+RB leave-stream chord — held ~1 s with a progress ring, like the
 launcher's hold-to-quit). Perf HUD via Settings ▸ Advanced ▸ Performance
 Stats. User settings pass through uncapped; a too-hot profile over a relay
 shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
@@ -114,7 +114,9 @@ delivery in-stream (disable system gestures on the pad while streaming).
 4. iOS keyboard — ✅ HARDWARE passthrough DONE (`Input/KeyboardMap.swift`,
    `ControllerManager.keyboardForwarder`, `MoonlightSession.sendKeyboardEvent`:
    GCKeyboard raw keys → Windows VK codes via LiSendKeyboardEvent while
-   streaming; held keys released on leave). Virtual/on-screen keyboard still TODO.
+   streaming; held keys released on leave). ✅ On-screen keyboard DONE too
+   (`App/iOS/StreamKeyboard.swift`: the iPad's own system keyboard raised over
+   the stream, each keystroke sent to the host; nothing is buffered).
 5. ✅ iPad → external display at native res — DONE (above).
 6. In-stream touch-mode switcher (direct / trackpad / off, mid-session).
 7. Surface Apollo per-client tier (permissions, input-only, connect/disconnect
