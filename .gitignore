@@ -35,8 +35,6 @@ Local*.xcconfig
 *.pem
 *.key
 # Real network topology (IPs, hostnames, WoL MACs) lives ONLY in a *.local.md
-# …and Finder/sync duplicates of them ("CLAUDE.local 2.md", "CLAUDE.local copy.md").
-*.local*.md
 # file. Glob, not a literal name: every agent tool wants its own filename
 # (CLAUDE.local.md, Codex.local.md, AGENTS.local.md …) and a literal list would
 # silently miss the next one. This repo is public — see scripts/git-hooks/pre-commit.
