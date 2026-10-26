@@ -15,7 +15,7 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 7 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size, Menu Sounds switch, TV dead end, companion readout removed). Next: accent labels/contrast, destructive red, no hover zoom, empty Home, banner, setup hints. |
+| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 10 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size, Menu Sounds switch, TV dead end, companion readout removed, navy labels on the blue, destructive red, no hover zoom). The TV fix checks out (the Simulator fakes a controller of its own, so the no-controller case is a live check on your iPad). Next: empty Home, banner, setup hints. |
 | MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Merged: group 1 (saved data never lost, bad values can't crash — 7 findings) and group 7 (updater, move-to-Applications, helper errors — 6 findings). Group 5 (client identity safety) building. Groups 2–4, 6, 8, 9 queued. |
 | MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
 | MT-P1 | 21 Oct | Four new features the audit suggested (not defects) | ⏸ | Not asked for yet: one PC with two addresses, iPad hardware-keyboard launcher navigation, more on-screen-keyboard keys, saved game list at start-up. Say which. |

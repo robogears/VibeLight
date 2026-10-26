@@ -24,6 +24,9 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 20:15 Visual 2C merged (3 audit items; review 1 upheld 2 Lows, both fixed; last review clean): labels on the full-strength blue are navy (6.8:1, was white at 2.7:1); Increase Contrast brightens faint borders; Clear Preset and Forget Computer turn red when focused, like Restart PC; Settings tabs and card buttons brighten on hover instead of growing. Source-checked and unit-tested, not yet seen in a running app (see Live checks). 209 Mac tests green, iOS build green. Pushed.
+  - TV fix pixel check: the Simulator can't show "TV with no controller" — a temporary logging build (never committed, removed) showed the app keeps the launcher on the iPad until the Simulator connects a virtual "Gamepad" ~9 s after launch, then correctly shows the companion panel. TV + controller looks right (screenshot sent). The no-controller half needs your iPad.
+  - I briefly tried attaching the debugger to the Simulator app; it needed a macOS approval I won't change, so I stopped it within 60 s (no effect).
 - 26 Oct 19:50 G7 updater fixes merged (6 findings; review 1 upheld Low, last review 1 Low, fixed directly — a comment that disagreed with the code). What you now get:
   - Restart Now refuses a downloaded update that changed or disappeared since it was checked;
   - a failed first install reopens the copy you were running;
@@ -115,7 +118,12 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 
 - Settings ▸ Audio ▸ Menu Sounds: set Off, move around Home — silent; relaunch — still Off; load a preset — still Off.
 
-- Wired TV, no controller: the launcher stays usable by touch on the iPad and the TV mirrors it. Connect a controller: the companion panel fades in. Disconnect it: the launcher comes back to the iPad.
+- Wired TV, no controller: the launcher stays usable by touch on the iPad and the TV mirrors it. Connect a controller: the companion panel fades in. Disconnect it: the launcher comes back to the iPad. **Only your iPad can show the no-controller half:** the iPad Simulator connects a virtual controller of its own ~9 s after launch, so there the panel always appears (a probe log showed the app correctly kept the launcher until that moment).
+- First-time setup with a TV and a controller attached (Settings ▸ Restart Setup): setup appears on the iPad and can be finished. In the Simulator the iPad went dark after the welcome screen in this case; not yet explained — it may be the same virtual controller arriving mid-welcome.
+- Increase Contrast on (iPad: Settings ▸ Accessibility ▸ Display & Text Size; Mac: System Settings ▸ Accessibility ▸ Display): card, row and hint borders are clearly brighter; empty preset slots are no longer faded.
+- Navy labels on the blue (Computers rows, Add, the active preset chip, the selected Settings tab, the active slot in Settings ▸ Presets): readable. A chip that's only focused keeps white text. **Your call:** keep navy on the blue? (one-line revert: `Theme.onAccent = .white`)
+- Clear a preset (Rename / Clear ▸ Clear) and forget a computer: the final button turns red when focused; Keep It is focused first.
+- Mac: hover a Settings tab or a card button — it brightens and doesn't grow.
 - On the companion panel, tap "Use the iPad Instead": the launcher returns to the iPad and Settings ▸ Video ▸ Use TV / Monitor reads Off.
 - AirPlay mirroring (with and without a controller): tell me what happens — this path couldn't be checked from code.
 
