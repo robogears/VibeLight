@@ -18,7 +18,11 @@ VibeLight/iOS-Info.plist
 
 # Personal Apple Developer Team ID for on-device iOS builds (never commit).
 # Signing.xcconfig (committed) optionally-includes this; see Local.xcconfig.example.
-Local.xcconfig
+# Glob, so Finder/sync duplicates ("Local 2.xcconfig", "Local copy.xcconfig")
+# carrying the same Team ID are ignored too. Local.xcconfig.example doesn't
+# match (it doesn't end in .xcconfig) and stays committed.
+# (audit SEC-numbered-copies-unignored)
+Local*.xcconfig
 
 # SPM
 .build/
@@ -31,13 +35,34 @@ Local.xcconfig
 *.pem
 *.key
 # Real network topology (IPs, hostnames, WoL MACs) lives ONLY in a *.local.md
+# …and Finder/sync duplicates of them ("CLAUDE.local 2.md", "CLAUDE.local copy.md").
+*.local*.md
 # file. Glob, not a literal name: every agent tool wants its own filename
 # (CLAUDE.local.md, Codex.local.md, AGENTS.local.md …) and a literal list would
 # silently miss the next one. This repo is public — see scripts/git-hooks/pre-commit.
 *.local.md
+# …and Finder/sync duplicates of them ("CLAUDE.local 2.md", "CLAUDE.local copy.md").
+*.local*.md
 
 # iOS streaming deps (rebuild with scripts/ios/build-deps.sh)
 ThirdParty/ios/
 ThirdParty/moonlight-common-c/
 VibeLight/Info [0-9]*.plist
 VibeLight/iOS-Info [0-9]*.plist
+
+# Finder/sync duplicates of Swift sources ("AppState 2.swift", "Foo copy.swift").
+# XcodeGen compiles every .swift under these folders, so a committed copy breaks
+# every fresh clone with "invalid redeclaration". Don't name a real source file
+# "<name> <number>.swift". (audit SEC-numbered-copies-unignored)
+VibeLight/**/* [0-9].swift
+VibeLight/**/* [0-9][0-9].swift
+VibeLight/**/* copy.swift
+VibeLight/**/* copy [0-9]*.swift
+VibeLightTests/**/* [0-9].swift
+VibeLightTests/**/* [0-9][0-9].swift
+VibeLightTests/**/* copy.swift
+VibeLightTests/**/* copy [0-9]*.swift
+VibeLightiOSTests/**/* [0-9].swift
+VibeLightiOSTests/**/* [0-9][0-9].swift
+VibeLightiOSTests/**/* copy.swift
+VibeLightiOSTests/**/* copy [0-9]*.swift
