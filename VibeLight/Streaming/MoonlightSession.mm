@@ -382,6 +382,15 @@ static void ArCleanup(void);
     LiSendKeyboardEvent(keyCode, down ? KEY_ACTION_DOWN : KEY_ACTION_UP, (char)modifiers);
 }
 
+- (void)sendText:(NSString *)text {
+    if (sActive != self) return;
+    const char *utf8 = text.UTF8String;
+    if (utf8 == NULL) return;
+    size_t length = strlen(utf8);
+    if (length == 0) return;
+    LiSendUtf8TextEvent(utf8, (unsigned int)length);
+}
+
 // MARK: - Delegate marshalling (called from C callbacks below, on the main queue)
 
 - (void)notifyStage:(MoonlightStage)stage {

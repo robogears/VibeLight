@@ -164,6 +164,12 @@ typedef NS_ENUM(uint8_t, MoonlightTouchPhase) {
                      down:(BOOL)down
                 modifiers:(uint8_t)modifiers;
 
+/// Sends finished text to the host as typed characters (LiSendUtf8TextEvent),
+/// not as key presses, so it arrives whatever keyboard layout the PC uses.
+/// Used for on-screen-keyboard characters that have no US key (é, ß, emoji).
+/// No-op when this session isn't the active connection or `text` is empty.
+- (void)sendText:(NSString *)text;
+
 @end
 
 NS_ASSUME_NONNULL_END

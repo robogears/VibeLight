@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import UIKit
+import GameController
 
 /// Raises the iPad's own keyboard over the stream and forwards what you type to
 /// the host, so the PC behaves as though a keyboard were plugged into it.
@@ -17,8 +18,8 @@ import UIKit
 struct StreamKeyboard: UIViewRepresentable {
 
     /// Bound to the button that raises/lowers the keyboard. Two-way: iOS can
-    /// lower the keyboard itself (a hardware keyboard connecting, an interactive
-    /// dismiss), and this flips back to false when it does.
+    /// lower the keyboard itself (an interactive dismiss), and this flips back
+    /// to false when it does.
     @Binding var isUp: Bool
     let onCharacter: (Character) -> Void
     let onBackspace: () -> Void
@@ -67,6 +68,59 @@ struct StreamKeyboard: UIViewRepresentable {
             onBackspace?()
         }
 
+        // MARK: Hardware keys — one route per key
+
+        /// Whether a press reaches the text-input route (`insertText` /
+        /// `deleteBackward` → `typeCharacter`). A hardware key already reaches
+        /// the PC as a raw key down/up through the GameController keyboard
+        /// handler the stream installs; iPadOS ALSO turns it into typed text
+        /// for this first responder, so with the on-screen keyboard raised
+        /// every hardware keystroke arrived twice. A hardware key therefore
+        /// goes to text input only when no hardware keyboard is being
+        /// forwarded; on-screen key taps are not presses and always type.
+        /// (QUA-hardware-keyboard-double-typing)
+        ///
+        /// Only keys the raw route actually SENDS are held back: it drops any
+        /// key `KeyboardMap.virtualKey` can't map (the numpad, the ISO key left
+        /// of Z, international keys), so for those the typed text is still the
+        /// one way they reach the PC. `hardwareKey` is nil for a press that
+        /// isn't a keyboard key.
+        static func textInputTakes(hardwareKey: GCKeyCode?, hardwareKeyboardForwarded: Bool) -> Bool {
+            guard let hardwareKey, hardwareKeyboardForwarded else { return true }
+            return KeyboardMap.virtualKey(for: hardwareKey) == nil
+        }
+
+        /// Not calling super for a press is what keeps UIKit from turning it
+        /// into `insertText` (the same interception moonlight-ios uses).
+        private func passedToTextInput(_ presses: Set<UIPress>) -> Set<UIPress> {
+            let forwarded = GCKeyboard.coalesced != nil
+            return presses.filter {
+                // UIKey.keyCode and GCKeyCode are both USB-HID usages.
+                let code = $0.key.map { GCKeyCode(rawValue: $0.keyCode.rawValue) }
+                return Self.textInputTakes(hardwareKey: code, hardwareKeyboardForwarded: forwarded)
+            }
+        }
+
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            let rest = passedToTextInput(presses)
+            if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+        }
+
+        override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            let rest = passedToTextInput(presses)
+            if !rest.isEmpty { super.pressesChanged(rest, with: event) }
+        }
+
+        override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            let rest = passedToTextInput(presses)
+            if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+        }
+
+        override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            let rest = passedToTextInput(presses)
+            if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+        }
+
         // MARK: Traits — everything "helpful" turned off
 
         /// Autocorrect, capitalisation and smart punctuation all rewrite what the
@@ -85,9 +139,11 @@ struct StreamKeyboard: UIViewRepresentable {
 
         override func resignFirstResponder() -> Bool {
             let resigned = super.resignFirstResponder()
-            // Covers the dismissals SwiftUI never told us about: the interactive
-            // swipe-down, or a hardware keyboard connecting and displacing the
-            // on-screen one. Without this the button stays lit with no keyboard.
+            // Covers the dismissals SwiftUI never told us about, such as the
+            // interactive swipe-down. Without this the button stays lit with
+            // no keyboard. (A hardware keyboard connecting usually does NOT
+            // resign this view; iPadOS just hides the software keys, which is
+            // why hardware presses are filtered above.)
             if resigned { onDismiss?() }
             return resigned
         }

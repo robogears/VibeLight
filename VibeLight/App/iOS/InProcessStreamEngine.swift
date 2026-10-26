@@ -70,10 +70,22 @@ final class InProcessStreamEngine: StreamEngine {
                 MoonlightSession.resumeAudio()
             }
         }
+        // Control Center, Notification Center or an alert taking over the
+        // screen mid-stream: key releases made while we're inactive never
+        // reach us, so a key held as the overlay came down would stay held on
+        // the PC. Release everything: a key still physically down reads as
+        // up until it's pressed again, which beats one stuck down for good.
+        // (LIF-stream-keys-stuck-after-keyboard-loss)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.releaseHeldKeys() }
+        }
         // Track where the on-screen keyboard actually is, so only the area it
-        // covers stops accepting stream touches. willChangeFrame covers every
-        // case in one callback: appearing, dismissing, docking, undocking,
-        // splitting, and a floating keyboard being dragged around.
+        // covers stops accepting stream touches. willChangeFrame reports it
+        // appearing, dismissing, docking and being dragged; for split,
+        // undocked and floating keyboards iPadOS may also post "will hide"
+        // (handled below), and those frames still need a live check.
         NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -82,12 +94,22 @@ final class InProcessStreamEngine: StreamEngine {
         }
         NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // Explicitly cleared: the final willChangeFrame parks the keyboard
-            // just off the bottom rather than reporting an empty rect, and a
-            // stale rect would keep blocking a strip of a stream with no
-            // keyboard over it.
-            MainActor.assumeIsolated { self?.keyboardFrameInScreen = .zero }
+        ) { [weak self] note in
+            // Cleared on a real dismissal: the final willChangeFrame parks the
+            // keyboard just off the bottom rather than reporting an empty
+            // rect, and a stale rect would keep blocking a strip of a stream
+            // with no keyboard over it. But iPadOS also posts "will hide" when
+            // the keyboard is split, undocked or floated — still on screen —
+            // so the rule below keeps the frame then.
+            // (QUA-keyboard-hide-clears-undocked-frame)
+            let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            let keyboardScreen = note.object as? UIScreen   // iOS 16.1+: the keyboard's screen
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.keyboardFrameInScreen = Self.keyboardFrame(
+                    afterHideEndingAt: end, current: self.keyboardFrameInScreen,
+                    screen: keyboardScreen?.bounds)
+            }
         }
     }
 
@@ -95,12 +117,19 @@ final class InProcessStreamEngine: StreamEngine {
     /// mirror of the `setActive(true)` on launch. `.notifyOthersOnDeactivation`
     /// is what actually un-ducks the app we interrupted. Best-effort; called on
     /// every teardown path.
+    ///
+    /// Then hands the category back to the launcher's `.ambient`. Deactivating
+    /// alone left it `.playback`, so the next menu tick re-activated the
+    /// session in a mode that stops the person's music and ignores the Silent
+    /// switch. The stream is already stopped here; the next launch() sets
+    /// `.playback` again before it activates. (LIF-menu-sfx-audio-category-leak)
     private func deactivateAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             NSLog("[VibeLight] audio session deactivate failed: \(error.localizedDescription)")
         }
+        MenuSFX.useLauncherAudioSession()
     }
 
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {
@@ -501,6 +530,11 @@ final class InProcessStreamEngine: StreamEngine {
                 // snapshot stays latched in the game otherwise.
                 self?.reconcileSlots()
             }
+            cm.onKeyboardDisconnected = { [weak self] in
+                // The keys it was holding will never report a release —
+                // send them now or the game keeps W (or Ctrl) held down.
+                self?.releaseHeldKeys()
+            }
             cm.onPadConnected = { [weak self] in
                 // A pad that arrives DURING a stream never went through the
                 // setup above, so its PS/Home, Share and Options presses kept
@@ -514,6 +548,7 @@ final class InProcessStreamEngine: StreamEngine {
             cm.streamForwarder = nil
             cm.keyboardForwarder = nil
             cm.onPadDisconnected = nil
+            cm.onKeyboardDisconnected = nil
             cm.onPadConnected = nil
             cancelQuitHold()
             setSystemGestures(disabled: false)   // restore the OS's PS/Share/Options gestures
@@ -559,6 +594,20 @@ final class InProcessStreamEngine: StreamEngine {
     /// wrong for two of the three.
     private(set) var keyboardFrameInScreen: CGRect = .zero
 
+    /// The keyboard's frame after a "will hide" notification. A hide whose end
+    /// frame still overlaps the screen is a keyboard being split, undocked or
+    /// floated, not leaving: keep the last frame we were told about (or the
+    /// hide's own end frame if we had none). Only a hide that ends off screen
+    /// clears it. When the screen is unknown, clear as before — never worse
+    /// than the old behaviour. (QUA-keyboard-hide-clears-undocked-frame)
+    nonisolated static func keyboardFrame(afterHideEndingAt end: CGRect?, current: CGRect,
+                                          screen: CGRect?) -> CGRect {
+        guard let end, let screen else { return .zero }
+        let overlap = end.intersection(screen)
+        guard !overlap.isNull, !overlap.isEmpty else { return .zero }
+        return current.isNull || current.isEmpty ? end : current
+    }
+
     /// True while the iPad's own keyboard is raised over the stream.
     var onScreenKeyboardUp = false {
         didSet {
@@ -576,7 +625,17 @@ final class InProcessStreamEngine: StreamEngine {
     /// a modifier mask, because a host that reads the mask alone still needs the
     /// shift key's own down/up to produce an uppercase letter in most games.
     func typeCharacter(_ character: Character) {
-        guard let session, let stroke = KeyboardMap.keyStroke(for: character) else { return }
+        guard let session, let route = KeyboardMap.route(for: character) else { return }
+        let stroke: (vk: Int16, shift: Bool)
+        switch route {
+        case .key(let vk, let shift):
+            stroke = (vk, shift)
+        case .text(let text):
+            // No US key types it (é, emoji): send the character itself, which
+            // the PC's layout can't change. (QUA-onscreen-keyboard-assumes-us-pc-layout)
+            session.sendText(text)
+            return
+        }
         let shiftVK: Int16 = 0xA0   // VK_LSHIFT
         var mods = keyboardModifiers
         if stroke.shift {

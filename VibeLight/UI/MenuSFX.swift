@@ -6,9 +6,11 @@ import AVFoundation
 /// soundbank is a few hundred bytes of math.
 ///
 /// Playback is fire-and-forget through one AVAudioEngine; failures are logged
-/// once and the app stays silent rather than broken. UI sounds deliberately use
-/// the default (ambient) audio session on iOS so the silent switch mutes them —
-/// game audio during a stream uses its own .playback session.
+/// once and the app stays silent rather than broken. On iOS, UI sounds use the
+/// `.ambient` audio-session category (`useLauncherAudioSession`): it mixes with
+/// the person's music instead of stopping it, and the Silent switch mutes it.
+/// A stream switches the session to `.playback` for game audio, and every
+/// stream teardown switches it back. (LIF-menu-sfx-audio-category-leak)
 @MainActor
 final class MenuSFX {
 
@@ -39,11 +41,29 @@ final class MenuSFX {
     #if DEBUG
     /// Test hook: how many `play` calls got past the Menu Sounds gate.
     private(set) var playsPastGate = 0
+    /// Test hook: whether the engine is driving the audio output right now.
+    var isEngineRunning: Bool { engine.isRunning }
+    /// Test hook: silence the output so a test can start the engine without
+    /// making a sound.
+    func muteForTests() { engine.mainMixerNode.outputVolume = 0 }
     #endif
+
+    /// How long after the last sound finishes the engine keeps the output open.
+    /// A running engine renders silence to the speakers forever: it costs
+    /// battery, and on the Mac it keeps the audio hardware awake, which holds
+    /// off idle sleep even while the window is minimised. Pausing frees that,
+    /// and the next `play` restarts it. Ten seconds rather than two so a burst
+    /// of navigation with reading pauses in between never pays the restart on
+    /// its first tick. (LIF-menu-sfx-engine-never-paused)
+    var idlePauseDelay: Duration = .seconds(10)
+    private var idlePauseTask: Task<Void, Never>?
 
     private static let sampleRate: Double = 44_100
 
     init() {
+        #if os(iOS)
+        Self.useLauncherAudioSession()
+        #endif
         let format = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 1)!
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -78,6 +98,23 @@ final class MenuSFX {
         }
     }
 
+    #if os(iOS)
+    /// Puts the app's one shared audio session in the launcher's category.
+    /// Without it, the session was iOS's default `.soloAmbient` until the
+    /// first stream ("other music will stop playing") and the stream's
+    /// `.playback` after it (ignores the Silent switch, stops other audio) —
+    /// so a menu tick stopped the person's music. Called at startup and after
+    /// a stream releases the session, never while one is live.
+    /// (LIF-menu-sfx-audio-category-leak)
+    nonisolated static func useLauncherAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
+        } catch {
+            NSLog("[VibeLight] menu SFX audio category failed: \(error.localizedDescription)")
+        }
+    }
+    #endif
+
     func play(_ effect: Effect) {
         guard isEnabled else { return }
         #if DEBUG
@@ -108,6 +145,23 @@ final class MenuSFX {
             }
         }
         player.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        pauseWhenIdle(afterSoundLasting: Double(buffer.frameLength) / Self.sampleRate)
+    }
+
+    /// Re-arms the one idle timer: each sound pushes the pause back, so the
+    /// engine only pauses once nothing has played for `idlePauseDelay` after
+    /// the latest sound ends — never mid-sound. `pause()` keeps the engine
+    /// prepared, and the `!engine.isRunning` branch in `play` restarts it.
+    /// (LIF-menu-sfx-engine-never-paused)
+    private func pauseWhenIdle(afterSoundLasting seconds: Double) {
+        idlePauseTask?.cancel()
+        let wait = Duration.milliseconds(Int(seconds * 1000)) + idlePauseDelay
+        idlePauseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self else { return }
+            self.idlePauseTask = nil
+            if self.engine.isRunning { self.engine.pause() }
+        }
     }
 
     /// Renders consecutive sine segments (`hz`, `duration`) into one buffer with
