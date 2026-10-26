@@ -21,6 +21,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     private var buttonRevealMonitor: Any?
     private var buttonsRevealed = false
     private var activationBounceObserver: (any NSObjectProtocol)?
+    private var displaySleepObservers: [any NSObjectProtocol] = []
     /// The embedded helper we handed the screen to (nil when the stock-Moonlight
     /// fallback was used — that app has its own Cmd-Tab identity).
     private var handoffHelperPID: pid_t?
@@ -66,6 +67,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
 
         installButtonReveal()
         installActivationBounce()
+        installDisplaySleepTracking()
         enterImmersiveChrome()
         preventDisplaySleep()
         NSApp.activate()
@@ -216,6 +218,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
             NotificationCenter.default.removeObserver(activationBounceObserver)
             self.activationBounceObserver = nil
         }
+        displaySleepObservers.forEach(NotificationCenter.default.removeObserver)
+        displaySleepObservers = []
     }
 
     // MARK: - Stream handoff
@@ -288,6 +292,40 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, PlatformChrome {
     func quitApp() { NSApplication.shared.terminate(nil) }
 
     // MARK: - Sleep
+
+    /// Pure rule: hold the display awake only while the launcher can actually
+    /// be seen — the window is open, not minimized, and VibeLight is in front
+    /// and not hidden. During a stream handoff VibeLight is in the background
+    /// by design (the helper is frontmost), and the hold is kept exactly as
+    /// before so streaming behaviour doesn't change. Hiding VibeLight (Cmd-H)
+    /// or switching to another app used to keep the Mac's display from ever
+    /// sleeping. (audit LIF-display-sleep-held-hidden)
+    nonisolated static func shouldHoldDisplayAwake(windowOpen: Bool, minimized: Bool, appHidden: Bool,
+                                                   appActive: Bool, handoffActive: Bool) -> Bool {
+        guard windowOpen, !minimized else { return false }
+        if handoffActive { return true }
+        return appActive && !appHidden
+    }
+
+    /// Re-applies `shouldHoldDisplayAwake` whenever VibeLight is hidden, shown,
+    /// sent to the background or brought back to the front.
+    private func installDisplaySleepTracking() {
+        let names: [Notification.Name] = [
+            NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+            NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification,
+        ]
+        displaySleepObservers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { [weak self] in self?.syncDisplaySleepHold() }
+            }
+        }
+    }
+
+    private func syncDisplaySleepHold() {
+        preventSleep(Self.shouldHoldDisplayAwake(
+            windowOpen: window != nil, minimized: window?.isMiniaturized ?? false,
+            appHidden: NSApp.isHidden, appActive: NSApp.isActive, handoffActive: isHandoffActive))
+    }
 
     /// A couch launcher must never let the display sleep mid-browse.
     private func preventDisplaySleep() {
