@@ -404,7 +404,8 @@ private struct ExternalDisplayPlaceholder: View {
                             : "Touch is off while a controller is connected — Settings ▸ Input ▸ Touch With Controller.")
                          : "Use your controller to navigate on the big screen.")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(contrast == .increased ? Theme.textPrimary.opacity(0.85)
+                                                                : Theme.textSecondary)
                     if !streaming, let onUseIPad {
                         useIPadButton(onUseIPad)
                             .padding(.top, 28 - 16)   // 28 pt from the line above (stack spacing is 16)

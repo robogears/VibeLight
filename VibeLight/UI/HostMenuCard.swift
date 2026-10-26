@@ -112,7 +112,7 @@ struct HostMenuCard: View {
             } label: {
                 Text("Add")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(state.focus.focusedItemID == "hostmenu:add" ? .white : Theme.accent)
+                    .foregroundStyle(state.focus.focusedItemID == "hostmenu:add" ? Theme.onAccent : Theme.accent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, Theme.perPlatform(iOS: 10, macOS: 8))
                     .background(
@@ -142,6 +142,7 @@ struct HostMenuCard: View {
 
 private struct HostRow: View {
     @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
     let host: StreamHost
 
     private var focusID: String { "hostmenu:\(host.id)" }
@@ -158,10 +159,10 @@ private struct HostRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(host.name)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(isFocused ? .white : Theme.textPrimary)
+                    .foregroundStyle(isFocused ? Theme.onAccent : Theme.textPrimary)
                 Text(statusText)
                     .font(.system(size: Theme.labelSize(12), weight: .medium))
-                    .foregroundStyle(isFocused ? .white.opacity(0.8) : Theme.textSecondary)
+                    .foregroundStyle(isFocused ? Theme.onAccent.opacity(0.8) : Theme.textSecondary)
             }
             Spacer()
             // Wake-on-LAN moved to the home header (the power button left of
@@ -169,7 +170,7 @@ private struct HostRow: View {
             // computer here, then wake it from the header.
             if isSelected {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(isFocused ? .white : Theme.accent)
+                    .foregroundStyle(isFocused ? Theme.onAccent : Theme.accent)
             }
             if state.isAddedHost(host) {
                 Button {
@@ -180,7 +181,7 @@ private struct HostRow: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isFocused ? .white.opacity(0.85) : Theme.textSecondary)
+                        .foregroundStyle(isFocused ? Theme.onAccent.opacity(0.85) : Theme.textSecondary)
                         // The glyph alone was a ~15 pt touch target inside a row
                         // that is itself a tap target (UX-ios-scale-shrinks-text-targets).
                         .frame(width: Theme.perPlatform(iOS: 44, macOS: nil),
@@ -199,7 +200,7 @@ private struct HostRow: View {
             in: RoundedRectangle(cornerRadius: 13))
         .overlay {
             RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(.white.opacity(isFocused ? 0.3 : 0.06), lineWidth: 1)
+                .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
         }
         .scaleEffect(isFocused ? 1.02 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
@@ -251,7 +252,7 @@ private struct PairingPanel: View {
                         ForEach(Array(pairing.pin.enumerated()), id: \.offset) { _, digit in
                             Text(String(digit))
                                 .font(.system(size: 40, weight: .black, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.onAccent)
                                 .frame(width: 62, height: 78)
                                 .background(Theme.accent.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
                         }

@@ -110,6 +110,7 @@ private struct SettingsTabBar: View {
 private struct TabChip: View {
     @Environment(AppState.self) private var state
     let tab: AppState.SettingsTab
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
 
     private var selected: Bool { state.settingsTab == tab }
@@ -117,7 +118,8 @@ private struct TabChip: View {
     var body: some View {
         Text(tab.title)
             .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundStyle(selected ? .white : Theme.textSecondary)
+            .foregroundStyle(selected ? Theme.onAccent
+                             : (contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))
             .fixedSize()
             .padding(.horizontal, 20)
             .padding(.vertical, 9)
@@ -204,6 +206,7 @@ private struct SettingsPresetSlot: View {
 
 private struct SettingsRowView: View {
     @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
     let row: AppState.SettingsRow
 
     private var isFocused: Bool { state.focus.focusedItemID == row.focusID }
@@ -262,7 +265,7 @@ private struct SettingsRowView: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.white.opacity(isFocused ? 0.3 : 0.06), lineWidth: 1)
+                .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
         }
         .scaleEffect(isFocused ? 1.015 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)

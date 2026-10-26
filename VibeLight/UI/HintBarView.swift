@@ -26,6 +26,7 @@ struct GlyphBadge: View {
 /// label — no controller/keyboard glyph.
 private struct HintChip: View {
     @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
     let event: NavigationEvent
     let label: String?
     var touch = false
@@ -62,7 +63,7 @@ private struct HintChip: View {
                 // 35–42 pt (UX-ios-scale-shrinks-text-targets). Touch only.
                 .padding(.vertical, 13)
                 .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(Theme.hairline(0.12, contrast), lineWidth: 1))
                 .contentShape(Capsule())
         } else {
             let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)

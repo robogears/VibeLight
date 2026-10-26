@@ -125,7 +125,7 @@ private struct AddComputerButton: View {
             Text("Add Computer")
                 .font(.system(size: 15, weight: .bold, design: .rounded))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(Theme.onAccent)   // navy on the solid blue (UX-white-on-accent-contrast)
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(Theme.accent, in: Capsule())
@@ -345,6 +345,7 @@ private struct PresetRow: View {
 private struct PresetSlotChip: View {
     @Environment(AppState.self) private var state
     let slot: Int
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
 
     private var focusID: String { "presetslot:\(slot)" }
@@ -353,11 +354,14 @@ private struct PresetSlotChip: View {
     private var isActive: Bool { state.activePresetSlot == slot }
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
     private var lit: Bool { isActive || isFocused }
+    /// Only the ACTIVE chip sits on the full-strength accent; a merely focused
+    /// one is a 0.35 tint over the dark backdrop and keeps white ink.
+    private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }
 
     private func summaryLine(_ text: String) -> some View {
         Text(text)
             .font(.system(size: Theme.labelSize(11), weight: .medium))
-            .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
+            .foregroundStyle(lit ? ink.opacity(0.85) : Theme.textSecondary)
             .lineLimit(1)
     }
 
@@ -365,14 +369,14 @@ private struct PresetSlotChip: View {
         HStack(spacing: 10) {
             Text("\(slot + 1)")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
-                .foregroundStyle(lit ? .white : (isFilled ? Theme.accent : Theme.textSecondary))
+                .foregroundStyle(lit ? ink : (isFilled ? Theme.accent : Theme.textSecondary))
                 .frame(width: 22, height: 22)
                 .background(Color.white.opacity(lit ? 0.22 : (isFilled ? 0.1 : 0.05)), in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(preset?.name ?? "Empty")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(isFilled ? (lit ? .white : Theme.textPrimary)
+                    .foregroundStyle(isFilled ? (lit ? ink : Theme.textPrimary)
                                      : Theme.textSecondary.opacity(0.7))
                     .lineLimit(1)
                 if let preset {
@@ -398,7 +402,7 @@ private struct PresetSlotChip: View {
             if isActive {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 14))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
             }
         }
         .padding(.horizontal, 14)
@@ -413,7 +417,8 @@ private struct PresetSlotChip: View {
         }
         .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 12, y: 3)
         .scaleEffect(isFocused ? 1.03 : 1.0)
-        .opacity(isFilled || isFocused ? 1 : 0.6)
+        // Increase Contrast: an empty slot isn't conveyed by faintness alone.
+        .opacity(isFilled || isFocused || contrast == .increased ? 1 : 0.6)
         .animation(Theme.focusSpring, value: isActive)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: isFilled)
@@ -446,6 +451,6 @@ private struct PresetSlotChip: View {
     private var border: Color {
         if isFocused { return .white.opacity(0.7) }
         if isActive { return .white.opacity(0.25) }
-        return .white.opacity(isFilled ? 0.08 : 0.14)
+        return Theme.hairline(isFilled ? 0.08 : 0.14, contrast)
     }
 }

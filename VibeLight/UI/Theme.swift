@@ -8,6 +8,23 @@ enum Theme {
     static let accentGlow = Color(red: 0.35, green: 0.62, blue: 1.0).opacity(0.55)
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.6)
+    /// Ink on a full-strength `accent` fill (6.8:1). White on the accent is 2.7:1 — under the 3:1
+    /// bold minimum — so every label, glyph and secondary line that sits on `Theme.accent` uses
+    /// this (UX-white-on-accent-contrast). The setup wizard's Continue button set the precedent.
+    static let onAccent = Color(red: 0.04, green: 0.08, blue: 0.16)   // #0A1429
+
+    /// The ink on a lit surface: navy only on a FULL-strength accent fill. A merely tinted fill
+    /// (the accent at 0.35 over the dark backdrop) or the destructive red would swallow navy,
+    /// so those keep white (UX-white-on-accent-contrast).
+    nonisolated static func labelInk(onSolidAccent solid: Bool) -> Color {
+        solid ? onAccent : .white
+    }
+
+    /// A faint white hairline that Increase Contrast lifts to at least 0.35, so no border is
+    /// conveyed by faintness alone (HIG › Accessibility › Vision; UX-white-on-accent-contrast).
+    nonisolated static func hairline(_ base: Double, _ contrast: ColorSchemeContrast) -> Color {
+        .white.opacity(contrast == .increased ? max(base, 0.35) : base)
+    }
 
     /// Focus animation used across the whole UI — one spring to rule them all.
     static let focusSpring = Animation.spring(response: 0.28, dampingFraction: 0.72)
