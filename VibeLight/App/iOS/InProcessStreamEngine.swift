@@ -95,12 +95,19 @@ final class InProcessStreamEngine: StreamEngine {
     /// mirror of the `setActive(true)` on launch. `.notifyOthersOnDeactivation`
     /// is what actually un-ducks the app we interrupted. Best-effort; called on
     /// every teardown path.
+    ///
+    /// Then hands the category back to the launcher's `.ambient`. Deactivating
+    /// alone left it `.playback`, so the next menu tick re-activated the
+    /// session in a mode that stops the person's music and ignores the Silent
+    /// switch. The stream is already stopped here; the next launch() sets
+    /// `.playback` again before it activates. (LIF-menu-sfx-audio-category-leak)
     private func deactivateAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             NSLog("[VibeLight] audio session deactivate failed: \(error.localizedDescription)")
         }
+        MenuSFX.useLauncherAudioSession()
     }
 
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {

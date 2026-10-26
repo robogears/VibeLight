@@ -6,9 +6,11 @@ import AVFoundation
 /// soundbank is a few hundred bytes of math.
 ///
 /// Playback is fire-and-forget through one AVAudioEngine; failures are logged
-/// once and the app stays silent rather than broken. UI sounds deliberately use
-/// the default (ambient) audio session on iOS so the silent switch mutes them —
-/// game audio during a stream uses its own .playback session.
+/// once and the app stays silent rather than broken. On iOS, UI sounds use the
+/// `.ambient` audio-session category (`useLauncherAudioSession`): it mixes with
+/// the person's music instead of stopping it, and the Silent switch mutes it.
+/// A stream switches the session to `.playback` for game audio, and every
+/// stream teardown switches it back. (LIF-menu-sfx-audio-category-leak)
 @MainActor
 final class MenuSFX {
 
@@ -44,6 +46,9 @@ final class MenuSFX {
     private static let sampleRate: Double = 44_100
 
     init() {
+        #if os(iOS)
+        Self.useLauncherAudioSession()
+        #endif
         let format = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 1)!
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -77,6 +82,23 @@ final class MenuSFX {
             quackPlayer = player
         }
     }
+
+    #if os(iOS)
+    /// Puts the app's one shared audio session in the launcher's category.
+    /// Without it, the session was iOS's default `.soloAmbient` until the
+    /// first stream ("other music will stop playing") and the stream's
+    /// `.playback` after it (ignores the Silent switch, stops other audio) —
+    /// so a menu tick stopped the person's music. Called at startup and after
+    /// a stream releases the session, never while one is live.
+    /// (LIF-menu-sfx-audio-category-leak)
+    nonisolated static func useLauncherAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
+        } catch {
+            NSLog("[VibeLight] menu SFX audio category failed: \(error.localizedDescription)")
+        }
+    }
+    #endif
 
     func play(_ effect: Effect) {
         guard isEnabled else { return }
