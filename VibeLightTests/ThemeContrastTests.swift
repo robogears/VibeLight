@@ -89,6 +89,17 @@ final class ThemeContrastTests: XCTestCase {
         XCTAssertTrue(body.contains("return Theme.hairline(isFilled ? 0.08 : 0.14, contrast)"))
     }
 
+    /// The Settings ▸ Presets slot follows the same rule: the active slot is the
+    /// solid accent (navy number and dot), a focused one is a 0.4 tint (white).
+    func testSettingsPresetSlotInkKeysOffTheSolidFill() throws {
+        let body = try source(of: "private struct SettingsPresetSlot: View {", in: "VibeLight/UI/SettingsView.swift")
+        XCTAssertTrue(body.contains("private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }"))
+        XCTAssertTrue(body.contains(".foregroundStyle(lit || isFilled ? ink : Theme.textSecondary)"))
+        XCTAssertTrue(body.contains(".fill(isFilled ? (lit ? ink : Theme.accent) : .clear)"))
+        XCTAssertFalse(body.contains("lit || isFilled ? .white"))
+        XCTAssertFalse(body.contains("lit ? Color.white"))
+    }
+
     /// Every other full-strength accent fill carries navy ink.
     func testSolidAccentFillsUseNavyInk() throws {
         let row = try source(of: "private struct HostRow: View {", in: "VibeLight/UI/HostMenuCard.swift")

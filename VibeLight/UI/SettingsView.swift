@@ -154,14 +154,17 @@ private struct SettingsPresetSlot: View {
     private var focusID: String { "presetslot:\(slot)" }
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
     private var lit: Bool { isActive || isFocused }
+    /// Only the ACTIVE slot is filled with the full-strength accent; a merely
+    /// focused one is a 0.4 tint and keeps white (UX-white-on-accent-contrast).
+    private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }
 
     var body: some View {
         VStack(spacing: 3) {
             Text("\(slot + 1)")
                 .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .foregroundStyle(lit || isFilled ? .white : Theme.textSecondary)
+                .foregroundStyle(lit || isFilled ? ink : Theme.textSecondary)
             Circle()
-                .fill(isFilled ? (lit ? Color.white : Theme.accent) : .clear)
+                .fill(isFilled ? (lit ? ink : Theme.accent) : .clear)
                 .frame(width: 5, height: 5)
         }
         .frame(width: 44, height: 44)
