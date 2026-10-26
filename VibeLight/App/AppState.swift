@@ -136,18 +136,6 @@ final class AppState {
         init(from decoder: any Decoder) throws { value = try? T(from: decoder) }
     }
 
-    /// Decodes any JSON element without caring what it is — used only to COUNT
-    /// how many entries a persisted blob really holds, so a lossy per-element
-    /// decode can tell "the user saved 2 computers and I read 2" from "the user
-    /// saved 2 and I read 1". Without that count, lossy decoding silently
-    /// becomes lossy *deletion* on the next write-back.
-    private struct AnyDecodableElement: Decodable {
-        init(from decoder: any Decoder) throws {
-            // Consume the value in whatever shape it takes; we only need arity.
-            _ = try? decoder.singleValueContainer()
-        }
-    }
-
     /// Live pairing state for the computer manager.
     struct PairingState: Equatable, Sendable {
         var hostID: String
@@ -187,10 +175,12 @@ final class AppState {
     /// credential). Generated once, reused for every host.
     private(set) var moonDeckClientID: String = ""
     private(set) var moonDeckConfigs: [String: MoonDeckConfig] = [:]
-    /// True when the persisted config blob did not fully decode at launch, so
-    /// `moonDeckConfigs` is a PARTIAL view and must never be written back over
-    /// the original. See `persistMoonDeckConfigs`.
-    @ObservationIgnored private var moonDeckConfigsIncomplete = false
+    /// Saved configs this build can't read, by key, as their original bytes.
+    /// Written back unchanged beside `moonDeckConfigs` on every save, so they
+    /// survive AND other computers' Restart PC pairings still save. Replaces a
+    /// latch that silently refused every save once one entry failed to read.
+    /// (audit DAT-buddy-config-latch-silent)
+    @ObservationIgnored private var unreadableMoonDeckConfigs: [String: Data] = [:]
     var moonDeckPairing: MoonDeckPairing?
     /// The port field text in the setup overlay.
     var moonDeckPortText: String = String(MoonDeckBuddyClient.defaultPort)
@@ -281,6 +271,10 @@ final class AppState {
     /// Exactly `presetSlotCount` entries; `nil` = an empty slot. Slot index i
     /// (0-based) is shown as "Preset i+1".
     private(set) var presets: [StreamPreset?] = Array(repeating: nil, count: presetSlotCount)
+    /// The original bytes of saved slots this build can't read (nil where the
+    /// slot read fine), written back unchanged on every preset save.
+    /// (audit DAT-preset-recovery-loss)
+    @ObservationIgnored private var unreadablePresetSlots: [Data?] = []
     /// Which slot's settings are currently loaded (nil once settings diverge or
     /// a slot is cleared).
     private(set) var activePresetSlot: Int?
@@ -327,12 +321,16 @@ final class AppState {
         #endif
 
         // Our settings: previously persisted > imported Moonlight defaults > fallback.
-        var loaded: StreamSettings
-        if let data = UserDefaults.standard.data(forKey: Self.settingsKey),
-           let saved = try? JSONDecoder().decode(StreamSettings.self, from: data) {
-            loaded = saved
-        } else {
-            loaded = .fallback   // no Moonlight import — our own defaults
+        var loaded: StreamSettings = .fallback   // no Moonlight import — our own defaults
+        if let data = UserDefaults.standard.data(forKey: Self.settingsKey) {
+            if let saved = try? JSONDecoder().decode(StreamSettings.self, from: data) {
+                loaded = saved
+            } else {
+                // The first setting the user changes saves the defaults over
+                // this key, so keep the unreadable original aside first, as the
+                // other stores do. (audit DAT-settings-reset-overwrites-original)
+                SavedDataRecovery.backUpOnce(data, to: "\(Self.settingsKey).unreadable", in: .standard)
+            }
         }
         // Snap the imported bitrate (e.g. 87500) onto the clean 10 Mbps grid so
         // it reads "90 Mbps", not "87". didSet doesn't fire during init.
@@ -356,7 +354,9 @@ final class AppState {
         if completedSetup < Self.requiredSetupVersion { onboardingStep = .welcome }
 
         importedHosts = []   // hosts come from VibeLight's own store only
-        addedHosts = Self.loadAddedHosts()
+        let savedHosts = Self.loadAddedHosts()
+        addedHosts = savedHosts.hosts
+        unreadableAddedHosts = savedHosts.unreadable
         rebuildHosts()
         // Sweep box-art directories belonging to hosts that are gone. Removal
         // is handled at the point of removal, but a host's identity can also
@@ -365,9 +365,10 @@ final class AppState {
         // nothing would ever delete.
         // Never sweep on a partial read: loadAddedHosts returns [] when the
         // blob is unreadable, and sweeping against an empty live-set deletes
-        // EVERY host's box art. Build the set from the store rather than the
-        // maxHosts-truncated view, so a de-duped-away record's cache survives.
-        if !Self.addedHostsIncomplete {
+        // EVERY host's box art (an unreadable record's id is unknown too).
+        // Build the set from the store rather than the maxHosts-truncated
+        // view, so a de-duped-away record's cache survives.
+        if savedHosts.readFully {
             let liveHostIDs = Set(addedHosts.map { $0.uuid ?? "added:\($0.ip)" })
                 .union(hosts.map(\.id))
             Task { [artwork] in await artwork.pruneOrphanedCaches(liveHostIDs: liveHostIDs) }
@@ -378,11 +379,19 @@ final class AppState {
         let savedHostAddr = UserDefaults.standard.string(forKey: Self.selectedHostAddrKey)
         selectedHostID = Self.resolveSelectedHostID(in: hosts, savedID: savedHostID, savedAddr: savedHostAddr)
         apps = displayApps(from: selectedHost?.apps ?? [])
-        if hosts.isEmpty {
+        if savedHosts.blobUnreadable {
+            hostError = "Your saved computers couldn't be read, so the list starts empty. "
+                + "The original is kept aside. Open the computer menu (top-right) to add one by IP."
+        } else if !savedHosts.unreadable.isEmpty {
+            hostError = "Some saved computers couldn't be read, so they're hidden. "
+                + "They're kept as they were, and changes to your other computers are still saved."
+        } else if hosts.isEmpty {
             hostError = "No computers yet — open the computer menu (top-right) to add one by IP."
         }
 
-        presets = Self.loadPresets()
+        let savedPresets = Self.loadPresets()
+        presets = savedPresets.slots
+        unreadablePresetSlots = savedPresets.raw
         // Range-check AND require the slot to actually hold a preset: after one
         // fails to decode (FailableDecodable -> nil slot) the saved index could
         // point at an empty slot, leaving the row highlighting nothing.
@@ -399,24 +408,16 @@ final class AppState {
             UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
         }
         if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey) {
-            if let decoded = try? JSONDecoder().decode([String: FailableDecodable<MoonDeckConfig>].self, from: data) {
-                moonDeckConfigs = decoded.compactMapValues(\.value)   // drop only unreadable entries
-                // Per-entry failures are survivable, but they still mean the
-                // in-memory map is a partial view — don't let a later write
-                // flatten the ones that didn't read.
-                if decoded.count != moonDeckConfigs.count { moonDeckConfigsIncomplete = true }
+            if let decoded = SavedDataRecovery.decodeMap(MoonDeckConfig.self, from: data) {
+                // Unreadable entries stay as their original bytes and are
+                // written back with every save (see persistMoonDeckConfigs).
+                moonDeckConfigs = decoded.records
+                unreadableMoonDeckConfigs = decoded.unreadable
             } else {
-                // TOP-LEVEL decode failure (truncated blob, not an object, the
-                // value type changed shape). FailableDecodable does not protect
-                // this case: the `if let` simply fails and leaves the map empty,
-                // and the very next updateMoonDeckConfig serialises that empty
-                // map back over the key — erasing every host's Buddy pairing
-                // with no log and no UI signal.
-                moonDeckConfigsIncomplete = true
-                let backup = "\(Self.moonDeckConfigsKey).unreadable"
-                if UserDefaults.standard.data(forKey: backup) == nil {
-                    UserDefaults.standard.set(data, forKey: backup)
-                }
+                // TOP-LEVEL failure (truncated blob, not an object): the map
+                // starts empty and the next save writes over this key, so keep
+                // the original aside first.
+                SavedDataRecovery.backUpOnce(data, to: "\(Self.moonDeckConfigsKey).unreadable", in: .standard)
             }
         }
 
@@ -429,22 +430,28 @@ final class AppState {
 
     // MARK: - Presets
 
-    private static func loadPresets() -> [StreamPreset?] {
+    private static func loadPresets() -> (slots: [StreamPreset?], raw: [Data?]) {
         let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
         guard let data = UserDefaults.standard.data(forKey: presetsKey) else {
             // No v2 blob. Before giving up, adopt the pre-0.1.7 one: presets
             // moved from a dynamic list to six fixed slots and the key gained a
             // ".v2" suffix with no migration, so every preset made before that
             // release has been sitting in defaults unread ever since.
-            return migrateLegacyPresets() ?? empty
+            return (migrateLegacyPresets() ?? empty, [])
         }
-        guard let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data) else { return empty }
-        // A bad or incompatible slot decodes to nil (an empty slot) — preserving
-        // slot positions — instead of dropping EVERY preset when one entry can't
-        // be read. Normalize to exactly the slot count.
-        var slots: [StreamPreset?] = arr.prefix(presetSlotCount).map(\.value)
-        while slots.count < presetSlotCount { slots.append(nil) }
-        return slots
+        // A bad or incompatible slot shows as empty — preserving slot positions
+        // — instead of dropping EVERY preset when one entry can't be read. Its
+        // original bytes are kept and written back on every save, so saving,
+        // applying or renaming ANOTHER slot (or the settings hook) never erases
+        // it; only saving into that slot replaces it.
+        // (audit DAT-preset-recovery-loss)
+        guard let decoded = SavedDataRecovery.decodeSlots(StreamPreset.self, from: data, count: presetSlotCount) else {
+            // Not even an array: the next save writes six slots over it, so
+            // keep the original aside first.
+            SavedDataRecovery.backUpOnce(data, to: "\(presetsKey).unreadable", in: .standard)
+            return (empty, [])
+        }
+        return decoded
     }
 
     /// One-shot adoption of the pre-0.1.7 `vibelight.presets` blob into the six
@@ -467,7 +474,7 @@ final class AppState {
     }
 
     private func persistPresets() {
-        if let data = try? JSONEncoder().encode(presets) {
+        if let data = SavedDataRecovery.encodeSlots(presets, preserving: unreadablePresetSlots) {
             UserDefaults.standard.set(data, forKey: Self.presetsKey)
         }
         UserDefaults.standard.set(activePresetSlot, forKey: Self.activePresetKey)
@@ -490,6 +497,9 @@ final class AppState {
         guard presets.indices.contains(i) else { return }
         let name = presets[i]?.name ?? defaultPresetName(forSlot: i)
         presets[i] = StreamPreset(id: UUID().uuidString, name: name, settings: settings)
+        // An explicit save into the slot is the one thing that replaces an
+        // unreadable original there (so a later Clear can't resurrect it).
+        if unreadablePresetSlots.indices.contains(i) { unreadablePresetSlots[i] = nil }
         activePresetSlot = i
         persistPresets()
         controller.focusTick()
@@ -725,39 +735,30 @@ final class AppState {
 
     private static let addedHostsKey = "vibelight.addedHosts"
 
-    /// Set when the saved-computer blob existed but did not fully decode. While
-    /// this is true the list is INCOMPLETE, so writing it back would erase
-    /// whatever failed to read — see `persistAddedHosts`.
-    @ObservationIgnored private(set) static var addedHostsIncomplete = false
-    /// Where the unreadable blob was copied, so nothing is lost even if the
-    /// decode never starts working.
-    @ObservationIgnored private(set) static var addedHostsBackupKey: String?
+    /// Saved-computer records this build can't read, as their original bytes.
+    /// Written back unchanged beside `addedHosts` on every save, so they
+    /// survive untouched AND adding, pairing or removing the other computers
+    /// is still saved. Replaces a latch that refused every write once one
+    /// record failed to read — which nothing could ever clear, so every later
+    /// change vanished on quit. (audit DAT-added-hosts-latch-forever)
+    @ObservationIgnored private var unreadableAddedHosts: [Data] = []
 
-    private static func loadAddedHosts() -> [AddedHost] {
-        addedHostsIncomplete = false
-        addedHostsBackupKey = nil
-        guard let data = UserDefaults.standard.data(forKey: addedHostsKey) else { return [] }
+    private static func loadAddedHosts()
+        -> (hosts: [AddedHost], unreadable: [Data], blobUnreadable: Bool, readFully: Bool) {
+        guard let data = UserDefaults.standard.data(forKey: addedHostsKey) else { return ([], [], false, true) }
 
-        // Lossy: decode entries one-by-one and keep the good ones, so a single
-        // corrupt or schema-incompatible record can't drop the whole list — each
+        // Decode entries one-by-one and keep the good ones, so a single corrupt
+        // or schema-incompatible record can't drop the whole list — each
         // AddedHost carries a pinned pairing cert whose loss forces re-pairing.
-        //
-        // Lossy decoding is only SAFE if losing something is noticed. Count the
-        // elements actually present and compare: any shortfall means this list
-        // is a partial view of what the user saved, and persistAddedHosts must
-        // not overwrite the original with it. The raw bytes are copied aside
-        // first so a record that can't be read today is still recoverable.
-        let present = (try? JSONDecoder().decode([AnyDecodableElement].self, from: data))?.count
-        guard let arr = try? JSONDecoder().decode([FailableDecodable<AddedHost>].self, from: data) else {
-            // The whole blob is unreadable (truncated, not an array, wrong
-            // shape). Do NOT return [] and let the next write flatten it.
-            markAddedHostsIncomplete(rawBlob: data)
-            return []
+        // The ones that don't decode are kept byte for byte (see above).
+        guard let decoded = SavedDataRecovery.decodeList(AddedHost.self, from: data) else {
+            // The whole blob is unreadable (truncated, not an array). The list
+            // starts empty and the next save writes over this key, so keep the
+            // original aside first.
+            SavedDataRecovery.backUpOnce(data, to: "\(addedHostsKey).unreadable", in: .standard)
+            return ([], [], true, false)
         }
-        var hosts = arr.compactMap(\.value)
-        if let present, present != hosts.count {
-            markAddedHostsIncomplete(rawBlob: data)
-        }
+        var hosts = decoded.records
         // Heal uuid collisions left by older builds: when the same PC was saved
         // at two addresses (LAN + Tailscale), both records could end up carrying
         // the same learned uuid, and rebuildHosts then de-duped one out of the
@@ -769,34 +770,14 @@ final class AppState {
         for i in hosts.indices {
             if let uuid = hosts[i].uuid, !seenUUIDs.insert(uuid).inserted { hosts[i].uuid = nil }
         }
-        return hosts
-    }
-
-    /// Copies the unreadable blob to a dated one-shot key and latches the
-    /// incomplete flag. Called only from the load path.
-    private static func markAddedHostsIncomplete(rawBlob: Data) {
-        addedHostsIncomplete = true
-        let key = "\(addedHostsKey).unreadable"
-        // One-shot: never overwrite an earlier rescue copy with a later,
-        // possibly already-truncated one.
-        if UserDefaults.standard.data(forKey: key) == nil {
-            UserDefaults.standard.set(rawBlob, forKey: key)
-        }
-        addedHostsBackupKey = key
+        return (hosts, decoded.unreadable, false, decoded.unreadable.isEmpty)
     }
 
     private func persistAddedHosts() {
-        // Refuse to write a list we know is partial. Re-encoding only the
-        // survivors over the same key is what turns "one record didn't decode
-        // today" into "that computer's pairing is gone forever" — and it used to
-        // happen within seconds of launch, because the first successful probe
-        // calls upgradeAddedHost, which persists.
-        guard !Self.addedHostsIncomplete else {
-            hostError = "Some saved computers couldn't be read, so the list is not being saved over. "
-                + "Your other computers still work. Nothing was deleted — the original is kept."
-            return
-        }
-        if let data = try? JSONEncoder().encode(addedHosts) {
+        // Never re-encode only the survivors: that is what turns "one record
+        // didn't decode today" into "that computer's pairing is gone forever"
+        // (the first successful probe calls upgradeAddedHost, which persists).
+        if let data = SavedDataRecovery.encodeList(addedHosts, preserving: unreadableAddedHosts) {
             UserDefaults.standard.set(data, forKey: Self.addedHostsKey)
         }
     }
@@ -995,16 +976,16 @@ final class AppState {
         var cfg = moonDeckConfigs[key] ?? MoonDeckConfig()
         mutate(&cfg)
         moonDeckConfigs[key] = cfg
+        // Setting up Restart PC again for this computer replaces its
+        // unreadable entry, if it had one.
+        unreadableMoonDeckConfigs[key] = nil
         persistMoonDeckConfigs()
     }
 
-    /// Writes the config map back. Refuses when the load was incomplete — the
-    /// in-memory map is then a partial view, and re-encoding it over the key is
-    /// what would turn "one blob didn't decode" into "every host's Buddy pairing
-    /// is gone". The original bytes are preserved under a `.unreadable` key.
+    /// Writes the readable configs back together with the unreadable entries'
+    /// original bytes, so a save never flattens what didn't read.
     private func persistMoonDeckConfigs() {
-        guard !moonDeckConfigsIncomplete else { return }
-        if let data = try? JSONEncoder().encode(moonDeckConfigs) {
+        if let data = SavedDataRecovery.encodeMap(moonDeckConfigs, preserving: unreadableMoonDeckConfigs) {
             UserDefaults.standard.set(data, forKey: Self.moonDeckConfigsKey)
         }
     }
@@ -1243,7 +1224,10 @@ final class AppState {
         // Buddy certificate and `paired` flag behind forever — and re-adding the
         // same IP silently inherited a stale pin from a machine that may since
         // have been reinstalled.
-        for candidate in host.candidateAddresses { moonDeckConfigs[candidate.host] = nil }
+        for candidate in host.candidateAddresses {
+            moonDeckConfigs[candidate.host] = nil
+            unreadableMoonDeckConfigs[candidate.host] = nil
+        }
         persistMoonDeckConfigs()
         let wasSelected = selectedHostID == host.id
         rebuildHosts()
