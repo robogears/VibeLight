@@ -2,14 +2,13 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: resumed by you — finishing the audit, starting the fix pass
+STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: audit complete and its visual page published
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
 - Commits: `git log --oneline --grep='^loop' main..codeX`
 
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
-- ❓ Which of the 13 parked visual changes should I build? (explained in chat on 26 Oct; recommended: 1–8) — options: all | 1–8 | pick numbers | keep parked — parked item: "Visual / design changes"
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
@@ -20,6 +19,8 @@ STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: resumed by yo
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 13:30 The audit's visual breakdown is published as a private Artifact (only you can open it): https://claude.ai/artifact/VMjJrFamMZh8EmixUtZpQo
+- 26 Oct 13:20 Audit sweep 4 came back dry: its one lead (the Restart PC certificate check and how typed addresses are spelled) could not be settled without a live test, so it's listed under Needs investigation. The audit is complete: 0 critical · 0 high · 18 medium · 70 low · 27 suggestion.
 - 26 Oct 13:15 Resumed by you ("resume the overnight loop and keep working"). Same branch, same plan; hard limits and keep-awake back on.
 - 26 Oct 13:05 Stopped by you. Audit sweep 4, fix group 1 and the visual-page design were stopped; fix group 1 had made no changes, so its working copy was removed. The audit report was finalised with sweep 3 included and marked "not shown dry".
 - 26 Oct 12:55 Audit sweep 3 finished: 2 new low-severity iPad keyboard findings survived their skeptics (wrong symbols on non-US PC layouts; split or floating keyboards probably bypass the touch guard). Fix-pass backlog written into the plan.
@@ -37,7 +38,7 @@ STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: resumed by yo
 - Cycle 0: mission in progress
 
 ## Completed
-- Total: 3 · recent: ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
+- Total: 4 · recent: ✅ Audit finished (dry) + visual page — 25m · ✅ Deep audit report — 70m · ✅ Helper repo moved and repointed — 14m · ✅ Stray `f` removed from FocusEngineTests.swift — 1m
 
 ## Blocked (environment)
 - (none)
@@ -49,6 +50,8 @@ STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: resumed by yo
 - `AIKnowledge.md` — kept on this Mac only at your request (it describes the September audit's findings in detail). Excluded via `.git/info/exclude`.
 
 ## Decisions & assumptions (last 20 + tally)
+- Visual changes unparked: you said "do everything" (26 Oct) to the 13 visual changes. Read as those 13 only — the four suggested new features and the public-history question stay parked until you say otherwise. Per your rules: a design brief first, a Fable design lead plans, Opus agents build and review, apple-design does the finishing pass, real pixels checked.
+- Every fix that changes user-visible wording now gets an apple-design writing check in review (you asked, 26 Oct).
 - Stayed on `codeX` (you, kickoff). It equalled v0.2.1 plus uncommitted notes; it gets pushed to GitHub as a new branch.
 - `AIKnowledge.md` local-only (you); the 5-line pointer to it in `CLAUDE.md` is committed — it works for agents on this Mac and is a dead link on GitHub.
 - No visual changes tonight (you): bugs, accessibility labels, keyboard/controller dead ends and wording only; anything that changes how a screen looks gets parked with a plan.
@@ -79,6 +82,6 @@ git checkout main && git merge --no-ff codeX
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
- "cycles": 0, "done": 3, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 4, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```
