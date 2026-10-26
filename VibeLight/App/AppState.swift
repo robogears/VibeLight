@@ -682,6 +682,13 @@ final class AppState {
                 chrome?.endStreamPresentationIfActive()
                 presentOverlay(.error(message))
             }
+            // A launch-time update offer that arrived mid-stream waits for the
+            // stream to be over. The phase turns idle a moment before the
+            // ended/error card is dismissed, so look again on the next turn,
+            // once the card has gone. (audit QUA-launch-update-card-no-stream-gate)
+            if phase == .idle, launchUpdateCardWaiting {
+                Task { [weak self] in self?.presentLaunchUpdateCardIfDue() }
+            }
         }
         session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
@@ -775,9 +782,53 @@ final class AppState {
             try? await Task.sleep(for: .seconds(2))
             guard let self else { return }
             await updateService.check(silent: true)
-            if updateService.phase == .available, overlay == nil, screen == .home, !isOnboarding {
-                presentOverlay(.update)
-            }
+            launchUpdateCardWaiting = false
+            presentLaunchUpdateCardIfDue(firstLook: true)
+        }
+    }
+
+    /// The launch-time update card found an update while a stream was starting
+    /// or live; it is shown once the stream is over instead of being dropped.
+    @ObservationIgnored private var launchUpdateCardWaiting = false
+
+    enum LaunchUpdateCardDecision: Equatable { case show, waitForStreamEnd, skip }
+
+    /// Pure rule for the launch-time update card. The GitHub check can answer
+    /// up to ~17 s after launch; by then a game may be streaming, and the Mac
+    /// clears the card slot when a stream goes live — so "no card open" alone
+    /// put the update card under the game, where it was then replaced by the
+    /// stream-ended card and lost. A live (or starting/ending) session now
+    /// means "wait"; any other card open or a screen other than Home means
+    /// "skip" (the Settings row still offers the update), as before.
+    /// (audit QUA-launch-update-card-no-stream-gate)
+    nonisolated static func launchUpdateCardDecision(updateAvailable: Bool, sessionIdle: Bool,
+                                                     overlayOpen: Bool, onHome: Bool,
+                                                     onboarding: Bool) -> LaunchUpdateCardDecision {
+        guard updateAvailable else { return .skip }
+        guard sessionIdle else { return .waitForStreamEnd }
+        return overlayOpen || !onHome || onboarding ? .skip : .show
+    }
+
+    /// Shows the launch-time update card when the rule allows. `firstLook` is
+    /// the check's own answer; later looks only happen for a card that was
+    /// waiting on a stream, and keep waiting while another card is still up
+    /// (the user might be resuming straight into another stream).
+    private func presentLaunchUpdateCardIfDue(firstLook: Bool = false) {
+        guard firstLook || launchUpdateCardWaiting else { return }
+        let decision = Self.launchUpdateCardDecision(
+            updateAvailable: updateService.phase == .available,
+            sessionIdle: session.phase == .idle,
+            overlayOpen: overlay != nil, onHome: screen == .home, onboarding: isOnboarding)
+        switch decision {
+        case .show:
+            launchUpdateCardWaiting = false
+            presentOverlay(.update)
+        case .waitForStreamEnd:
+            launchUpdateCardWaiting = true
+        case .skip:
+            // A waiting card stays waiting only while some other card is
+            // still being dismissed; anything else ends the wait.
+            if firstLook || updateService.phase != .available { launchUpdateCardWaiting = false }
         }
     }
 
