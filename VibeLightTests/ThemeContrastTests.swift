@@ -116,6 +116,19 @@ final class ThemeContrastTests: XCTestCase {
                                       + "                              destructive: true)"))
     }
 
+    // MARK: - No hover zoom (UX-hover-zoom-settings-tabs)
+
+    /// Hover only brightens: a Settings tab never scales, and a card button
+    /// scales for focus alone (a hover on the Mac focuses it, so it still grows).
+    func testHoverBrightensButNeverScales() throws {
+        let tab = try source(of: "private struct TabChip: View {", in: "VibeLight/UI/SettingsView.swift")
+        XCTAssertFalse(tab.contains(".scaleEffect"))
+        XCTAssertTrue(tab.contains("Color.white.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06)"))
+        let button = try source(of: "struct OverlayButton: View {", in: "VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(button.contains(".scaleEffect(isFocused ? 1.04 : 1.0)"))
+        XCTAssertEqual(button.components(separatedBy: ".scaleEffect").count, 2)   // exactly one
+    }
+
     /// The body of one view struct, from its declaration to the closing brace
     /// at column 0 — so a pin can't pass on text elsewhere in the file.
     private func source(of declaration: String, in path: String) throws -> String {

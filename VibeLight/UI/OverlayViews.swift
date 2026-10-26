@@ -320,7 +320,8 @@ struct OverlayButton: View {
                 .strokeBorder(Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast),
                               lineWidth: 1)
         }
-        .scaleEffect(isFocused ? 1.04 : (hoverActive ? 1.02 : 1.0))
+        // Hover brightens; only focus scales (owner rule: nothing zooms on hover).
+        .scaleEffect(isFocused ? 1.04 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: hoverActive)
         .onHover { hovering = $0

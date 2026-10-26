@@ -131,7 +131,7 @@ private struct TabChip: View {
             .overlay {
                 Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
             }
-            .scaleEffect(selected ? 1.0 : (hovering && state.inputMode == .pointer ? 1.03 : 1.0))
+            // Hover brightens, never scales (owner rule: nothing zooms on hover).
             .contentShape(Capsule())
             .onHover { hovering = $0 }
             .onTapGesture { state.setSettingsTab(tab) }
