@@ -15,7 +15,6 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 12 of 13 merged (empty Home that says what to do, computer banner that doesn't cut messages off, stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size, Menu Sounds switch, TV dead end, companion readout removed, navy labels on the blue, destructive red, no hover zoom). The TV fix checks out (the Simulator fakes a controller of its own, so the no-controller case is a live check on your iPad). Building the last one: setup screens show your controller's real buttons. |
 | MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Merged: group 1 (saved data never lost, bad values can't crash — 7 findings), group 5 (your pairings can't be lost to an unreadable identity — 4 findings), group 7 (updater, move-to-Applications, helper errors — 6 findings) and group 9 (docs, tests, the flaky test — 13 findings). Group 6a finishing; groups 2, 3, 4, 6b, 8 and a small group 9 leftover queued for a future run. |
 | MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
 | MT-13 | 26 Oct | "When you're done with this wrap up and end /overnightprotocol end" | 🔨 | Replaces MT-12: finishing what's running (empty Home/banner, setup hints, group 9, group 6a), then the loop wraps up and ends. Groups 2, 3, 4, 6b and 8 stay queued here for a future run. |
@@ -27,6 +26,7 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | Done |
 |---|---|---|---|
+| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | All 13 merged into `codeX`: iPad text and touch sizes + Interface Size, TV dead end, stream-controls handle, navy labels on the blue, destructive red, no hover zoom, setup hints with your controller's real buttons, keyboard hints on Mac, computer banner that doesn't cut messages off, empty Home that says what to do, companion readout removed, Menu Sounds switch, full-bleed iPad icon. Taste calls and live checks are in the loop report. |
 | MT-10 | 26 Oct | "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on" | Merged into `codeX`: the computer you're on is first, a thin divider follows, the controller walks the rows in the drawn order, and the menu opens (and returns from pairing) on the right computer. Live check in the loop report. |
 | MT-11 | 26 Oct | "dont stop what you're doing … add it to … MasterTasks" | Standing rule; this file. |
 | MT-9 | 26 Oct | "are you also looking at this from an /apple-design perspective?" | Yes — the audit's UI review used apple-design; every fix that changes wording or UI now gets an apple-design check in review. |
