@@ -1,7 +1,7 @@
 # Overnight Loop Plan — 2026-10-21
 
 <!-- run metadata — recovery reads this first; update it at the end of every turn -->
-STATE: STOPPED             # stopped by the owner, 26 Oct 2026
+STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED  (resumed by the owner, 26 Oct)
 PROJECT_PATH: ~/Developer/VibeLight
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792610686
@@ -31,6 +31,7 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 ## Mission (official items — do these first)
 - [x] 0. Remove the stray `f` at VibeLightTests/FocusEngineTests.swift:62 that stopped the test target compiling (baseline QUA-focus-test-typo-d5283e8d) — 1m. Restored the committed file exactly; no diff to commit.
 - [x] 1. Deep /audit, FULL scope — 70m. Report written privately (<git-dir>/overnight-loop/audit-2026-10-21/AUDIT-REPORT-2026-10-26.md): 0 critical · 0 high · 18 medium · 70 low · 27 suggestion; 1 fixed since 9 Sep, 4 refuted, 2 unsettled; all 26 September findings re-checked. NOT finished: sweep 4 (the audit is not yet shown dry) and the visual page — both stopped with the loop.
+- [ ] 1b. Finish the audit ("come back to me") — done when: sweep 4 has run (the audit is shown dry, or the report says plainly it isn't) and the visual breakdown is published as a private Artifact with the same counts and IDs as the report. Read-only; runs in the background alongside the fix pass.
 - [x] 2. Move the helper repo to ~/Developer and explain the sibling repos — 14m. Helper moved (HEAD, 1,810 files, fsck identical); `scripts/embed-helper.sh` and `scripts/ios/build-deps.sh` now find it beside the repo (`$ROOT/../vibelight-moonlight-helper`, override with `VIBELIGHT_HELPER_DIR`) instead of a hard-coded path; Swift dev-build fallback, CLAUDE.md and the iOS plan doc updated; temporary link removed; macOS build green. `moonlight-ios-reference` stays in ~/Documents (documentation-only, owner's call).
 - [ ] 3. Fix pass on the audit's verified findings — done when: every Safe finding is fixed (with a test where testable) and committed as `loop: audit-fix — <ID>`; Needs-verification findings get their non-drastic version plus a Recommendation; design/visual findings are PARKED, not built; MARKETING_VERSION is 0.2.2. NOT STARTED: fix group 1 was launched and stopped within minutes with no changes made; its working copy was removed.
 <!-- open = [ ] or [~]; resume [~] first

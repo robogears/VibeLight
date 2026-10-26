@@ -2,13 +2,14 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: STOPPED · cycle 0 · 3 done · build+tests GREEN · last: stopped by you — audit report delivered, fix pass not started
+STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: resumed by you — finishing the audit, starting the fix pass
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
 - Commits: `git log --oneline --grep='^loop' main..codeX`
 
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
+- ❓ Which of the 13 parked visual changes should I build? (explained in chat on 26 Oct; recommended: 1–8) — options: all | 1–8 | pick numbers | keep parked — parked item: "Visual / design changes"
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
@@ -19,6 +20,7 @@ STATUS: STOPPED · cycle 0 · 3 done · build+tests GREEN · last: stopped by yo
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 13:15 Resumed by you ("resume the overnight loop and keep working"). Same branch, same plan; hard limits and keep-awake back on.
 - 26 Oct 13:05 Stopped by you. Audit sweep 4, fix group 1 and the visual-page design were stopped; fix group 1 had made no changes, so its working copy was removed. The audit report was finalised with sweep 3 included and marked "not shown dry".
 - 26 Oct 12:55 Audit sweep 3 finished: 2 new low-severity iPad keyboard findings survived their skeptics (wrong symbols on non-US PC layouts; split or floating keyboards probably bypass the touch guard). Fix-pass backlog written into the plan.
 - 26 Oct 12:50 VibeLight now finds the stream helper beside it in ~/Developer (scripts look next to the repo, with a `VIBELIGHT_HELPER_DIR` override), the temporary link at the old path is gone, and the Mac build is green.
@@ -78,5 +80,5 @@ git checkout main && git merge --no-ff codeX
 ```json
 {"date": "2026-10-21", "branch": "codeX", "base": "main",
  "cycles": 0, "done": 3, "shelved": 0, "blocked": 0,
- "state": "stopped", "build": "green"}
+ "state": "looping", "build": "green"}
 ```
