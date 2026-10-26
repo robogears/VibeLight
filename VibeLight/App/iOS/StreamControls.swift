@@ -6,9 +6,15 @@ import SwiftUI
 ///
 /// They show themselves when a stream starts, then get out of the way — after
 /// `visibleDuration` they slide off the right edge, because a game does not
-/// want two buttons parked over it. Swiping in from the right edge brings them
-/// back, tracking the finger rather than snapping, so it reads as pulling a
-/// drawer out rather than triggering a shortcut.
+/// want two buttons parked over it. A faint pill stays at the top-right edge
+/// where they went; tapping it brings them back, and swiping in from it tracks
+/// the finger rather than snapping, so it reads as pulling a drawer out rather
+/// than triggering a shortcut.
+///
+/// With VoiceOver, Switch Control or AssistiveTouch running they never retire
+/// (a timed control is one those users can lose), and "Leave the Stream" is an
+/// accessibility action on the whole cluster so it exists even while hidden.
+/// Under Reduce Motion they fade in place instead of sliding.
 ///
 /// Not shown when a TV is driving the video: there the iPad is already a
 /// dedicated companion panel with its own controls, and nothing is covering
@@ -27,7 +33,7 @@ struct StreamControls: View {
     /// plus the trailing padding, plus margin for the button's shadow.
     private static let hiddenOffset: CGFloat = 96
 
-    /// Width of the invisible strip that catches the reveal swipe. Only present
+    /// Width of the strip that catches the reveal tap or swipe. Only present
     /// while the controls are hidden, and only in the top-right corner, so the
     /// dead zone it creates for touch-as-input is as small as it can be.
     private static let grabWidth: CGFloat = 32
@@ -37,9 +43,21 @@ struct StreamControls: View {
     @State private var drag: CGFloat = 0
     @State private var hideTask: Task<Void, Never>?
 
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Assistive tech is driving: the controls stay put, as they do while the
+    /// keyboard is up. AssistiveTouch has no environment value, so it is read
+    /// directly.
+    private var assistiveTechActive: Bool {
+        voiceOver || switchControl || UIAccessibility.isAssistiveTouchRunning
+    }
+
     /// Live position: the resting place plus whatever the finger is doing,
     /// clamped so it can never be dragged past either end.
     private var offsetX: CGFloat {
+        guard !reduceMotion else { return 0 }   // fade in place, never slide
         let base = revealed ? 0 : Self.hiddenOffset
         return min(max(base + drag, 0), Self.hiddenOffset)
     }
@@ -47,7 +65,14 @@ struct StreamControls: View {
     /// Fades as it leaves rather than sliding out at full strength — a button
     /// disappearing off the edge at full opacity reads as a glitch.
     private var opacity: Double {
-        1 - Double(offsetX / Self.hiddenOffset)
+        if reduceMotion { return revealed ? 1 : 0 }
+        return 1 - Double(offsetX / Self.hiddenOffset)
+    }
+
+    /// Once hidden it must stop taking touches, or an invisible button keeps
+    /// swallowing taps meant for the game.
+    private var takesTouches: Bool {
+        reduceMotion ? revealed : offsetX < Self.hiddenOffset / 2
     }
 
     var body: some View {
@@ -55,7 +80,12 @@ struct StreamControls: View {
             if !revealed { grabStrip }
             controls
         }
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: revealed)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2)
+                                : .spring(response: 0.38, dampingFraction: 0.86),
+                   value: revealed)
+        // Reachable from the rotor / Switch Control menu even while the
+        // buttons are tucked away.
+        .accessibilityAction(named: Text("Leave the Stream")) { onLeave() }
         .onAppear { scheduleHide() }
         .onDisappear { hideTask?.cancel() }
         // Keyboard up → keep the controls out; you need the ✕ and the keyboard
@@ -63,6 +93,11 @@ struct StreamControls: View {
         // would be maddening.
         .onChange(of: keyboardUp) { _, up in
             if up { reveal(thenHide: false) } else { scheduleHide() }
+        }
+        // VoiceOver or Switch Control turned on mid-stream → bring the
+        // buttons back and keep them; turned off → the normal clock resumes.
+        .onChange(of: assistiveTechActive) { _, active in
+            if active { reveal(thenHide: false) } else { scheduleHide() }
         }
     }
 
@@ -77,9 +112,7 @@ struct StreamControls: View {
         .padding(24)
         .offset(x: offsetX)
         .opacity(opacity)
-        // Once off-screen it must stop taking touches, or an invisible button
-        // keeps swallowing taps meant for the game.
-        .allowsHitTesting(offsetX < Self.hiddenOffset / 2)
+        .allowsHitTesting(takesTouches)
         .gesture(
             DragGesture(minimumDistance: 8)
                 .onChanged { value in
@@ -94,11 +127,24 @@ struct StreamControls: View {
         )
     }
 
-    /// The reveal target. Invisible, but a real hit area.
+    /// The reveal target: a faint pill (like Slide Over's) on a larger, clear
+    /// hit area. The pill's centre (24 pt down + half of 44) lines up with
+    /// where the ✕ sits when revealed, so it reads as "the buttons are tucked
+    /// in here". White 0.5 on black is 5.3:1; the black shadow keeps its edge
+    /// over bright video.
     private var grabStrip: some View {
         Color.clear
             .frame(width: Self.grabWidth, height: Self.grabHeight)
+            .overlay(alignment: .topTrailing) {
+                Capsule()
+                    .fill(.white.opacity(0.5))
+                    .frame(width: 4, height: 44)
+                    .shadow(color: .black.opacity(0.5), radius: 2)
+                    .padding(.top, 24)
+                    .padding(.trailing, 6)
+            }
             .contentShape(Rectangle())
+            .onTapGesture { reveal() }      // the simple way; the swipe is the shortcut
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { value in
@@ -111,6 +157,10 @@ struct StreamControls: View {
                         if pulled { reveal() }
                     }
             )
+            .accessibilityElement()
+            .accessibilityLabel("Show stream controls")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { reveal() }
     }
 
     private func controlButton(_ symbol: String, label: String,
@@ -144,7 +194,7 @@ struct StreamControls: View {
     /// taps extend the window instead of stacking timers that fire in sequence.
     private func scheduleHide() {
         hideTask?.cancel()
-        guard !keyboardUp else { return }
+        guard !keyboardUp, !assistiveTechActive else { return }
         hideTask = Task { @MainActor in
             try? await Task.sleep(for: Self.visibleDuration)
             guard !Task.isCancelled, !keyboardUp else { return }
