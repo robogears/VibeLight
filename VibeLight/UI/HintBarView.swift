@@ -23,8 +23,9 @@ struct GlyphBadge: View {
 
 /// One hint in the bar. In bind mode it shows the input glyph + label (and is
 /// still clickable); in touch mode it's a plain tappable pill with just the
-/// label — no controller/keyboard glyph.
-private struct HintChip: View {
+/// label — no controller/keyboard glyph. Shared with the setup wizard's hints
+/// so the two bars can't drift (UX-onboarding-hints-generic-glyphs).
+struct HintChip: View {
     @Environment(AppState.self) private var state
     @Environment(\.colorSchemeContrast) private var contrast
     let event: NavigationEvent
@@ -65,6 +66,8 @@ private struct HintChip: View {
                 .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
                 .overlay(Capsule().strokeBorder(Theme.hairline(0.12, contrast), lineWidth: 1))
                 .contentShape(Capsule())
+                // A Text with a tap gesture; tell VoiceOver it's a button.
+                .accessibilityAddTraits(.isButton)
         } else {
             let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
             HStack(spacing: 7) {
@@ -115,14 +118,27 @@ struct HintBarView: View {
         }
     }
 
+    private var touchButtons: Bool { Self.touchPresentation(state) }
+
     /// Touch presentation on iOS: no controller connected, or the user is
     /// touching (`.pointer`). A connected controller that's driving keeps glyphs.
-    private var touchButtons: Bool {
+    /// The setup wizard's hints read the same rule (UX-onboarding-hints-generic-glyphs).
+    static func touchPresentation(_ state: AppState) -> Bool {
         #if os(iOS)
-        return state.controller.connectedControllers.isEmpty || state.inputMode == .pointer
+        let touchPlatform = true
         #else
-        return false
+        let touchPlatform = false
         #endif
+        return touchPresentation(touchPlatform: touchPlatform,
+                                 controllerConnected: !state.controller.connectedControllers.isEmpty,
+                                 inputMode: state.inputMode)
+    }
+
+    /// The pure rule behind `touchPresentation(_:)`. The Mac always shows glyphs
+    /// (it has a keyboard even with no pad).
+    nonisolated static func touchPresentation(touchPlatform: Bool, controllerConnected: Bool,
+                                              inputMode: InputMode) -> Bool {
+        touchPlatform && (!controllerConnected || inputMode == .pointer)
     }
 
     /// Touch shows only hints that carry a label. Quit now carries one and is a

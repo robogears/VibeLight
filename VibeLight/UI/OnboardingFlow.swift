@@ -417,36 +417,25 @@ private struct OnboardingHints: View {
     @Environment(AppState.self) private var state
     let step: OnboardingStep
 
+    /// The main hint bar's chips: the connected controller's own buttons
+    /// (Ⓐ/Ⓑ, Cross/Circle, ⏎/⎋ on a keyboard), or plain tappable pills on
+    /// touch. A tap routes through `state.route`, which hands it to the wizard
+    /// (UX-onboarding-hints-generic-glyphs).
     var body: some View {
-        HStack(spacing: 26) {
+        let touch = HintBarView.touchPresentation(state)
+        HStack(spacing: touch ? 12 : 26) {
             if step != .theme {   // Back exists on every step after the first content step
-                hint("chevron.left.circle", "Back") { state.backOnboarding() }
+                HintChip(event: .back, label: "Back", touch: touch)
             }
-            if step == .theme || step == .quality {
-                hint("arrow.left.arrow.right", "Change", action: nil)
+            // Touch users tap the cards directly, so the d-pad hint drops out.
+            if !touch && (step == .theme || step == .quality) {
+                HintChip(event: .move(.left), label: "Change", touch: false)
+                    .allowsHitTesting(false)
             }
-            hint(step == .finish ? "checkmark.circle" : "arrow.right.circle",
-                 step == .finish ? "Jump in" : "Continue") {
-                state.advanceOnboarding()
-            }
+            HintChip(event: .select, label: step == .finish ? "Jump in" : "Continue", touch: touch)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
         .background(.black.opacity(0.35), in: Capsule())
-    }
-
-    private func hint(_ symbol: String, _ label: String, action: (() -> Void)?) -> some View {
-        let row = HStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 16, weight: .semibold))
-            Text(label).font(.system(size: 15, weight: .semibold, design: .rounded))
-        }
-        .foregroundStyle(Theme.textSecondary)
-        return Group {
-            if let action {
-                Button(action: action) { row }.buttonStyle(.plain)
-            } else {
-                row
-            }
-        }
     }
 }
