@@ -150,4 +150,55 @@ final class SavedDataRecoveryTests: XCTestCase {
         XCTAssertTrue(loaded.raw.allSatisfy { $0 == nil }, "null is an empty slot, not an unreadable one")
         XCTAssertNil(SavedDataRecovery.decodeSlots(StreamPreset.self, from: json("{}"), count: 6))
     }
+
+    // MARK: - Damaged saved numbers (DAT-stored-size-overflow)
+
+    func testIntMaxSavedSizeFrameRateAndBitrateLoadClamped() throws {
+        let max = Int.max
+        let stored = json(#"{"width": \#(max), "height": \#(max), "fps": \#(max), "bitrateKbps": \#(max)}"#)
+        let s = try JSONDecoder().decode(StreamSettings.self, from: stored)
+        XCTAssertEqual(s.width, 7680)
+        XCTAssertEqual(s.height, 4320)
+        XCTAssertEqual(s.fps, 240)
+        XCTAssertEqual(s.bitrateKbps, 200_000)
+
+        let negative = json(#"{"width": -5, "height": 0, "fps": -1, "bitrateKbps": -9}"#)
+        let n = try JSONDecoder().decode(StreamSettings.self, from: negative)
+        XCTAssertEqual([n.width, n.height, n.fps, n.bitrateKbps], [256, 144, 1, 10_000])
+    }
+
+    func testPresetHoldingIntMaxValuesDecodesClamped() throws {
+        let max = Int.max
+        let stored = json(#"{"id":"p","name":"Broken","settings":{"width":\#(max),"height":\#(max),"bitrateKbps":\#(max)}}"#)
+        let p = try JSONDecoder().decode(StreamPreset.self, from: stored)
+        XCTAssertEqual(p.settings.width, 7680)
+        XCTAssertEqual(p.settings.bitrateKbps, 200_000)
+    }
+
+    func testResolutionListSortDoesNotTrapOnAHugeSize() {
+        XCTAssertEqual(AppState.pixelCount(Int.max, Int.max), Int.max)
+        XCTAssertEqual(AppState.pixelCount(Int.max, -2), Int.min)
+        XCTAssertEqual(AppState.pixelCount(1920, 1080), 2_073_600)
+        let sorted = [(Int.max, 3), (1280, 720)].sorted { AppState.pixelCount($0.0, $0.1) < AppState.pixelCount($1.0, $1.1) }
+        XCTAssertEqual(sorted.first?.0, 1280)
+    }
+
+    // MARK: - Frame Rate arrows (QUA-fps-offgrid-jump)
+
+    func testFrameRateArrowsFromAnOffGridValueStepToTheNearestPresetInThatDirection() {
+        let presets = [30, 60, 90, 120, 144, 165, 240]
+        func step(_ fps: Int, _ forward: Bool) -> Int {
+            AppState.steppedFPS(from: fps, forward: forward, presets: presets)
+        }
+        XCTAssertEqual(step(100, true), 120, "Right from 100 used to give 90")
+        XCTAssertEqual(step(100, false), 90, "Left from 100 used to give 30")
+        XCTAssertEqual(step(200, false), 165, "Left from 200 used to give 30")
+        XCTAssertEqual(step(200, true), 240)
+        XCTAssertEqual(step(10, false), 30)
+        XCTAssertEqual(step(300, true), 240)
+        // On-grid behaviour is unchanged.
+        XCTAssertEqual(step(60, true), 90)
+        XCTAssertEqual(step(30, false), 30)
+        XCTAssertEqual(step(240, true), 240)
+    }
 }

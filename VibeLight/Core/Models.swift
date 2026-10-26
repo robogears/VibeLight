@@ -193,6 +193,27 @@ struct StreamSettings: Sendable, Codable, Equatable {
 
     static let fallback = StreamSettings()
 
+    /// The ranges the app itself can produce: the custom-resolution entry, the
+    /// Frame Rate presets and the Bitrate row. Saved values are clamped into
+    /// them on decode, because nothing else checks a saved number before it
+    /// is multiplied or stepped — an Int.max width crashed the resolution
+    /// list's sort, and an Int.max bitrate from a preset crashed the Bitrate
+    /// arrows. (audit DAT-stored-size-overflow)
+    static let widthRange = 256...7680
+    static let heightRange = 144...4320
+    static let fpsRange = 1...240
+    static let bitrateRange = 10_000...200_000
+
+    /// This value with every number pulled into its legal range.
+    func clampedToLegalRanges() -> StreamSettings {
+        var s = self
+        s.width = s.width.clamped(to: Self.widthRange)
+        s.height = s.height.clamped(to: Self.heightRange)
+        s.fps = s.fps.clamped(to: Self.fpsRange)
+        s.bitrateKbps = s.bitrateKbps.clamped(to: Self.bitrateRange)
+        return s
+    }
+
     init(width: Int = 1920, height: Int = 1080, fps: Int = 60, bitrateKbps: Int = 20000,
          codec: VideoCodec = .auto, hdr: Bool = false, decoder: VideoDecoder = .auto,
          yuv444: Bool = false, audio: AudioConfig = .stereo, muteHostSpeakers: Bool = true,
@@ -257,6 +278,13 @@ struct StreamSettings: Sendable, Codable, Equatable {
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? f.keepAwake
         performanceOverlay = try c.decodeIfPresent(Bool.self, forKey: .performanceOverlay) ?? f.performanceOverlay
         stopStreamOnExit = try c.decodeIfPresent(Bool.self, forKey: .stopStreamOnExit) ?? f.stopStreamOnExit
+        self = clampedToLegalRanges()
+    }
+}
+
+private extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 

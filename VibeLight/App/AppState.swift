@@ -508,7 +508,10 @@ final class AppState {
     /// Home preset row: load slot `i`'s settings (no-op for an empty slot).
     func applySlot(_ i: Int) {
         guard presets.indices.contains(i), let preset = presets[i] else { return }
-        settings = preset.settings
+        // Decoding already clamps; this keeps a preset that reached memory any
+        // other way from carrying an out-of-range number into the live
+        // settings. (audit DAT-stored-size-overflow)
+        settings = preset.settings.clampedToLegalRanges()
         activePresetSlot = i
         persistPresets()
     }
@@ -2501,7 +2504,29 @@ final class AppState {
         if !options.contains(where: { $0.w == settings.width && $0.h == settings.height }) {
             options.append((settings.width, settings.height, "\(settings.width)×\(settings.height)"))
         }
-        return options.sorted { $0.w * $0.h < $1.w * $1.h }
+        return options.sorted { Self.pixelCount($0.w, $0.h) < Self.pixelCount($1.w, $1.h) }
+    }
+
+    /// w × h without the overflow trap: a damaged saved size once made this
+    /// sort crash every screen that shows the Resolution row.
+    /// (audit DAT-stored-size-overflow)
+    nonisolated static func pixelCount(_ w: Int, _ h: Int) -> Int {
+        let (product, overflow) = w.multipliedReportingOverflow(by: h)
+        guard overflow else { return product }
+        return (w < 0) == (h < 0) ? .max : .min
+    }
+
+    /// The Frame Rate arrows: step through `presets`, and from a value that
+    /// isn't one of them go to the nearest preset in the pressed direction —
+    /// it used to restart from 60, so Right from 100 fps gave 90.
+    /// (audit QUA-fps-offgrid-jump)
+    nonisolated static func steppedFPS(from fps: Int, forward: Bool, presets: [Int]) -> Int {
+        guard let first = presets.first, let last = presets.last else { return fps }
+        if let i = presets.firstIndex(of: fps) {
+            return presets[min(max(i + (forward ? 1 : -1), 0), presets.count - 1)]
+        }
+        return forward ? (presets.first { $0 > fps } ?? last)
+                       : (presets.last { $0 < fps } ?? first)
     }
 
     /// Custom-resolution entry (typed via the resolution row → select).
@@ -2517,7 +2542,7 @@ final class AppState {
     func applyCustomResolution() {
         let parts = customResText.lowercased().split(whereSeparator: { $0 == "x" || $0 == "×" || $0 == " " })
         guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]),
-              w >= 256, h >= 144, w <= 7680, h <= 4320 else {
+              StreamSettings.widthRange.contains(w), StreamSettings.heightRange.contains(h) else {
             customResError = "Enter a resolution like 2560x1440."
             return
         }
@@ -2529,8 +2554,8 @@ final class AppState {
 
     /// Bitrate steps in clean 10 Mbps increments (Kbps).
     static let bitrateStep = 10_000
-    static let bitrateMin = 10_000
-    static let bitrateMax = 200_000
+    static let bitrateMin = StreamSettings.bitrateRange.lowerBound
+    static let bitrateMax = StreamSettings.bitrateRange.upperBound
 
     func value(for row: SettingsRow) -> String {
         switch row {
@@ -2603,18 +2628,18 @@ final class AppState {
             settings.width = options[next].w
             settings.height = options[next].h
         case .fps:
-            let presets = Self.fpsPresets
-            let current = presets.firstIndex(of: settings.fps) ?? 1
-            let next = min(max(current + (forward ? 1 : -1), 0), presets.count - 1)
-            settings.fps = presets[next]
+            settings.fps = Self.steppedFPS(from: settings.fps, forward: forward, presets: Self.fpsPresets)
         case .bitrate:
             // Snap to a clean 10 Mbps grid so values read 80/90/100, never
             // the imported 87.5. If already on the grid, step; otherwise jump
             // to the neighboring grid line in the pressed direction.
             let step = Self.bitrateStep
-            let onGrid = settings.bitrateKbps % step == 0
-            let base = (settings.bitrateKbps / step) * step
-            let next = onGrid ? settings.bitrateKbps + (forward ? step : -step)
+            // Clamp before stepping: `+ step` on a near-Int.max value traps.
+            // (audit DAT-stored-size-overflow)
+            let current = min(max(settings.bitrateKbps, Self.bitrateMin), Self.bitrateMax)
+            let onGrid = current % step == 0
+            let base = (current / step) * step
+            let next = onGrid ? current + (forward ? step : -step)
                               : (forward ? base + step : base)
             settings.bitrateKbps = min(max(next, Self.bitrateMin), Self.bitrateMax)
         case .codec: settings.codec = Self.cycle(settings.codec, forward: forward)
