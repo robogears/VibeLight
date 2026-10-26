@@ -810,9 +810,8 @@ final class AppState {
     }
 
     /// Shows the launch-time update card when the rule allows. `firstLook` is
-    /// the check's own answer; later looks only happen for a card that was
-    /// waiting on a stream, and keep waiting while another card is still up
-    /// (the user might be resuming straight into another stream).
+    /// the check's own answer; later looks only happen when a stream returns to
+    /// idle, for a card that was waiting on one.
     private func presentLaunchUpdateCardIfDue(firstLook: Bool = false) {
         guard firstLook || launchUpdateCardWaiting else { return }
         let decision = Self.launchUpdateCardDecision(
@@ -826,8 +825,10 @@ final class AppState {
         case .waitForStreamEnd:
             launchUpdateCardWaiting = true
         case .skip:
-            // A waiting card stays waiting only while some other card is
-            // still being dismissed; anything else ends the wait.
+            // A card already waiting on a stream keeps waiting (for any skip
+            // reason) until a later stream ends with the update still
+            // available; Settings offers the update meanwhile. A first look
+            // that skips never waits.
             if firstLook || updateService.phase != .available { launchUpdateCardWaiting = false }
         }
     }
