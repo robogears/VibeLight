@@ -292,7 +292,7 @@ enum IdentityStore {
         if let underlying, underlying.domain == NSPOSIXErrorDomain {
             return String(cString: strerror(Int32(underlying.code))).lowercased()
         }
-        return "read error \((error as NSError).code)"
+        return "an unexpected read error, code \((error as NSError).code)"
     }
 
     /// Spelled out in full: "Application Support" alone is the hidden one
@@ -313,9 +313,9 @@ enum IdentityStore {
             return .generate
         case (.unreadable(let why), _), (_, .unreadable(let why)):
             return .refuse("VibeLight can't read its identity file \(why), so it changed nothing. "
-                + "In Finder, choose Go ▸ Go to Folder, open \(identityFolderForPeople), "
-                + "and make sure that file is an ordinary file you can read (File ▸ Get Info ▸ "
-                + "Sharing & Permissions), then reopen VibeLight.")
+                + "In Finder, choose Go ▸ Go to Folder…, open \(identityFolderForPeople), "
+                + "and check that file: select it, choose File ▸ Get Info, and make sure it's an "
+                + "ordinary file you can read (see Sharing & Permissions). Then reopen VibeLight.")
         default:
             let lost = (key == .missing || key == .empty) ? keyFileName : certFileName
             return .refuse("VibeLight's identity file \(lost) is missing or empty. "
