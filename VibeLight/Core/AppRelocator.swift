@@ -33,8 +33,30 @@ enum AppRelocator {
         #else
         guard !isInApplications() else { return false }
         // Only worthwhile if we can actually write /Applications.
-        return FileManager.default.isWritableFile(atPath: "/Applications")
+        guard FileManager.default.isWritableFile(atPath: "/Applications") else { return false }
+        let running = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        return shouldReplaceInstalledCopy(runningVersion: running,
+                                          installedVersion: installedVersion(at: applicationsURL))
         #endif
+    }
+
+    /// Pure rule: moving replaces whatever is already at the destination, so
+    /// only offer it when that copy is OLDER than the one running (or there is
+    /// none, or its version can't be read — a damaged copy is worth replacing).
+    /// Opening a leftover download or disk image used to offer "Move to
+    /// Applications" over a newer, updated install and silently downgrade it.
+    /// An equal version is skipped too: it's already installed.
+    /// (audit FS-relocate-replaces-newer-copy)
+    static func shouldReplaceInstalledCopy(runningVersion: String, installedVersion: String?) -> Bool {
+        guard let installedVersion else { return true }
+        return UpdateService.isNewer(runningVersion, than: installedVersion)
+    }
+
+    /// CFBundleShortVersionString of the app bundle at `url`, or nil when
+    /// nothing readable is there.
+    static func installedVersion(at url: URL) -> String? {
+        let info = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist"))
+        return info?["CFBundleShortVersionString"] as? String
     }
 
     /// Copies the running bundle to /Applications (de-quarantined + re-signed)
