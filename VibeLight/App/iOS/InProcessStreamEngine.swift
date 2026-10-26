@@ -82,9 +82,10 @@ final class InProcessStreamEngine: StreamEngine {
             MainActor.assumeIsolated { self?.releaseHeldKeys() }
         }
         // Track where the on-screen keyboard actually is, so only the area it
-        // covers stops accepting stream touches. willChangeFrame covers every
-        // case in one callback: appearing, dismissing, docking, undocking,
-        // splitting, and a floating keyboard being dragged around.
+        // covers stops accepting stream touches. willChangeFrame reports it
+        // appearing, dismissing, docking and being dragged; for split,
+        // undocked and floating keyboards iPadOS may also post "will hide"
+        // (handled below), and those frames still need a live check.
         NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -93,12 +94,21 @@ final class InProcessStreamEngine: StreamEngine {
         }
         NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // Explicitly cleared: the final willChangeFrame parks the keyboard
-            // just off the bottom rather than reporting an empty rect, and a
-            // stale rect would keep blocking a strip of a stream with no
-            // keyboard over it.
-            MainActor.assumeIsolated { self?.keyboardFrameInScreen = .zero }
+        ) { [weak self] note in
+            // Cleared on a real dismissal: the final willChangeFrame parks the
+            // keyboard just off the bottom rather than reporting an empty
+            // rect, and a stale rect would keep blocking a strip of a stream
+            // with no keyboard over it. But iPadOS also posts "will hide" when
+            // the keyboard is split, undocked or floated — still on screen —
+            // so the rule below keeps the frame then.
+            // (QUA-keyboard-hide-clears-undocked-frame)
+            let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            let screen = (note.object as? UIScreen)?.bounds
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.keyboardFrameInScreen = Self.keyboardFrame(
+                    afterHideEndingAt: end, current: self.keyboardFrameInScreen, screen: screen)
+            }
         }
     }
 
@@ -582,6 +592,20 @@ final class InProcessStreamEngine: StreamEngine {
     /// reported frame covers each of those; guessing "the bottom half" would be
     /// wrong for two of the three.
     private(set) var keyboardFrameInScreen: CGRect = .zero
+
+    /// The keyboard's frame after a "will hide" notification. A hide whose end
+    /// frame still overlaps the screen is a keyboard being split, undocked or
+    /// floated, not leaving: keep the last frame we were told about (or the
+    /// hide's own end frame if we had none). Only a hide that ends off screen
+    /// clears it. When the screen is unknown, clear as before — never worse
+    /// than the old behaviour. (QUA-keyboard-hide-clears-undocked-frame)
+    nonisolated static func keyboardFrame(afterHideEndingAt end: CGRect?, current: CGRect,
+                                          screen: CGRect?) -> CGRect {
+        guard let end, let screen else { return .zero }
+        let overlap = end.intersection(screen)
+        guard !overlap.isNull, !overlap.isEmpty else { return .zero }
+        return current.isNull || current.isEmpty ? end : current
+    }
 
     /// True while the iPad's own keyboard is raised over the stream.
     var onScreenKeyboardUp = false {

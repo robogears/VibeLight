@@ -70,5 +70,42 @@ final class StreamInputRulesTests: XCTestCase {
             XCTAssertNil(KeyboardMap.route(for: character))
         }
     }
+
+    // MARK: - Keyboard frame after "will hide" (QUA-keyboard-hide-clears-undocked-frame)
+
+    private let screen = CGRect(x: 0, y: 0, width: 1194, height: 834)
+    private let docked = CGRect(x: 0, y: 434, width: 1194, height: 400)
+
+    /// A real dismissal ends just below the screen: the frame clears, so no
+    /// strip of the stream stays blocked.
+    func testHideEndingOffScreenClearsTheFrame() {
+        let parked = CGRect(x: 0, y: 834, width: 1194, height: 400)
+        XCTAssertEqual(InProcessStreamEngine.keyboardFrame(afterHideEndingAt: parked,
+                                                           current: docked, screen: screen), .zero)
+    }
+
+    /// A split, undocked or floating keyboard is reported as a "hide" while
+    /// still on screen: the last known frame stays, so taps in the split gap
+    /// don't reach the game.
+    func testHideEndingOnScreenKeepsTheKnownFrame() {
+        let undocked = CGRect(x: 0, y: 200, width: 1194, height: 300)
+        XCTAssertEqual(InProcessStreamEngine.keyboardFrame(afterHideEndingAt: undocked,
+                                                           current: docked, screen: screen), docked)
+    }
+
+    /// With no frame known yet, an on-screen hide's own end frame is used.
+    func testHideEndingOnScreenWithNoKnownFrameUsesTheEndFrame() {
+        let floating = CGRect(x: 600, y: 300, width: 320, height: 260)
+        XCTAssertEqual(InProcessStreamEngine.keyboardFrame(afterHideEndingAt: floating,
+                                                           current: .zero, screen: screen), floating)
+    }
+
+    /// Missing information falls back to the old behaviour: clear.
+    func testHideWithoutAFrameOrScreenClears() {
+        XCTAssertEqual(InProcessStreamEngine.keyboardFrame(afterHideEndingAt: nil,
+                                                           current: docked, screen: screen), .zero)
+        XCTAssertEqual(InProcessStreamEngine.keyboardFrame(afterHideEndingAt: docked,
+                                                           current: docked, screen: nil), .zero)
+    }
 }
 #endif
