@@ -65,7 +65,8 @@ if ! "$(dirname "$0")/embed-helper.sh" "$DEST"; then
     # fallback" that was removed on purpose.)
     echo "⚠️  Helper not embedded — this copy can stream only on this Mac, and only while the"
     echo "   helper dev build exists in ~/Developer/vibelight-moonlight-helper. There is no"
-    echo "   stock-Moonlight fallback. To fix: build the helper (see CLAUDE.md), then run this again."
+    echo "   stock-Moonlight fallback. To fix: correct the error above (usually: build the helper —"
+    echo "   see CLAUDE.md), then run this again."
 fi
 
 echo "✅ Installed: $DEST"
