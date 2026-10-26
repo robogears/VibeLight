@@ -500,6 +500,7 @@ final class ControllerManager {
         if pressed {
             menuIsDown = true
             menuLongPressFired = false
+            lastDirectedSource = .pad   // pad hints while the ring fills, like armKeyboardHold
             menuHoldTask?.cancel()
             menuHoldTask = Task { [weak self] in
                 guard let self else { return }
@@ -531,6 +532,7 @@ final class ControllerManager {
         if pressed {
             backIsDown = true
             backLongPressFired = false
+            lastDirectedSource = .pad   // pad hints while the ring fills, like armKeyboardHold
             backHoldTask?.cancel()
             // iOS can't self-quit (HIG), so the quit-app chord is meaningless —
             // never arm the ring there; B stays a plain Back button.
