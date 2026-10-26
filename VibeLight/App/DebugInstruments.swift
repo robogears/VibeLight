@@ -12,7 +12,8 @@ enum DebugInstruments {
     static let fakeTV: Bool = ProcessInfo.processInfo.environment["VL_FAKE_TV"] == "1"
 
     /// `VL_FAKE_PAD=xbox|ps|generic` — `ControllerManager.hasGamepad` reports
-    /// a connected gamepad of that family. nil when unset or unrecognised.
+    /// a connected gamepad, and `glyphStyle` draws that family's glyphs while
+    /// no real pad is attached. nil when unset or unrecognised.
     static let fakePad: ControllerGlyphStyle? = {
         switch ProcessInfo.processInfo.environment["VL_FAKE_PAD"] {
         case "xbox": .xbox
