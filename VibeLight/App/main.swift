@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowCoordinator = WindowCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The Mac unit tests run inside this app (project.yml TEST_HOST), with
+        // the real app's bundle id — so booting the launcher here would run it
+        // against the owner's REAL preferences, client identity, box-art cache
+        // and saved PCs, poll them, check GitHub and cover the screen. The tests
+        // need only the process. (audit QUA-macos-tests-boot-real-app)
+        if Self.isHostingUnitTests() { return }
         NSApp.appearance = NSAppearance(named: .darkAqua)
         installMainMenu()
 
@@ -23,6 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .environment(state)
                 .preferredColorScheme(.dark)
         )
+    }
+
+    /// True only when XCTest launched this process to host the unit tests:
+    /// xcodebuild sets this variable for a test host and never for a normal
+    /// launch from Finder, the Dock or the updater.
+    nonisolated static func isHostingUnitTests(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -95,5 +110,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+// A test host stays out of the Dock and never takes focus from the owner.
+app.setActivationPolicy(AppDelegate.isHostingUnitTests() ? .accessory : .regular)
 app.run()
