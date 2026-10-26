@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (168 Mac) · last: iPad sizing + Interface Size merged
+STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (171 Mac) · last: Menu Sounds switch merged
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -22,6 +22,7 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (168 Mac) · last: iPa
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 18:10 Settings ▸ Audio now has a Menu Sounds switch (On by default). Off silences the launcher's ticks, chimes and the setup quack on Mac and iPad — games and controller haptics are unaffected — and it survives relaunching and loading presets. 171 Mac tests green.
 - 26 Oct 17:50 The previous session ended (the Mac restarted) while three jobs were running; you said "keep going". Nothing was lost: fix group 5 had all four fixes committed, the TV-dead-end batch both of its fixes, and the menu-sounds batch's work was saved as an unverified WIP commit. All three resumed to verify and finish their reviews.
 - 26 Oct 17:05 iPad text and touch targets merged (audit Medium):
   - on iPad the launcher is a little larger (it fits the same canvas as a Mac window);
@@ -98,6 +99,8 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (168 Mac) · last: iPa
 - iPad, Interface Size: at Default, Home is a little larger with nothing clipped and all six preset chips visible; switch Settings ▸ Themes ▸ Interface Size to Large — everything ~25% bigger, nothing clipped. **Your call:** does Large feel right?
 - iPad: the Settings ◀ ▶ arrows and the Wake/Restart buttons respond to a tap just outside the visible circle.
 - Mac: Settings, the header buttons and the hint bar look exactly as before.
+
+- Settings ▸ Audio ▸ Menu Sounds: set Off, move around Home — silent; relaunch — still Off; load a preset — still Off.
 
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
