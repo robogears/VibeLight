@@ -15,10 +15,11 @@ Detail for in-flight work lives in `OVERNIGHT_LOOP_PLAN.md` (the build queue) an
 
 | # | Asked | Request (his words) | State | Where it stands |
 |---|---|---|---|---|
-| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 10 of 13 merged (stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size, Menu Sounds switch, TV dead end, companion readout removed, navy labels on the blue, destructive red, no hover zoom). The TV fix checks out (the Simulator fakes a controller of its own, so the no-controller case is a live check on your iPad). Next: empty Home, banner, setup hints. |
+| MT-8 | 26 Oct | "do everything" (the 13 visual changes the audit suggested) | 🔨 | 12 of 13 merged (empty Home that says what to do, computer banner that doesn't cut messages off, stream-controls handle, keyboard hints on Mac, full-bleed iPad icon, iPad text and touch-target sizes + Interface Size, Menu Sounds switch, TV dead end, companion readout removed, navy labels on the blue, destructive red, no hover zoom). The TV fix checks out (the Simulator fakes a controller of its own, so the no-controller case is a live check on your iPad). Building the last one: setup screens show your controller's real buttons. |
 | MT-2b | 21 Oct | Fix pass on the audit's findings (part of "run /overnightprotocol") | 🔨 | Merged: group 1 (saved data never lost, bad values can't crash — 7 findings), group 5 (your pairings can't be lost to an unreadable identity — 4 findings) and group 7 (updater, move-to-Applications, helper errors — 6 findings). Groups 2–4, 6, 8, 9 queued. |
 | MT-2 | 21 Oct | "also run /overnightprotocol" | 🔨 | Running on `codeX`; stop with `/overnightprotocol stop`. |
-| MT-12 | 26 Oct | "/overnightprotocol stop when you've finished your mt" | 🔨 | The loop stops by itself once MT-8 and MT-2b are done (MT-P1 and MT-P2 wait on you and don't block it). |
+| MT-13 | 26 Oct | "When you're done with this wrap up and end /overnightprotocol end" | 🔨 | Replaces MT-12: finishing what's running (empty Home/banner, setup hints, group 9, group 6a), then the loop wraps up and ends. Groups 2, 3, 4, 6b and 8 stay queued here for a future run. |
+| MT-12 | 26 Oct | "/overnightprotocol stop when you've finished your mt" | ⏸ | Superseded by MT-13 (stop after the work in progress instead). |
 | MT-P1 | 21 Oct | Four new features the audit suggested (not defects) | ⏸ | Not asked for yet: one PC with two addresses, iPad hardware-keyboard launcher navigation, more on-screen-keyboard keys, saved game list at start-up. Say which. |
 | MT-P2 | 21 Oct | Old private addresses still in the public git history | ⏸ | Your call: rotate the addresses (recommended) or rewrite public history. |
 
