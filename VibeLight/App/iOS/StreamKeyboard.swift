@@ -79,8 +79,15 @@ struct StreamKeyboard: UIViewRepresentable {
         /// goes to text input only when no hardware keyboard is being
         /// forwarded; on-screen key taps are not presses and always type.
         /// (QUA-hardware-keyboard-double-typing)
-        static func textInputTakes(hardwareKey: Bool, hardwareKeyboardForwarded: Bool) -> Bool {
-            !(hardwareKey && hardwareKeyboardForwarded)
+        ///
+        /// Only keys the raw route actually SENDS are held back: it drops any
+        /// key `KeyboardMap.virtualKey` can't map (the numpad, the ISO key left
+        /// of Z, international keys), so for those the typed text is still the
+        /// one way they reach the PC. `hardwareKey` is nil for a press that
+        /// isn't a keyboard key.
+        static func textInputTakes(hardwareKey: GCKeyCode?, hardwareKeyboardForwarded: Bool) -> Bool {
+            guard let hardwareKey, hardwareKeyboardForwarded else { return true }
+            return KeyboardMap.virtualKey(for: hardwareKey) == nil
         }
 
         /// Not calling super for a press is what keeps UIKit from turning it
@@ -88,7 +95,9 @@ struct StreamKeyboard: UIViewRepresentable {
         private func passedToTextInput(_ presses: Set<UIPress>) -> Set<UIPress> {
             let forwarded = GCKeyboard.coalesced != nil
             return presses.filter {
-                Self.textInputTakes(hardwareKey: $0.key != nil, hardwareKeyboardForwarded: forwarded)
+                // UIKey.keyCode and GCKeyCode are both USB-HID usages.
+                let code = $0.key.map { GCKeyCode(rawValue: $0.keyCode.rawValue) }
+                return Self.textInputTakes(hardwareKey: code, hardwareKeyboardForwarded: forwarded)
             }
         }
 

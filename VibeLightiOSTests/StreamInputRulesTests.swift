@@ -1,6 +1,7 @@
 #if os(iOS)
 import XCTest
 import SwiftUI
+import GameController
 @testable import VibeLight
 
 /// The iPad stream's input rules (audit fix group G6A): which screen edges hold
@@ -28,19 +29,34 @@ final class StreamInputRulesTests: XCTestCase {
     /// With a hardware keyboard forwarded raw to the PC, its keys must not
     /// ALSO become typed text, or each keystroke reaches the PC twice.
     func testForwardedHardwareKeysSkipTheTextRoute() {
-        XCTAssertFalse(Receiver.textInputTakes(hardwareKey: true, hardwareKeyboardForwarded: true))
+        for key: GCKeyCode in [.keyA, .one, .spacebar, .returnOrEnter, .leftShift] {
+            XCTAssertFalse(Receiver.textInputTakes(hardwareKey: key, hardwareKeyboardForwarded: true),
+                           "HID \(key.rawValue)")
+        }
     }
 
     /// No hardware keyboard being forwarded → a hardware key's text is the
     /// only way it can reach the PC, so it keeps the text route.
     func testUnforwardedHardwareKeysKeepTheTextRoute() {
-        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: true, hardwareKeyboardForwarded: false))
+        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: .keyA, hardwareKeyboardForwarded: false))
     }
 
     /// Presses that aren't keyboard keys always pass through untouched.
     func testNonKeyPressesAlwaysPassThrough() {
-        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: false, hardwareKeyboardForwarded: true))
-        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: false, hardwareKeyboardForwarded: false))
+        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: nil, hardwareKeyboardForwarded: true))
+        XCTAssertTrue(Receiver.textInputTakes(hardwareKey: nil, hardwareKeyboardForwarded: false))
+    }
+
+    /// The raw route drops keys it has no Windows key for — numpad digits, the
+    /// ISO key left of Z on a UK or German keyboard. Holding those back from
+    /// the text route too would lose them entirely, so they keep it.
+    /// (QUA-hardware-keyboard-double-typing follow-up)
+    func testForwardedKeysTheRawRouteDropsKeepTheTextRoute() {
+        for key: GCKeyCode in [.keypad1, .keypadPlus, .keypadEnter, .nonUSBackslash, .international1] {
+            XCTAssertNil(KeyboardMap.virtualKey(for: key), "precondition: HID \(key.rawValue) is unmapped")
+            XCTAssertTrue(Receiver.textInputTakes(hardwareKey: key, hardwareKeyboardForwarded: true),
+                          "HID \(key.rawValue)")
+        }
     }
 
     // MARK: - Characters with no US key (QUA-onscreen-keyboard-assumes-us-pc-layout)
