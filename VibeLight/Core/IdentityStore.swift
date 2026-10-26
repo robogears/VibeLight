@@ -273,11 +273,31 @@ enum IdentityStore {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return .missing
         } catch let error as CocoaError where error.code == .fileReadNoPermission {
-            return .unreadable("\(url.lastPathComponent): no permission to read it")
+            return .unreadable("\(url.lastPathComponent) (no permission to read it)")
         } catch {
-            return .unreadable("\(url.lastPathComponent): \(error.localizedDescription)")
+            return .unreadable("\(url.lastPathComponent) (\(unreadableReason(url: url, error: error)))")
         }
     }
+
+    /// A short reason for the refusal message. Foundation's localizedDescription
+    /// is a whole sentence that repeats the file name ("The file “client.key”
+    /// couldn’t be opened."), which read badly nested inside ours.
+    /// (audit FS-identity-read-loss review: refusal copy)
+    private static func unreadableReason(url: URL, error: Error) -> String {
+        var isFolder: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue {
+            return "it's a folder, not a file"
+        }
+        let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+        if let underlying, underlying.domain == NSPOSIXErrorDomain {
+            return String(cString: strerror(Int32(underlying.code))).lowercased()
+        }
+        return "read error \((error as NSError).code)"
+    }
+
+    /// Spelled out in full: "Application Support" alone is the hidden one
+    /// inside the Library folder, which a person can't find from the name.
+    static let identityFolderForPeople = "~/Library/Application Support/VibeLight/identity"
 
     /// The pure rule. Only "nothing there" on BOTH sides may generate. A
     /// zero-byte file counts as nothing: builds before this fix pre-created an
@@ -292,12 +312,15 @@ enum IdentityStore {
         case (.missing, .missing), (.missing, .empty), (.empty, .missing), (.empty, .empty):
             return .generate
         case (.unreadable(let why), _), (_, .unreadable(let why)):
-            return .refuse("VibeLight can't read its identity file (\(why)). "
-                + "Fix access to Application Support/VibeLight/identity, then reopen VibeLight.")
+            return .refuse("VibeLight can't read its identity file \(why), so it changed nothing. "
+                + "In Finder, choose Go ▸ Go to Folder, open \(identityFolderForPeople), "
+                + "and make sure that file is an ordinary file you can read (File ▸ Get Info ▸ "
+                + "Sharing & Permissions), then reopen VibeLight.")
         default:
-            return .refuse("One of VibeLight's two identity files is missing or empty. "
-                + "Put it back in Application Support/VibeLight/identity and reopen VibeLight, "
-                + "or move that folder to the Trash to start over (every computer then needs pairing again).")
+            let lost = (key == .missing || key == .empty) ? keyFileName : certFileName
+            return .refuse("VibeLight's identity file \(lost) is missing or empty. "
+                + "Put it back in \(identityFolderForPeople) and reopen VibeLight, "
+                + "or move that identity folder to the Trash to start over (every computer then needs pairing again).")
         }
     }
 
@@ -309,17 +332,82 @@ enum IdentityStore {
     ) -> OwnIdentityOutcome {
         let certURL = directory.appendingPathComponent(certFileName)
         let keyURL = directory.appendingPathComponent(keyFileName)
-        switch plan(cert: readIdentityFile(at: certURL), key: readIdentityFile(at: keyURL)) {
+        let certFile = readIdentityFile(at: certURL), keyFile = readIdentityFile(at: keyURL)
+        switch plan(cert: certFile, key: keyFile) {
         case .use(let cert, let key):
+            removeStagingFolders(in: directory)
             return .ready(cert: cert, key: key)
         case .refuse(let message):
+            if let pair = finishInterruptedCreation(in: directory, cert: certFile, key: keyFile, openssl: openssl) {
+                removeStagingFolders(in: directory)
+                return .ready(cert: pair.cert, key: pair.key)
+            }
             return .problem(message)
         case .generate:
             if let pair = generateAndPersist(in: directory, openssl: openssl) {
+                removeStagingFolders(in: directory)
                 return .ready(cert: pair.cert, key: pair.key)
             }
             return .problem("VibeLight couldn't create its client identity. Quit and reopen VibeLight to try again.")
         }
+    }
+
+    // audit FS-identity-read-loss review (staging leftovers): `defer` doesn't
+    // run when the app is killed or the power fails, so an interrupted
+    // creation left its `.new-<UUID>` folder behind — with an unused private
+    // key inside if openssl had got that far — and nothing ever removed it. A
+    // kill between the two renames also left the new key in place without its
+    // certificate (still in the staging folder), which the rule above refuses
+    // on every launch.
+
+    private static let stagingPrefix = ".new-"
+
+    /// Only folders this code made: `.new-` followed by a UUID.
+    private static func stagingFolders(in directory: URL) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.filter {
+            $0.hasPrefix(stagingPrefix) && UUID(uuidString: String($0.dropFirst(stagingPrefix.count))) != nil
+        }.map { directory.appendingPathComponent($0, isDirectory: true) }
+    }
+
+    /// Called only once the identity in place is complete: from then on no
+    /// staging folder can hold anything that is needed, and a creation still
+    /// running elsewhere would find the files present and give up anyway.
+    private static func removeStagingFolders(in directory: URL) {
+        for folder in stagingFolders(in: directory) {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// Completes a creation that was cut off after the key was moved into
+    /// place: the certificate is still alone in its staging folder. It is moved
+    /// in only when its public key matches the key in place, so a certificate
+    /// that belongs to some other key is never put beside the real one.
+    private static func finishInterruptedCreation(
+        in directory: URL, cert: OwnIdentityFile, key: OwnIdentityFile, openssl: URL
+    ) -> (cert: Data, key: Data)? {
+        guard cert == .missing || cert == .empty, case .contents(let keyData) = key else { return nil }
+        let finalKey = directory.appendingPathComponent(keyFileName)
+        let finalCert = directory.appendingPathComponent(certFileName)
+        let candidates = stagingFolders(in: directory).filter {
+            if case .contents = readIdentityFile(at: $0.appendingPathComponent(certFileName)),
+               readIdentityFile(at: $0.appendingPathComponent(keyFileName)) == .missing {
+                return true
+            }
+            return false
+        }
+        guard !candidates.isEmpty,
+              let keyPub = runOpenSSL(openssl, ["pkey", "-pubout", "-in", finalKey.path]),
+              !keyPub.isEmpty else { return nil }
+        for folder in candidates {
+            let stagedCert = folder.appendingPathComponent(certFileName)
+            guard case .contents(let certData) = readIdentityFile(at: stagedCert),
+                  runOpenSSL(openssl, ["x509", "-noout", "-pubkey", "-in", stagedCert.path]) == keyPub
+            else { continue }
+            guard holdsNothing(finalCert), rename(stagedCert.path, finalCert.path) == 0 else { return nil }
+            return (certData, keyData)
+        }
+        return nil
     }
 
     private static func generateAndPersist(
@@ -331,7 +419,7 @@ enum IdentityStore {
         // final rename is atomic per file). Anything that goes wrong is thrown
         // away with it; the real location is never written until both halves
         // exist and match.
-        let staging = directory.appendingPathComponent(".new-\(UUID().uuidString)", isDirectory: true)
+        let staging = directory.appendingPathComponent("\(stagingPrefix)\(UUID().uuidString)", isDirectory: true)
         guard (try? fm.createDirectory(at: staging, withIntermediateDirectories: false,
                                        attributes: [.posixPermissions: 0o700])) != nil else { return nil }
         defer { try? fm.removeItem(at: staging) }

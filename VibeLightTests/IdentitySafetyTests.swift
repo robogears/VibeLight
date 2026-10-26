@@ -152,7 +152,95 @@ final class IdentitySafetyTests: XCTestCase {
         XCTAssertEqual(IdentityStore.loadOrCreateOwn(in: dir), .ready(cert: cert, key: key))
     }
 
+    // MARK: - Interrupted creation (audit FS-identity-read-loss review)
+
+    /// A real matching pair made by the production code in a throwaway folder.
+    private func makePair() throws -> (cert: Data, key: Data) {
+        let source = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("vl-identity-src-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: source) }
+        guard case .ready(let cert, let key) = IdentityStore.loadOrCreateOwn(in: source) else {
+            throw XCTSkip("openssl could not create a test identity")
+        }
+        return (cert, key)
+    }
+
+    private func stagingFolder() throws -> URL {
+        let folder = dir.appendingPathComponent(".new-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        return folder
+    }
+
+    /// Killed between moving the key and moving the certificate: the next
+    /// launch finishes the move instead of refusing forever.
+    func testACreationCutOffBetweenTheTwoMovesIsFinished() throws {
+        let pair = try makePair()
+        try pair.key.write(to: keyURL)
+        try pair.cert.write(to: try stagingFolder().appendingPathComponent("client.pem"))
+
+        XCTAssertEqual(IdentityStore.loadOrCreateOwn(in: dir), .ready(cert: pair.cert, key: pair.key))
+        XCTAssertEqual(try Data(contentsOf: certURL), pair.cert)
+        XCTAssertEqual(try Data(contentsOf: keyURL), pair.key)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(),
+                       ["client.key", "client.pem"])
+    }
+
+    /// A staged certificate that belongs to a different key is never put
+    /// beside the real one: still refused, nothing changed or removed.
+    func testAStagedCertificateForAnotherKeyIsNotUsed() throws {
+        let real = try makePair(), other = try makePair()
+        try real.key.write(to: keyURL)
+        let folder = try stagingFolder()
+        try other.cert.write(to: folder.appendingPathComponent("client.pem"))
+
+        guard case .problem = IdentityStore.loadOrCreateOwn(in: dir) else {
+            return XCTFail("a certificate for another key must not complete the identity")
+        }
+        XCTAssertEqual(try Data(contentsOf: keyURL), real.key)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: certURL.path))
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("client.pem")), other.cert,
+                       "nothing is cleaned up while the identity is incomplete")
+    }
+
+    /// Killed while openssl ran: the staging folder (with an unused private
+    /// key) is removed once an identity is in place; folders this code didn't
+    /// make are left alone.
+    func testLeftoverStagingFoldersAreRemovedOnceTheIdentityIsComplete() throws {
+        let orphan = try stagingFolder()
+        try Data("unused private key".utf8).write(to: orphan.appendingPathComponent("client.key"))
+        let notOurs = dir.appendingPathComponent(".new-notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: notOurs, withIntermediateDirectories: false)
+
+        guard case .ready = IdentityStore.loadOrCreateOwn(in: dir) else {
+            return XCTFail("a fresh folder must get an identity")
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(),
+                       [".new-notes", "client.key", "client.pem"])
+    }
+
     // MARK: - What the person is told
+
+    /// The refusal names the file once, gives a short reason rather than
+    /// Foundation's own sentence, and spells out the hidden folder in full.
+    /// (audit FS-identity-read-loss review: refusal copy)
+    func testARefusalSaysWhichFileWhyAndWhereInPlainWords() throws {
+        try Data("CERT".utf8).write(to: certURL)
+        try FileManager.default.createDirectory(at: keyURL, withIntermediateDirectories: false)
+
+        guard case .problem(let message) = IdentityStore.loadOrCreateOwn(in: dir) else {
+            return XCTFail("a folder where the key should be must be refused")
+        }
+        XCTAssertTrue(message.contains("~/Library/Application Support/VibeLight/identity"), message)
+        XCTAssertEqual(message.components(separatedBy: "client.key").count - 1, 1, message)
+        XCTAssertTrue(message.contains("folder, not a file"), message)
+        XCTAssertFalse(message.contains(".)"), message)
+
+        guard case .refuse(let lost) = IdentityStore.plan(cert: .missing, key: .contents(Data("K".utf8))) else {
+            return XCTFail("half an identity must be refused")
+        }
+        XCTAssertTrue(lost.contains("client.pem is missing"), lost)
+        XCTAssertTrue(lost.contains("~/Library/Application Support/VibeLight/identity"), lost)
+    }
 
     #if os(macOS)
     func testConnectionsReportTheLaunchProblemInsteadOfAnOpensslError() {
