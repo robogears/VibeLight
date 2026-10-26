@@ -39,7 +39,7 @@ VibeLight is the shell Moonlight never had.
 
 - **Controller-first big-picture UI.** A fullscreen, console-style library with
   box art, hero titles, ambient glow, and spring-animated focus. A custom spatial
-  focus engine (43 unit tests) makes every shelf, tile, setting, and dialog fully
+  focus engine (covered by unit tests) makes every shelf, tile, setting, and dialog fully
   navigable by controller — the thing macOS SwiftUI can't do on its own. The
   keyboard feeds the exact same engine.
 - **Pair in-app — Moonlight not required.** Add a computer by IP and pair it
@@ -67,9 +67,9 @@ VibeLight is the shell Moonlight never had.
   to your display's native resolution at 120 fps, game audio, full controller
   passthrough, and **touch-the-stream control** (taps click, drags move the
   cursor, native multi-touch passthrough on supported hosts — toggle in
-  Settings ▸ Input). Hold **Select + R1** for 4 seconds (progress ring) or tap
-  the on-screen ✕ to leave a stream; a Moonlight-parity **performance HUD**
-  (Settings ▸ Advanced) shows fps, bitrate, latency, and drops. The screen
+  Settings ▸ Input). Hold **Start + Select + L1 + R1** together for about a
+  second (progress ring) or tap the on-screen ✕ to leave a stream; a
+  Moonlight-parity **performance HUD** (Settings ▸ Advanced) shows fps, bitrate, latency, and drops. The screen
   stays awake while you play, and quitting the app can cleanly stop the game
   on the PC.
 - **Controller / mouse input-mode switching.** The cursor vanishes on
@@ -78,7 +78,7 @@ VibeLight is the shell Moonlight never had.
   (respecting your System Settings controller remaps) and show real keycaps for
   keyboard chords.
 - **Full Moonlight-parity settings, on a gamepad.** Tabbed settings (Video /
-  Audio / Advanced / About) switched with L1/R1, every row adjustable with
+  Audio / Input / Advanced / Themes / About) switched with L1/R1, every row adjustable with
   left/right: resolution, frame rate, bitrate, video codec (Auto / H.264 / HEVC /
   AV1), HDR, video decoder, audio (stereo / 5.1 / 7.1), V-Sync, frame pacing, and
   game optimizations. This finally exposes Moonlight's options to a controller.
@@ -138,8 +138,9 @@ terms don't mix (see [Licensing](#licensing)), so iOS installs are
   with your personal team (see *Building from source*).
 - **AltStore / sideloading** works with a locally built `.ipa`.
 
-The iOS app pairs on its own (identity generated in the Secure-Enclave-backed
-keychain) and shares your saved hosts UI with the Mac version.
+The iOS app pairs on its own (its client identity is generated on the device
+and stored in the iOS keychain) and shares your saved hosts UI with the Mac
+version.
 
 ### Updates
 
@@ -170,11 +171,11 @@ uses Xbox names).
 | Details | **Y** | Tab |
 | Previous / next section | **L1** / **R1** | — |
 | Open Settings | **Menu** (tap) | ⌘, |
-| Settings tabs (Video/Audio/Advanced/About) | **L1** / **R1** | — |
+| Settings tabs (Video/Audio/Input/Advanced/Themes/About) | **L1** / **R1** | — |
 | **Quit the game completely** | **Hold Menu** (~1s, fills ring) | ⌘⇧Q |
 | **Quit VibeLight** (home screen) | **Hold B/○** (~1.5s, fills ring) | ⌘Q |
 | **Disconnect** (in-stream → resume/quit menu) | **Hold Start** (~2s) | — |
-| **Leave the stream** (iOS, game keeps running) | **Hold Select + R1** (4s, fills ring) | tap ✕ |
+| **Leave the stream** (iOS, game keeps running) | **Hold Start + Select + L1 + R1** (~1s, fills ring) | tap ✕ |
 
 Notes:
 
@@ -206,8 +207,9 @@ VibeLight is a **shell + engine split**, decided after deep research (see
   moonlight-qt embedded at `VibeLight.app/Contents/Helpers/StreamHelper.app`,
   launched as a child process. VibeLight drives it over a machine-readable
   **`@VL` stdout protocol** (`@VL STARTED`, `@VL FAILED reason="…"`, etc.) instead
-  of scraping logs or fighting modal dialogs, and it always exits with a
-  deterministic code. The process boundary is strictly CLI args + stdout/stdin +
+  of scraping logs or fighting modal dialogs. Session state comes from those
+  `@VL` lines and host polling, never from the exit code (an error path can
+  still exit 0). The process boundary is strictly CLI args + stdout/stdin +
   signals + exit code — never a linked library (this is load-bearing for
   licensing).
 - `resolveStreamBinary()` prefers the **embedded** helper, then a local **fork
@@ -221,9 +223,10 @@ VibeLight is a **shell + engine split**, decided after deep research (see
 VibeLight (v1) talks **only to the GameStream API** the Sunshine/Apollo/Vibepollo
 host exposes:
 
-- **HTTPS on port 47984 with mTLS**, using either VibeLight's own generated
-  client identity (paired in-app) or the certificate/key imported from Moonlight's
-  plist (zero re-pairing for existing Moonlight users). The host's self-signed
+- **HTTPS on port 47984 with mTLS**, using VibeLight's own generated client
+  identity, paired with each computer in-app by PIN. VibeLight never reads
+  Moonlight's settings or pairings, so a computer you already use with Moonlight
+  needs pairing once in VibeLight too. The host's self-signed
   cert is byte-exact pinned (stronger than CA trust for this protocol; ATS is
   disabled so the pinning delegate can run).
 - **Remote state truth = `/serverinfo` polling** (`state` + `currentgame`). The
@@ -238,16 +241,16 @@ host exposes:
 ### Custom spatial focus engine
 
 macOS SwiftUI/AppKit focus ignores game controllers entirely, so VibeLight brings
-its own: index-based navigation within shelves, geometry-based across sections,
-fed identically by controller and keyboard. It's the reason the whole app is
-controller-navigable — and it's covered by 43 unit tests.
+its own: index-based navigation within shelves, ordinal (top-to-bottom order)
+between sections, fed identically by controller and keyboard. It's the reason the
+whole app is controller-navigable — and it's covered by unit tests.
 
 ### Module layout
 
 ```
 VibeLight/
   App/     entry point, app delegate, borderless big-picture window, AppState
-  Core/    models, contracts, Moonlight config import, client identity,
+  Core/    models, contracts, VibeLight's own client identity + pairing,
            host API (mTLS), stream session manager, updater, wake-on-LAN  (no UI)
   Input/   controller manager, keyboard routing, spatial focus engine, input glyphs
   UI/      theme, screens, components — consumes Core/Input only through
@@ -265,7 +268,7 @@ delivery *is* the controller arbitration between the launcher and the stream.
 ## Building from source
 
 Swift 6 strict concurrency is on; the deployment target is macOS 15+. There is no
-sandbox (VibeLight execs the stream helper and reads Moonlight's plist).
+sandbox (VibeLight execs the stream helper and writes the helper's settings).
 
 ### The app
 
@@ -355,9 +358,9 @@ VibeLight stands on the shoulders of:
 
 ## Status / roadmap
 
-VibeLight is an **early but working** project (v0.1.x) — it streams end-to-end
+VibeLight is an **early but working** project (v0.2.x) — it streams end-to-end
 today on **both platforms**: the full big-picture UI, controller navigation,
-in-app pairing (and zero-setup Moonlight import), the embedded chromeless
+in-app pairing (VibeLight's own identity; Moonlight isn't needed), the embedded chromeless
 engine on macOS, the in-process engine on iOS (video + audio + controller +
 touch, shipped in v0.1.8), and the in-app updater all functional.
 
