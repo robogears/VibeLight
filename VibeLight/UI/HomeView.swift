@@ -331,7 +331,7 @@ private struct EmptyShelfPanel: View {
 
     private var symbol: String {
         switch shelf {
-        case .noComputer, .notPaired: "desktopcomputer"
+        case .noComputer, .notPaired, .checking: "desktopcomputer"
         case .asleep, .waking: "moon.zzz.fill"
         case .offline: "power"
         case .notResponding, .problem: "exclamationmark.triangle.fill"
@@ -343,6 +343,7 @@ private struct EmptyShelfPanel: View {
         switch shelf {
         case .noComputer: "Add your gaming PC"
         case .notPaired: "\(name) isn't paired yet"
+        case .checking: "Looking for \(name)…"
         case .asleep: "\(name) is asleep"
         case .waking: "Waking \(name)…"
         case .offline: "\(name) is offline"
@@ -358,6 +359,7 @@ private struct EmptyShelfPanel: View {
         // computer selected (the header chip isn't drawn).
         case .noComputer: state.hostError ?? "Its games will show up here."
         case .notPaired: "Pair it to see its games."
+        case .checking: "Checking whether it's awake."
         case .asleep: "Wake it to load your games."
         case .waking: "This usually takes 30–60 seconds."
         case .offline: "Turn it on to load your games."
@@ -383,7 +385,7 @@ private struct EmptyShelfPanel: View {
             if shelf == .noComputer {
                 OverlayButton(id: "header:addhost", title: "Add Computer", symbol: "plus.circle.fill")
                     .padding(.top, 8)
-            } else if shelf == .waking {
+            } else if shelf == .waking || shelf == .checking {
                 ProgressView()
                     .padding(.top, 8)
             } else {

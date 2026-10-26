@@ -151,6 +151,10 @@ final class AppState {
     /// colour with a spinner, not error orange (UX-host-banner-truncates).
     private(set) var hostNotice: String?
     @ObservationIgnored private var noticeClearTask: Task<Void, Never>?
+    /// The selected computer has answered at least once since it was selected
+    /// (games list, or a failure saying why not) — so an empty shelf means
+    /// something. Reset on every selection change (UX-empty-home-no-invitation).
+    private(set) var selectedHostChecked = false
     private(set) var isRefreshing = false
     /// Apps to render: fresh from the host when online, else the plist cache.
     private(set) var apps: [StreamApp] = []
@@ -290,14 +294,18 @@ final class AppState {
     /// Why the games shelf is empty, so it can say so and offer the next step
     /// instead of a blank row (UX-empty-home-no-invitation).
     enum EmptyShelf: Equatable, Sendable {
-        case noComputer, notPaired, asleep, waking, offline, notResponding, problem, noGames
+        case noComputer, notPaired, checking, asleep, waking, offline, notResponding, problem, noGames
     }
 
-    nonisolated static func emptyShelf(hasHost: Bool, isPaired: Bool, online: Bool,
+    nonisolated static func emptyShelf(hasHost: Bool, isPaired: Bool, checked: Bool, online: Bool,
                                        notResponding: Bool, hasError: Bool,
                                        canWake: Bool, waking: Bool) -> EmptyShelf {
         guard hasHost else { return .noComputer }
         if !isPaired { return .notPaired }
+        // Until the first answer (games list or failure) the shelf is empty only
+        // because nothing has loaded yet: an awake PC must not read "asleep" with
+        // a Wake button, nor "No games", while it's being asked.
+        if !checked { return .checking }
         if online { return .noGames }
         if notResponding { return .notResponding }
         // An error (e.g. "pair it again") is never shown as "asleep"; the
@@ -324,7 +332,8 @@ final class AppState {
         guard apps.isEmpty else { return nil }
         let host = selectedHost
         return Self.emptyShelf(hasHost: host != nil, isPaired: host?.isPaired ?? false,
-                               online: hostOnline, notResponding: hostNotResponding,
+                               checked: selectedHostChecked, online: hostOnline,
+                               notResponding: hostNotResponding,
                                hasError: hostError != nil, canWake: canWakeSelectedHost,
                                waking: host != nil && wakingHostID == host?.id)
     }
@@ -585,6 +594,7 @@ final class AppState {
             hostError = nil
             hostNotResponding = fake.notResponding
             serverInfo = fake.info
+            selectedHostChecked = true   // never refreshed, so mark it answered
         }
         switch DebugInstruments.fakeHostError {
         case .long: hostError = Self.someSavedHostsUnreadableMessage
@@ -1503,6 +1513,8 @@ final class AppState {
         if wasSelected {
             selectedHostID = hosts.first?.id
             serverInfo = nil; hostAddress = nil
+            selectedHostChecked = false
+            clearHostNotice()   // it named the removed computer
             apps = displayApps(from: selectedHost?.apps ?? [])
             Task { await refreshSelectedHost() }
         }
@@ -1610,6 +1622,7 @@ final class AppState {
             let fresh = try await api.appList(for: host, at: address)
             guard selectionStillThisHost(), session.phase == .idle else { return }
             apps = displayApps(from: fresh)
+            selectedHostChecked = true
             // The host answered normally, so whatever identity trouble we saw
             // before is over.
             hostsNeedingRepair.remove(host.id)
@@ -1640,10 +1653,12 @@ final class AppState {
             // Moonlight plist import was removed in v0.2.0) — so the "cache"
             // was `apps = []`, and any hiccup blanked the whole shelf.
             apps = displayApps(from: rememberedApps(for: host))
+            if selectionStillThisHost() { selectedHostChecked = true }
         } catch {
             serverInfo = nil
             hostAddress = nil
             hostNotResponding = false
+            if selectionStillThisHost() { selectedHostChecked = true }
         }
         rebuildFocus()
         if focus.focusedItemID == nil { focus.focusFirst() }
@@ -1760,6 +1775,7 @@ final class AppState {
         selectedHostID = id
         serverInfo = nil
         hostAddress = nil
+        selectedHostChecked = false
         clearHostNotice()   // it named the previous computer
         apps = displayApps(from: selectedHost?.apps ?? [])
         rebuildFocus()

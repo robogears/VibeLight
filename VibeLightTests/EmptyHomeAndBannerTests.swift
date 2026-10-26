@@ -42,10 +42,11 @@ final class EmptyHomeAndBannerTests: XCTestCase {
 
     // MARK: Empty shelf
 
-    private func shelf(hasHost: Bool = true, isPaired: Bool = true, online: Bool = false,
+    private func shelf(hasHost: Bool = true, isPaired: Bool = true, checked: Bool = true,
+                       online: Bool = false,
                        notResponding: Bool = false, hasError: Bool = false,
                        canWake: Bool = false, waking: Bool = false) -> AppState.EmptyShelf {
-        AppState.emptyShelf(hasHost: hasHost, isPaired: isPaired, online: online,
+        AppState.emptyShelf(hasHost: hasHost, isPaired: isPaired, checked: checked, online: online,
                             notResponding: notResponding, hasError: hasError,
                             canWake: canWake, waking: waking)
     }
@@ -77,6 +78,17 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         for state in [AppState.EmptyShelf.offline, .notResponding, .noGames, .problem] {
             XCTAssertEqual(AppState.emptyShelfFocusIDs(state), [], "\(state)")
         }
+    }
+
+    /// Before the selected computer first answers, the shelf is empty only
+    /// because nothing has loaded: an awake PC must not read "asleep" with a
+    /// Wake button (a stray A would send a magic packet), nor "No games".
+    func testNothingIsClaimedBeforeTheComputerFirstAnswers() {
+        XCTAssertEqual(shelf(checked: false, canWake: true), .checking)
+        XCTAssertEqual(shelf(checked: false, online: true), .checking)
+        XCTAssertEqual(AppState.emptyShelfFocusIDs(.checking), [])
+        // Pairing is known locally, so it needn't wait for an answer.
+        XCTAssertEqual(shelf(isPaired: false, checked: false), .notPaired)
     }
 
     func testAnErrorIsNeverShownAsAsleep() {
@@ -142,6 +154,17 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         let app = try source("VibeLight/App/AppState.swift")
         let wake = try body(of: "func wakeSelectedHost() {", until: "\n    func wakeHost(", in: app)
         XCTAssertEqual(wake.components(separatedBy: "rebuildFocus()").count - 1, 2, String(wake))
+    }
+
+    /// The "answered yet" flag belongs to one computer: switching or removing
+    /// the selected one must reset it, or the next one is judged on the last
+    /// one's answer.
+    func testSelectionChangesResetTheAnsweredFlag() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let select = try body(of: "func selectHost(_ id: String) {", until: "\n    }\n", in: app)
+        XCTAssertTrue(select.contains("selectedHostChecked = false"), String(select))
+        let remove = try body(of: "let wasSelected = selectedHostID == host.id", until: "rebuildFocus()", in: app)
+        XCTAssertTrue(remove.contains("selectedHostChecked = false"), String(remove))
     }
 
     func testChipBannerWrapsInsteadOfTruncating() throws {
