@@ -2,7 +2,7 @@
 
 **TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: audit complete and its visual page published
+STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN (135) · last: 3 visual fixes merged (stream controls, keyboard hints, iPad icon)
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -12,6 +12,8 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: audit complet
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
+- 💡 Leftover (Low) — the stream controls only notice AssistiveTouch being switched on at their next redraw (SwiftUI can't observe it); VoiceOver and Switch Control are noticed immediately. Fix later with a UIAccessibility notification observer.
+- 💡 Leftover (Low) — the keyboard-hint fix has a unit test for its rule but no test pinning the wiring that tags keyboard vs controller input; a future edit could quietly undo it.
 - 💡 The helper repo tracks a generated build file, `app/Makefile.Debug`, that has your full home-folder path in it and is public on GitHub — why: it leaks the machine path, and since the move it points at the OLD location, so the helper's next `make` needs a fresh `qmake moonlight-qt.pro` first — how: in ~/Developer/vibelight-moonlight-helper, `git rm --cached app/Makefile.Debug`, add `app/Makefile.*` to .gitignore, commit, push. Not done unattended: it's another repo's `master`.
 - 💡 Stale Xcode build cache for the old ~/Documents path (588 MB, `~/Library/Developer/Xcode/DerivedData/VibeLight-gbkjmozetujwozebxnxfvkmtocuj`) — why: nothing uses it any more — how: delete it from Xcode ▸ Settings ▸ Locations, or Finder. Not done unattended: it's your disk.
 - 💡 `_dump/` inside the repo (231 MB, 5,141 files, gitignored) is the quarantine from an earlier cleanup pass (sync-conflict copies such as `VibeLight 2.xcodeproj`); `_dump/undo.sh` restores everything — why: the repo is out of iCloud now, so these should stop appearing — how: once you're happy nothing is missing, delete `_dump/`. Not done unattended: it's your quarantine.
@@ -19,6 +21,11 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: audit complet
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 14:15 Three visual fixes merged into codeX after code + apple-design review and skeptics:
+  - iPad stream: when the ✕ and keyboard buttons hide, a faint pill stays at the top-right edge, and tapping it brings them back (the swipe still works). With VoiceOver or Switch Control on, the buttons never hide, and "Leave the Stream" is an accessibility action. Under Reduce Motion they fade instead of sliding. Increase Contrast makes the pill brighter and outlines it.
+  - Mac: using the keyboard shows keyboard hints (⏎/⎋) even with a controller plugged in. Touch the controller and its buttons come back.
+  - The iPad icon now fills its rounded square edge to edge, with no dark frame. Same artwork, and the Mac icons are byte-identical.
+  - 135 Mac tests pass; iOS builds.
 - 26 Oct 13:30 The audit's visual breakdown is published as a private Artifact (only you can open it): https://claude.ai/artifact/VMjJrFamMZh8EmixUtZpQo
 - 26 Oct 13:20 Audit sweep 4 came back dry: its one lead (the Restart PC certificate check and how typed addresses are spelled) could not be settled without a live test, so it's listed under Needs investigation. The audit is complete: 0 critical · 0 high · 18 medium · 70 low · 27 suggestion.
 - 26 Oct 13:15 Resumed by you ("resume the overnight loop and keep working"). Same branch, same plan; hard limits and keep-awake back on.
@@ -59,6 +66,12 @@ STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: audit complet
 - The audit runs read-only on the main checkout instead of a separate worktree, and the loop makes no source edits until it lands — so every file:line in the report stays valid.
 - Routine iOS test runs skip `IOSIdentityTests`: the September audit found they overwrite the simulator app's real pairing identity (that's finding DAT-simulator-identity-reset-f95217a7).
 - ~/Documents is iCloud-synced — that's almost certainly where the `AppState 2.swift` / `Info 2.plist` duplicates CLAUDE.md warns about came from (sync-conflict copies). Moving out of iCloud should end them.
+
+## Live checks for you (things only your eyes or devices can confirm)
+- iPad stream: wait 7 s after a game starts — the buttons slide away and a faint white pill stays at the top-right edge. Tap it: they come back. **Your call:** is the pill too visible over gameplay? (one-line fallback: dimmer, white at 0.35)
+- iPad stream with VoiceOver on: the buttons never hide; the Actions rotor offers "Leave the Stream".
+- Mac with a controller plugged in: press arrow keys/Return — the hint bar shows ⏎/⎋; touch the controller — it shows Ⓐ/Ⓑ again.
+- iPad Home Screen: the VibeLight icon fills its rounded square with no black frame.
 
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
