@@ -8,17 +8,43 @@ import Security
 /// crypto path behind iOS pairing / mTLS, which can't run on the macOS test host
 /// (`IOSKeychainIdentity` is `#if os(iOS)`). Probe-proven on macOS-adhoc; this
 /// pins it down on-simulator.
+///
+/// The test bundle runs INSIDE the real app on the simulator, so every keychain
+/// call here uses a test-only namespace, unique per test and deleted in
+/// tearDown — never `.production`, which holds the simulator's real paired
+/// identity. (audit DAT-simulator-identity-reset)
 final class IOSIdentityTests: XCTestCase {
+
+    private var ns: IOSKeychainIdentity.Namespace!
+
+    override func setUp() {
+        let id = UUID().uuidString
+        ns = .init(keyTag: Data("com.vibelight.tests.identity.key.\(id)".utf8),
+                   certLabel: "VibeLight Test Identity \(id)")
+        XCTAssertNotEqual(ns, .production)
+    }
+
+    override func tearDown() {
+        IOSKeychainIdentity.deleteAll(in: ns)
+    }
+
+    /// Every installed copy's identity is filed under these; a changed value
+    /// reads as "no identity" and unpairs every computer.
+    func testProductionNamespaceIsUnchanged() {
+        XCTAssertEqual(IOSKeychainIdentity.Namespace.production.keyTag,
+                       Data("com.vibelight.client.identity.key".utf8))
+        XCTAssertEqual(IOSKeychainIdentity.Namespace.production.certLabel, "VibeLight Client Identity")
+    }
 
     func testBornInKeychainIdentityAssemblesAndSigns() throws {
         // 1. Generate: SecKeyCreateRandomKey (permanent) + swift-certificates cert.
-        let pems = try XCTUnwrap(IOSKeychainIdentity.generatePEMs(),
+        let pems = try XCTUnwrap(IOSKeychainIdentity.generatePEMs(in: ns),
                                  "generatePEMs should mint a born-in-keychain identity")
         let certPEM = try XCTUnwrap(String(data: pems.cert, encoding: .utf8))
         XCTAssertTrue(certPEM.contains("BEGIN CERTIFICATE"), "cert PEM should be well-formed")
 
         // 2. Assemble the SecIdentity from the keychain (key + cert must link).
-        let identity = try XCTUnwrap(IOSKeychainIdentity.assembleIdentity(),
+        let identity = try XCTUnwrap(IOSKeychainIdentity.assembleIdentity(in: ns),
                                      "SecIdentity should assemble from the born-in-keychain key + cert")
 
         // 3. The private key signs (this is what HostPairing does over mTLS).
@@ -40,7 +66,7 @@ final class IOSIdentityTests: XCTestCase {
         XCTAssertEqual(cn as String?, "NVIDIA GameStream Client")
 
         // 5. Idempotency: a second load finds the SAME identity (stable across launches).
-        guard case .found(let reloadedCert, _) = IOSKeychainIdentity.loadPEMs() else {
+        guard case .found(let reloadedCert, _) = IOSKeychainIdentity.loadPEMs(in: ns) else {
             return XCTFail("loadPEMs should report .found for the identity created above")
         }
         XCTAssertEqual(reloadedCert, pems.cert, "the cached identity should be stable")
@@ -107,26 +133,73 @@ final class IOSIdentityTests: XCTestCase {
         }
     }
 
-    /// End to end on the simulator: mint an identity, then prove that the
-    /// unavailable path leaves it completely untouched.
+    /// End to end on the simulator: mint an identity, then drive the code that
+    /// decides whether to generate — `IdentityStore.resolveFromKeychain` — with
+    /// a keychain that answers "unavailable". Its generate step is the REAL
+    /// destructive generator (in this test's namespace), so if resolve ever
+    /// generated on `.unavailable`, the identity would be replaced and this
+    /// fails. (audit QUA-ios-unavailable-test-cannot-fail)
     func testUnavailableLookupDoesNotDestroyTheIdentity() throws {
-        let pems = try XCTUnwrap(IOSKeychainIdentity.generatePEMs())
+        let pems = try XCTUnwrap(IOSKeychainIdentity.generatePEMs(in: ns))
+        let ns = self.ns!
+        var generateCalls = 0
 
-        // Simulate what resolve() does when the keychain refuses to answer.
-        // The ONLY correct behaviour is to do nothing at all.
-        if case .unavailable = IOSKeychainIdentity.classify(certStatus: errSecInteractionNotAllowed,
-                                                            keyStatus: errSecInteractionNotAllowed) {
-            // resolve() returns an empty identity here and generates nothing.
-        } else {
-            XCTFail("a locked keychain must classify as .unavailable")
-        }
+        let resolved = IdentityStore.resolveFromKeychain(
+            uniqueID: "test",
+            lookup: { .unavailable(errSecInteractionNotAllowed) },
+            generate: { generateCalls += 1; return IOSKeychainIdentity.generatePEMs(in: ns) })
 
-        // The identity is still there and still assembles.
-        guard case .found(let cert, _) = IOSKeychainIdentity.loadPEMs() else {
+        XCTAssertEqual(generateCalls, 0, "a keychain that can't answer must never lead to generation")
+        XCTAssertTrue(resolved.certificatePEM.isEmpty, "unavailable resolves to an empty identity")
+
+        // The identity is still there, byte for byte, and still assembles.
+        guard case .found(let cert, _) = IOSKeychainIdentity.loadPEMs(in: ns) else {
             return XCTFail("the identity must survive an unavailable lookup")
         }
         XCTAssertEqual(cert, pems.cert)
-        XCTAssertNotNil(IOSKeychainIdentity.assembleIdentity())
+        XCTAssertNotNil(IOSKeychainIdentity.assembleIdentity(in: ns))
+    }
+
+    /// The other two branches, so the test above can't pass by resolve simply
+    /// never generating at all.
+    func testResolveGeneratesOnlyWhenAbsentAndUsesWhatItFinds() {
+        var generateCalls = 0
+        let minted = (cert: Data("NEW".utf8), key: Data())
+
+        let fresh = IdentityStore.resolveFromKeychain(
+            uniqueID: "test", lookup: { .absent },
+            generate: { generateCalls += 1; return minted })
+        XCTAssertEqual(generateCalls, 1)
+        XCTAssertEqual(fresh.certificatePEM, minted.cert)
+
+        let existing = IdentityStore.resolveFromKeychain(
+            uniqueID: "test", lookup: { .found(cert: Data("OLD".utf8), key: Data()) },
+            generate: { generateCalls += 1; return minted })
+        XCTAssertEqual(generateCalls, 1, "a found identity is used, never regenerated")
+        XCTAssertEqual(existing.certificatePEM, Data("OLD".utf8))
+    }
+
+    /// Pairing's re-read of an empty launch identity: a keychain that still
+    /// can't answer says to retry; nothing there asks for a relaunch (which is
+    /// where generation happens). (audit ERR-ios-pairing-empty-cert-snapshot)
+    func testPairingReReadSaysWhatToDo() throws {
+        typealias P = ClientIdentityProvider
+        XCTAssertEqual(try P.certificateForPairing(from: .found(cert: Data("C".utf8), key: Data())), Data("C".utf8))
+
+        // Pair is tapped on an unlocked device, so whatever status the keychain
+        // gives, the message must not claim the device was locked — it names
+        // no cause and says to try again. (review of the same finding)
+        for status in [errSecInteractionNotAllowed, errSecMissingEntitlement, errSecAuthFailed, errSecInternalError] {
+            XCTAssertThrowsError(try P.certificateForPairing(from: .unavailable(status))) {
+                let message = $0.localizedDescription
+                XCTAssertFalse(message.lowercased().contains("lock"), "status \(status): \(message)")
+                XCTAssertTrue(message.contains("Try pairing again"), message)
+            }
+        }
+        XCTAssertThrowsError(try P.certificateForPairing(from: .absent)) {
+            XCTAssertEqual($0.localizedDescription, P.noIdentityMessage)
+        }
+        XCTAssertThrowsError(try P.certificateForPairing(from: .found(cert: Data(), key: Data())))
     }
 }
 #endif

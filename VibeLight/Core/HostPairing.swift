@@ -19,12 +19,10 @@ final class HostPairing: @unchecked Sendable {
 
     private let identityProvider: ClientIdentityProvider
     private let uniqueID: String
-    private let clientCertPEM: Data
 
     init(identityProvider: ClientIdentityProvider, uniqueID: String) {
         self.identityProvider = identityProvider
         self.uniqueID = uniqueID
-        self.clientCertPEM = identityProvider.certificatePEM
     }
 
     /// Generates a fresh 4-digit PIN for the user to type on the host.
@@ -48,6 +46,16 @@ final class HostPairing: @unchecked Sendable {
         let hashLength = 32  // SHA-256 (Sunshine/Apollo/Vibepollo are all gen 7+)
         let salt = GameStreamCrypto.randomBytes(16)
         let aesKey = GameStreamCrypto.sha256(salt + Data(pin.utf8)).prefix(16)
+
+        // Settle our certificate BEFORE contacting the PC. Phase 1 makes the PC
+        // ask for the PIN, so an empty certificate used to cost the person a
+        // typed PIN and then fail at stage 3. (audit ERR-ios-pairing-empty-cert-snapshot)
+        let clientCertPEM: Data
+        do {
+            clientCertPEM = try identityProvider.pairingCertificatePEM()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
 
         do {
             // Clear any zombie session first: Sunshine keeps a half-open pairing
@@ -91,7 +99,9 @@ final class HostPairing: @unchecked Sendable {
             let serverChallenge = challengeResponseData.subdata(in: hashLength..<(hashLength + 16))
             let clientSecret = GameStreamCrypto.randomBytes(16)
             guard let clientCertSig = GameStreamCrypto.x509SignatureBytes(pem: clientCertPEM) else {
-                return .failed("Couldn't read the client certificate.")
+                // Like every other stage 2–3 failure: don't leave the PC holding
+                // a half-finished pairing. (audit ERR-ios-pairing-empty-cert-snapshot)
+                await unpair(address); return .failed("Couldn't read the client certificate.")
             }
             var challengeResponse = Data()
             challengeResponse.append(serverChallenge)

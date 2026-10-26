@@ -21,9 +21,25 @@ import SwiftASN1
 /// CN="NVIDIA GameStream Client", 20-year validity, SHA-256, RSA-2048.
 enum IOSKeychainIdentity {
 
-    /// Stable identifiers so the identity is found + reused across launches.
-    private static let keyTag = Data("com.vibelight.client.identity.key".utf8)
-    private static let certLabel = "VibeLight Client Identity"
+    /// The keychain identifiers one identity lives under.
+    ///
+    /// The app only ever uses `.production`. Tests pass their own namespace so
+    /// they mint, read and delete only their own items: the test bundle runs
+    /// INSIDE the real app on the simulator, and the destructive calls used to
+    /// hit the production tag and label, wiping that simulator's paired
+    /// identity. (audit DAT-simulator-identity-reset)
+    struct Namespace: Equatable, Sendable {
+        let keyTag: Data
+        let certLabel: String
+
+        /// Stable identifiers so the identity is found + reused across
+        /// launches. NEVER change these: every installed copy's identity is
+        /// filed under them, so a new value reads as "no identity" and unpairs
+        /// every computer. Pinned by IOSIdentityTests.
+        static let production = Namespace(
+            keyTag: Data("com.vibelight.client.identity.key".utf8),
+            certLabel: "VibeLight Client Identity")
+    }
 
     // MARK: - Public
 
@@ -49,18 +65,18 @@ enum IOSKeychainIdentity {
     /// permanent key and the cert must be present to assemble an identity).
     /// The private-key PEM is intentionally empty: on iOS the key never leaves
     /// the keychain — signing goes through the assembled `SecIdentity`.
-    static func loadPEMs() -> Lookup {
+    static func loadPEMs(in ns: Namespace = .production) -> Lookup {
         var certRef: CFTypeRef?
         let certStatus = SecItemCopyMatching([
             kSecClass: kSecClassCertificate,
-            kSecAttrLabel: certLabel,
+            kSecAttrLabel: ns.certLabel,
             kSecReturnRef: true,
         ] as CFDictionary, &certRef)
 
         var keyRef: CFTypeRef?
         let keyStatus = SecItemCopyMatching([
             kSecClass: kSecClassKey,
-            kSecAttrApplicationTag: keyTag,
+            kSecAttrApplicationTag: ns.keyTag,
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecReturnRef: true,
         ] as CFDictionary, &keyRef)
@@ -77,7 +93,7 @@ enum IOSKeychainIdentity {
             // surprise.
             guard let certRef, keyRef != nil else { return .unavailable(errSecInternalError) }
             let cert = certRef as! SecCertificate
-            migrateAccessibilityIfNeeded()
+            migrateAccessibilityIfNeeded(ns)
             let der = SecCertificateCopyData(cert) as Data
             return .found(cert: Data(pem(fromCertDER: der).utf8), key: Data())
         }
@@ -145,15 +161,17 @@ enum IOSKeychainIdentity {
     /// Generate a fresh born-in-keychain identity and return its cert PEM.
     ///
     /// Destructive by design — call ONLY after `loadPEMs()` returned `.absent`.
-    static func generatePEMs() -> (cert: Data, key: Data)? {
-        deleteAll()  // never leave a half-formed identity behind
-        guard let key = createPermanentKey(),
+    /// The namespace has no default on purpose: a destructive call must say
+    /// whose items it replaces.
+    static func generatePEMs(in ns: Namespace) -> (cert: Data, key: Data)? {
+        deleteAll(in: ns)  // never leave a half-formed identity behind
+        guard let key = createPermanentKey(ns),
               let der = buildSelfSignedCertDER(for: key),
               let cert = SecCertificateCreateWithData(nil, der as CFData),
-              addCertificate(cert),
-              assembleIdentity() != nil          // prove it actually assembles
+              addCertificate(cert, ns),
+              assembleIdentity(in: ns) != nil    // prove it actually assembles
         else {
-            deleteAll()
+            deleteAll(in: ns)
             return nil
         }
         // Serialize the PEM the SAME way loadPEMs does (from the cert DER), so
@@ -162,11 +180,11 @@ enum IOSKeychainIdentity {
     }
 
     /// The mTLS `SecIdentity`, assembled from the keychain key + cert.
-    static func assembleIdentity() -> SecIdentity? {
+    static func assembleIdentity(in ns: Namespace = .production) -> SecIdentity? {
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass: kSecClassIdentity,
-            kSecAttrLabel: certLabel,
+            kSecAttrLabel: ns.certLabel,
             kSecReturnRef: true,
         ] as CFDictionary, &out)
         guard status == errSecSuccess, let out else { return nil }
@@ -175,13 +193,13 @@ enum IOSKeychainIdentity {
 
     // MARK: - Keychain items
 
-    private static func createPermanentKey() -> SecKey? {
+    private static func createPermanentKey(_ ns: Namespace) -> SecKey? {
         let attrs: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits as String: 2048,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: keyTag,
+                kSecAttrApplicationTag as String: ns.keyTag,
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
             ],
         ]
@@ -189,11 +207,11 @@ enum IOSKeychainIdentity {
         return SecKeyCreateRandomKey(attrs as CFDictionary, &error)
     }
 
-    private static func addCertificate(_ cert: SecCertificate) -> Bool {
+    private static func addCertificate(_ cert: SecCertificate, _ ns: Namespace) -> Bool {
         let status = SecItemAdd([
             kSecClass: kSecClassCertificate,
             kSecValueRef: cert,
-            kSecAttrLabel: certLabel,
+            kSecAttrLabel: ns.certLabel,
             // Match the private key's accessibility (createPermanentKey). Left
             // unset, a keychain item defaults to kSecAttrAccessibleWhenUnlocked
             // — STRICTER than the key — so on a locked device the cert lookup
@@ -209,21 +227,26 @@ enum IOSKeychainIdentity {
     /// explicit accessibility (they got the stricter `WhenUnlocked` default).
     /// Runs on the success path only, so it can never widen access to an item
     /// we failed to read.
-    private static func migrateAccessibilityIfNeeded() {
+    private static func migrateAccessibilityIfNeeded(_ ns: Namespace) {
+        // Production only: the latch below lives in the app's own defaults, so
+        // a test namespace setting it would skip the real identity's repair.
+        guard ns == .production else { return }
         let flag = "vibelight.ios.certAccessibilityMigrated"
         guard !UserDefaults.standard.bool(forKey: flag) else { return }
         let status = SecItemUpdate(
-            [kSecClass: kSecClassCertificate, kSecAttrLabel: certLabel] as CFDictionary,
+            [kSecClass: kSecClassCertificate, kSecAttrLabel: ns.certLabel] as CFDictionary,
             [kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock] as CFDictionary)
         // Only latch on success: a failed migration should be retried next launch.
         if status == errSecSuccess { UserDefaults.standard.set(true, forKey: flag) }
     }
 
-    private static func deleteAll() {
+    /// Removes one namespace's key and certificate. Internal (not private) only
+    /// so tests can clean up their own namespace; no default, like generatePEMs.
+    static func deleteAll(in ns: Namespace) {
         SecItemDelete([kSecClass: kSecClassKey,
-                       kSecAttrApplicationTag: keyTag] as CFDictionary)
+                       kSecAttrApplicationTag: ns.keyTag] as CFDictionary)
         SecItemDelete([kSecClass: kSecClassCertificate,
-                       kSecAttrLabel: certLabel] as CFDictionary)
+                       kSecAttrLabel: ns.certLabel] as CFDictionary)
     }
 
     // MARK: - Cert construction (swift-certificates)
