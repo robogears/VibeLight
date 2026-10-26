@@ -1,8 +1,8 @@
 # Overnight Loop Report — 2026-10-21
 
-**TL;DR — stopped by you on 26 Oct.** VibeLight moved out of iCloud into ~/Developer along with its stream helper; the test build that a stray character had broken compiles again; the deep audit is written (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). The fix pass had not started: nine fix groups are queued in `OVERNIGHT_LOOP_PLAN.md`. Not finished: the audit's last sweep and its visual page. Build and all 132 Mac tests green; nothing merged to main, nothing released.
+**TL;DR — running again since you resumed it on 26 Oct.** VibeLight lives in ~/Developer with its stream helper; the deep audit is done and dry (0 critical, 0 high, 18 medium, 70 low, 27 suggestion — private report inside `.git/overnight-loop/`). Merged on `codeX`: fix groups 1 (saved data) and 7 (updater), your Computers-menu order, and 7 of the 13 visual changes. Building: fix group 5 (identity safety) and visual batch 2C (accent labels, destructive red, no hover zoom). Nothing merged to main, nothing released.
 
-STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (177 Mac; 1 unidentified intermittent failure, not reproduced) · last: TV dead end fixed
+STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one intermittent failure is now identified — the known loopback flake, BoundedResponseTests, passes alone; fix queued in G9) · last: updater fixes merged
 
 ## Run
 - Started: 23:24 · Branch: codeX from main · Ceiling: none (runs until you stop it)
@@ -12,6 +12,8 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (177 Mac; 1 unidentifi
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
+- 💡 FS-update-swap-unchecked-stage (rest) — the relauncher script still copies the new version over the old one in place; building it beside the old copy and swapping with two renames would make a half-finished install impossible — why not done: it changes the install path itself, which can only be proven by running a real update. Do it with an updater end-to-end test run.
+- 💡 After a failed update rolls back, the next launch says nothing — a one-line "The update couldn't be installed; you're still on X" card would tell you why the version didn't change.
 - 💡 Leftover (Low) — on a landscape iPhone or a Mac window under ~860 pt tall, Interface Size ▸ Large can't make anything bigger, and the row doesn't say so. iPhone really needs a compact Home layout (the design lead's recommendation), which is a bigger design job.
 - 💡 Leftover (Low) — the stream controls only notice AssistiveTouch being switched on at their next redraw (SwiftUI can't observe it); VoiceOver and Switch Control are noticed immediately. Fix later with a UIAccessibility notification observer.
 - 💡 Leftover (Low) — the keyboard-hint fix has a unit test for its rule but no test pinning the wiring that tags keyboard vs controller input; a future edit could quietly undo it.
@@ -22,6 +24,15 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (177 Mac; 1 unidentifi
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 19:50 G7 updater fixes merged (6 findings; review 1 upheld Low, last review 1 Low, fixed directly — a comment that disagreed with the code). What you now get:
+  - Restart Now refuses a downloaded update that changed or disappeared since it was checked;
+  - a failed first install reopens the copy you were running;
+  - an older VibeLight opened from Downloads or a disk image no longer offers to replace a newer (or the same) version in Applications;
+  - the Mac's display can sleep while VibeLight is hidden or another app is in front;
+  - an update found while a game is streaming waits and shows its card after the stream;
+  - a Mac stream that fails to connect says which step failed, the error code and which ports to open.
+  - Honest notes: the update swap script itself was NOT changed (Restart Now re-checks the download instead — changing the swap can't be proven safe without running one); the relocate version check happens when the card is offered, not again at Move; all of it checked by tests and source, never run for real (no update, swap or relocate was run). 198 Mac tests: 1 failure, `BoundedResponseTests/testNormalResponseStillParses` — the known loopback flake (machine load average was ~90–500); it passed alone twice. The earlier "unidentified" failure was almost certainly the same test.
+  - iPad Simulator pixel check (fake TV + Xbox pad, Home after setup) — see Live checks. On a fresh install the first launch took 30 s+ on this loaded Mac (white screen until then), not a hang.
 - 26 Oct 18:58 The TV dead end is fixed (audit Medium): with a TV plugged in and no controller, the launcher stays on your iPad and the TV mirrors it; with a controller, the companion panel takes over as before (and gives the iPad back if the controller drops out). The panel now has a quiet "Use the iPad Instead" button and no longer shows the TV's pixel numbers. Review raised a possible new compiler warning in Release builds; real iOS and Mac Release builds showed it doesn't exist.
   - Honest note: the first full test run of the merged tree had 1 failure I didn't capture the name of. Six more runs (2 full, 4 targeted on the timing-sensitive network tests) were all clean. Most likely the loopback-timing flake the audit already flagged (QUA-bounded-test-loopback-flake, in fix group 9).
 - 26 Oct 18:10 Settings ▸ Audio now has a Menu Sounds switch (On by default). Off silences the launcher's ticks, chimes and the setup quack on Mac and iPad — games and controller haptics are unaffected — and it survives relaunching and loading presets. 171 Mac tests green.
