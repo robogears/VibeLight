@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED  (resumed by th
 PROJECT_PATH: ~/Developer/VibeLight
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792610686
-LAST_TURN_EPOCH: 1793008409
+LAST_TURN_EPOCH: 1793008689
 CEILING_EPOCH: none
 BASE_BRANCH: main
 BRANCH: codeX
@@ -18,7 +18,8 @@ TICK_PROMPT: Overnight loop tick for `~/Developer/VibeLight`. You are mid-run: s
 EVERY TURN: re-read this header + open items → handle user messages → check the ceiling → work → update this header → ScheduleWakeup(TICK_PROMPT)
 STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 
-<!-- Standing rules for this run (owner, 21 Oct 2026):
+<!-- Owner's task list: MasterTasks.md (MT) at the project root — read it every turn; new mid-work requests go there (owner, 26 Oct).
+     Standing rules for this run (owner, 21 Oct 2026):
      - Global ~/.claude/CLAUDE.md + AGENT_OPERATING_MANUAL.md apply. Versioning: GitHub has v0.2.1 → the
        first real change bumps MARKETING_VERSION to 0.2.2 in project.yml (2 places), then HOLD. Never release.
      - "no visual changes for now": no layout/colour/motion changes — design findings get PARKED with a plan.
@@ -40,6 +41,8 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
      [>] N. <item> — <reason> · shelved: overnight-loop/shelved/<slug>
      [!] N. <item> — blocked by <reason> (morning command in the report) -->
 
+- [~] 4. Computers menu order (owner, 26 Oct: "under computers, the last used PC should be at the top with a little bar that seperates it from the other PCS, the last used PC should probably be the current one thats connected/the user is on") — done when: the selected PC is first, a hairline divider follows, the rest keep their order, controller focus order matches, unit-tested, apple-design reviewed — STARTED 1793008689 · attempt 1 · approach: one pure ordering function used by both the menu and the focus tree · active: 2m · wip: none · delegated: workflow wf_b952b6d4-e3d (task w4ccvke17) · ~/Developer/VibeLight-lane-hm · loop/computers-order
+
 ## Ladder backlog (self-generated when the mission is exhausted)
 <!-- Fix-pass groups from the 26 Oct audit. IDs + one-line titles only — the full report stays private in <git-dir>/overnight-loop/.
      Security-related items are named by area, not by how they could be misused. -->
@@ -47,7 +50,7 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 - [ ] G2. Pairing trust hardening — NET-unpinned-host-full-use-48acc13a, ERR-pairing-error-category-797eda5b, DAT-host-uuid-spoofs-synthetic-id-a209fe14, NET-buddy-pin-auto-dropped-490cdb57 — done when: an unpaired computer can only be asked whether it is paired; Forget also unpairs on the PC (best effort); pairing errors are labelled correctly
 - [ ] G3. Stream start/stop lifecycle — NET-wrong-game-resume-1203de39, LIF-stale-launch-restart-3aa8d709, LIF-quit-cancels-kept-game-950096d0, LIF-ios-background-quit-stuck-ending-b572b510, LIF-stale-session-callback-after-quit-32c8351a, ERR-silent-ios-quit-78297871, NET-stale-switch-snapshot-3c07c421, ERR-stale-host-error-7eadedb4, QUA-stream-end-flag-ignored-57e6197a — done when: switching games starts the chosen game, leaving/quitting cancels in-flight launches, stale results are ignored (non-drastic where device-only; live checks written)
 - [ ] G4. Keyboard and controller dead ends — QUA-keyboard-settings-tabs-553f2493, QUA-address-field-focus-27c153bd, QOL-controller-forget-computer-803c44b7, QUA-cmd-comma-repeat-toggles-settings-b9ce3c71, QUA-controller-pointer-mode-93ddc141, QUA-armed-destructive-confirms-d3559964, QUA-moondeck-cancel-becomes-restart-d0cf101d, QUA-touch-quit-hold-refires-7b5b2cc4, QUA-quit-app-hint-hides-hold-8f8a23ba, QUA-onboarding-back-hold-swallowed-34f18427, QUA-home-focus-lands-on-restart-67703195, QOL-select-toggles-row-3c32bb98, QUA-host-select-stale-id-89b0a9ab, LIF-held-input-survives-deactivation-446acd5f
-- [ ] G5. Client identity safety — FS-identity-read-loss-02d74004, ERR-ios-pairing-empty-cert-snapshot-e0df9a96, DAT-simulator-identity-reset-f95217a7, QUA-ios-unavailable-test-cannot-fail-b2014ba1
+- [~] G5. Client identity safety — FS-identity-read-loss-02d74004, ERR-ios-pairing-empty-cert-snapshot-e0df9a96, DAT-simulator-identity-reset-f95217a7, QUA-ios-unavailable-test-cannot-fail-b2014ba1 — STARTED 1793008689 · delegated: workflow wf_69ecd465-aa8 (task wrm6q37zz) · ~/Developer/VibeLight-lane-g5 · loop/g5-identity
 - [ ] G6. iPad/iPhone platform behaviour — UX-stream-edge-gestures-not-deferred-d26c4e8b, LIF-menu-sfx-audio-category-leak-69eba787, LIF-menu-sfx-engine-never-paused-a1e4245d, LIF-stream-keys-stuck-after-keyboard-loss-2feb…, LIF-companion-pre-dimmed-on-midstream-tv-9f1fe…, LIF-keyboard-survives-tv-attach-and-dim-375283…, QUA-hardware-keyboard-double-typing-1cb2a137, the two sweep-3 iPad keyboard items
 - [ ] G7. Updater, relocator and helper errors — FS-update-rollback-opens-self-deleting-copy, FS-update-swap-unchecked-stage-ca635165, FS-relocate-replaces-newer-copy-ec5b9509, ERR-helper-failure-reason-dropped-0fc3262c, QUA-launch-update-card-no-stream-gate-a643370b, LIF-display-sleep-held-hidden-39bea787
 - [ ] G8. Wording that says what happened and how to fix it — UX-launch-errors-no-fix-85c90989, UX-stream-fail-stage-jargon-af8468b9, UX-companion-trackpad-copy-1ad3c20c, UX-shortcuts-sheet-wrong-inputs-d03e44bf, UX-ended-card-quit-default-b84d536f, ERR-timeout-hides-wake-10d93881, QOL-accessible-custom-controls-75a1f6e6 (VoiceOver labels only), QOL-respect-reduce-motion-fcc0da28 (only when Reduce Motion is on)
