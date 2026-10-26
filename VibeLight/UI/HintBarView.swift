@@ -132,6 +132,18 @@ struct HintBarView: View {
         touchButtons ? hints.filter { $0.2 != nil } : hints
     }
 
+    /// What A/Return does on Home, named for the button it will press. Never a
+    /// dangling "Play" with no games: nil drops the touch pill, and a pad or
+    /// keyboard shows the glyph's own generic label (UX-empty-home-no-invitation).
+    nonisolated static func homeSelectLabel(focusedID: String?, hasApps: Bool) -> String? {
+        switch focusedID {
+        case "header:addhost": "Add Computer"
+        case "shelf:pair": "Pair Computer"
+        case "shelf:wake": "Wake Computer"
+        default: hasApps ? "Play" : nil
+        }
+    }
+
     /// (stable id, event, label override)
     private var hints: [(String, NavigationEvent, String?)] {
         switch state.screen {
@@ -156,7 +168,8 @@ struct HintBarView: View {
             // No quit-app hint on iOS: apps don't self-quit there (HIG), and
             // the chord is disabled in ControllerManager anyway.
             var home: [(String, NavigationEvent, String?)] = [
-                ("select", .select, "Play"),
+                ("select", .select, Self.homeSelectLabel(focusedID: state.focus.focusedItemID,
+                                                         hasApps: !state.apps.isEmpty)),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
                 ("quitgame", .quitChord, "Hold to Quit Game"),

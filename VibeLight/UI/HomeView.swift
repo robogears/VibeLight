@@ -98,10 +98,10 @@ private struct HeaderBar: View {
                     RestartPCButton()
                     HostChip(host: host)
                 }
-            } else {
-                // Fresh user, no computers yet — the way in to add one.
-                AddComputerButton()
             }
+            // No computer yet: the way in is the empty shelf's big Add Computer
+            // button (it carries `header:addhost`), not a pill up here — one
+            // view per focus id (UX-empty-home-no-invitation).
 
             TimelineView(.everyMinute) { context in
                 Text(context.date, format: .dateTime.hour().minute())
@@ -110,30 +110,6 @@ private struct HeaderBar: View {
                     .monospacedDigit()
             }
         }
-    }
-}
-
-/// The "Add Computer" affordance shown before any host exists. Focusable by
-/// controller/keyboard (id "header:addhost") so first-run isn't pointer-only.
-private struct AddComputerButton: View {
-    @Environment(AppState.self) private var state
-    private var isFocused: Bool { state.focus.focusedItemID == "header:addhost" }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus.circle.fill")
-            Text("Add Computer")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-        }
-        .foregroundStyle(Theme.onAccent)   // navy on the solid blue (UX-white-on-accent-contrast)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .background(Theme.accent, in: Capsule())
-        .overlay { Capsule().strokeBorder(.white, lineWidth: isFocused ? 2 : 0) }
-        .scaleEffect(isFocused ? 1.03 : 1.0)
-        .contentShape(Capsule())
-        .onTapGesture { state.openHostMenu() }
-        .animation(Theme.focusSpring, value: isFocused)
     }
 }
 
@@ -155,18 +131,35 @@ private struct HostChip: View {
             Text(host.name)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
-            if let error = state.hostError {
-                // A real error must never masquerade as "asleep" —
-                // that hides pairing/TLS problems behind a wake hint.
+            // A real error must never masquerade as "asleep" — that hides
+            // pairing/TLS problems behind a wake hint (AppState.hostBanner).
+            switch state.hostBanner {
+            case .error(let error):
+                // Two lines, never "…": the full text is also in the Computers
+                // card this chip opens (UX-host-banner-truncates).
                 Text(error)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.orange)
-                    .lineLimit(1)
-                    .frame(maxWidth: 420)
-            } else if !state.hostOnline {
-                Text(host.macAddress != nil ? "asleep" : "offline")
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 420, alignment: .leading)
+            case .notice(let notice):
+                // Normal progress (a restart) — neutral, with a spinner.
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(Theme.textSecondary)
+                    Text(notice)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            case .status(let status):
+                Text(status)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
+            case nil:
+                EmptyView()
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 11, weight: .bold))
@@ -278,6 +271,20 @@ private struct AppShelf: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
+        if let empty = state.emptyShelf {
+            // Nothing to show: say why and offer the next step, in the shelf's
+            // own frame so the preset row below doesn't move.
+            EmptyShelfPanel(shelf: empty)
+                .padding(.leading, 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: AppTileView.Metrics.shelf)
+                .introReveal(state.intro.tileArrived(0))
+        } else {
+            shelf
+        }
+    }
+
+    private var shelf: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 28) {
@@ -306,6 +313,94 @@ private struct AppShelf: View {
                     proxy.scrollTo(new, anchor: .center)
                 }
             }
+        }
+    }
+}
+
+/// What the games shelf shows when it has nothing to show — a new user with no
+/// computer, a PC that's asleep or unpaired, or one with no games — with the
+/// one button that moves things forward (UX-empty-home-no-invitation). Which
+/// button is drawn comes from `AppState.emptyShelfFocusIDs`, the same ids
+/// rebuildFocus emits.
+private struct EmptyShelfPanel: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
+    let shelf: AppState.EmptyShelf
+
+    private var name: String { state.selectedHost?.name ?? "Your computer" }
+
+    private var symbol: String {
+        switch shelf {
+        case .noComputer, .notPaired: "desktopcomputer"
+        case .asleep, .waking: "moon.zzz.fill"
+        case .offline: "power"
+        case .notResponding, .problem: "exclamationmark.triangle.fill"
+        case .noGames: "square.grid.2x2"
+        }
+    }
+
+    private var title: String {
+        switch shelf {
+        case .noComputer: "Add your gaming PC"
+        case .notPaired: "\(name) isn't paired yet"
+        case .asleep: "\(name) is asleep"
+        case .waking: "Waking \(name)…"
+        case .offline: "\(name) is offline"
+        case .notResponding: "\(name) isn't responding"
+        case .problem: "Couldn't load games from \(name)"
+        case .noGames: "No games on \(name) yet"
+        }
+    }
+
+    private var message: String {
+        switch shelf {
+        // A saved-computers warning has nowhere else to show with no
+        // computer selected (the header chip isn't drawn).
+        case .noComputer: state.hostError ?? "Its games will show up here."
+        case .notPaired: "Pair it to see its games."
+        case .asleep: "Wake it to load your games."
+        case .waking: "This usually takes 30–60 seconds."
+        case .offline: "Turn it on to load your games."
+        case .notResponding: "Restart its streaming service on the PC."
+        case .problem: "What went wrong is shown beside its name at the top."
+        case .noGames: "Add them in Sunshine, Apollo or Vibepollo on the PC — they show up here."
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(shelf == .notResponding || shelf == .problem ? Color.orange : Theme.accent)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+            Text(message)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if shelf == .noComputer {
+                OverlayButton(id: "header:addhost", title: "Add Computer", symbol: "plus.circle.fill")
+                    .padding(.top, 8)
+            } else if shelf == .waking {
+                ProgressView()
+                    .padding(.top, 8)
+            } else {
+                ForEach(AppState.emptyShelfFocusIDs(shelf), id: \.self) { id in
+                    OverlayButton(id: id,
+                                  title: id == "shelf:pair" ? "Pair Computer" : "Wake Computer",
+                                  symbol: id == "shelf:pair" ? "link" : "power")
+                        .padding(.top, 8)
+                }
+            }
+        }
+        .padding(28)
+        .frame(width: 416, alignment: .leading)
+        .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(Theme.hairline(0.08, contrast), lineWidth: 1)
         }
     }
 }
