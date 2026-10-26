@@ -72,13 +72,17 @@ Cited from `UI/Theme.swift` and the owner's approval (3 Jul 2026 "i really like 
   cards (at 0.95) and rows (at 0.6). `Theme.accent` = (0.35, 0.62, 1.0) #599EFF carries every
   glow, focus fill and ring; `Theme.accentGlow` = accent at 0.55 for shadows. `Theme.textPrimary`
   white; `Theme.textSecondary` white at 0.6 (7.2:1 on the background). `Theme.onAccent` =
-  (0.04, 0.08, 0.16) #0A1429 is the label colour on any full-strength accent fill (6.8:1; the setup
-  wizard's Continue button already uses it — the token itself is added by visual-plan item #4).
-  Hairline borders are white at 0.06–0.14; they rise to ≥0.35 under Increase Contrast (item #4).
+  (0.04, 0.08, 0.16) #0A1429 is the label colour on accent fills, chosen by
+  `Theme.labelInk(onSolidAccent:)`: navy on full and near-solid (≥ 0.85) fills — always for small
+  text (6.8:1 on the full accent; white there is only 2.7:1); white may stay on a 0.85–0.9 fill only
+  for large text (the 18–19 pt bold Settings and setup quality rows, ~3.5:1); light tints (0.35–0.4,
+  e.g. a merely focused preset chip) keep white. Hairline borders are white at 0.06–0.14;
+  `Theme.hairline(_:_:)` lifts them to ≥ 0.35 under Increase Contrast.
 - **Semantic colours, never decorative.** Green = online/running/success. Orange = error or warning
   text and its triangle. Red (`Color.red` at 0.85–0.9) = exactly one thing: the final, irreversible
   action (quit the game, restart the PC, clear a preset, forget a computer) — both the button fill
-  when focused and the quit ring. Nothing else is red (the one "my favourite" theme flag is the
+  when focused and the quit ring; it also marks the menu item that leads only to that step (the
+  preset menu's Clear). Nothing else is red (the one "my favourite" theme flag is the
   owner's own joke; leave it).
 - **Type — SF Rounded for everything with personality, SF Pro for body.** Wordmark "VIBELIGHT"
   22 pt black, tracking 6; "SETTINGS" 30 pt black, tracking 6; card titles 26–28 pt black; hero
