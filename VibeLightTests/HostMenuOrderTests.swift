@@ -53,4 +53,42 @@ final class HostMenuOrderTests: XCTestCase {
                        "one computer: a divider would separate it from nothing")
         XCTAssertFalse(AppState.hostMenuHasDivider(hosts: [], selectedID: nil))
     }
+
+    // MARK: - Opening row (audit finding HM)
+
+    /// The menu's focus rows exactly as rebuildFocus emits them.
+    private func rows(_ ids: [String], selected: String?) -> FocusSection {
+        FocusSection(id: "hosts", kind: .vList,
+                     itemIDs: order(ids, selected: selected).map { "hostmenu:\($0)" } + ["hostmenu:add"])
+    }
+
+    func testOpeningRowIsTheComputerYouAreOn() {
+        XCTAssertEqual(AppState.hostMenuOpeningFocusID(hosts: hosts.map(host), selectedID: "pc-b"),
+                       "hostmenu:pc-b")
+        XCTAssertNil(AppState.hostMenuOpeningFocusID(hosts: hosts.map(host), selectedID: nil))
+        XCTAssertNil(AppState.hostMenuOpeningFocusID(hosts: hosts.map(host), selectedID: "gone"),
+                     "a selection that isn't listed must not name a row no view renders")
+    }
+
+    /// The traced scenario: on pc-a, move down to unpaired pc-b and pair it.
+    /// Pairing selects pc-b behind the pair panel, so the menu's remembered row
+    /// number (1) now points at pc-a. Reopening must land on pc-b.
+    @MainActor
+    func testReopeningAfterPairingLandsOnTheNewlySelectedComputer() {
+        let focus = FocusEngine()
+        let ids = ["pc-a", "pc-b", "pc-c"]
+        focus.setSections([rows(ids, selected: "pc-a")])
+        focus.focusFirst()
+        focus.focus(itemID: "hostmenu:pc-b")                       // row 1 remembered
+        focus.setSections([FocusSection(id: "pair", kind: .vList, itemIDs: ["pair:done"])])
+        focus.setSections([FocusSection(id: "home", kind: .vList, itemIDs: ["home:x"])])
+
+        // Reopen with pc-b now selected, as openHostMenu does.
+        focus.setSections([rows(ids, selected: "pc-b")])
+        if let id = AppState.hostMenuOpeningFocusID(hosts: ids.map(host), selectedID: "pc-b") {
+            focus.focus(itemID: id)
+        }
+        XCTAssertEqual(focus.focusedItemID, "hostmenu:pc-b",
+                       "the menu must open on the computer you're on, not on whatever now sits at the remembered row")
+    }
 }

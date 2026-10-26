@@ -115,6 +115,17 @@ final class AppState {
         return ordered
     }
 
+    /// The row the Computers menu opens on: the computer you're on. The rows
+    /// reorder whenever the selection changes, so the focus engine's
+    /// remembered row NUMBER can point at a different computer after a
+    /// selection made while the menu wasn't listing (pairing a new computer
+    /// selects it behind the pair panel) — audit finding HM. Nil when nothing
+    /// is selected, so the engine's own repair decides.
+    nonisolated static func hostMenuOpeningFocusID(hosts: [StreamHost], selectedID: String?) -> String? {
+        guard let selectedID, hosts.contains(where: { $0.id == selectedID }) else { return nil }
+        return "hostmenu:\(selectedID)"
+    }
+
     /// Whether the menu draws the divider under its first row: only when the
     /// selected computer was lifted to the top AND other computers follow it.
     nonisolated static func hostMenuHasDivider(hosts: [StreamHost], selectedID: String?) -> Bool {
@@ -740,6 +751,9 @@ final class AppState {
     func openHostMenu() {
         addHostError = nil
         presentOverlay(.hosts)
+        if let id = Self.hostMenuOpeningFocusID(hosts: hosts, selectedID: selectedHostID) {
+            focus.focus(itemID: id)
+        }
     }
 
     private static let addedHostsKey = "vibelight.addedHosts"
@@ -1713,11 +1727,12 @@ final class AppState {
         if focus.focusedItemID == nil { focus.focusFirst() }
     }
 
-    /// Listed explicitly, not applied blanket: `.hosts` SHOULD remember which
-    /// computer you were on, `.sessionEnded` picks its own headline action
-    /// right after presenting, and the HUD / cheat sheet deliberately leave the
-    /// home screen's focus untouched underneath them (rebuildFocus returns
-    /// early for those, so forcing focus would move the shelf behind the card).
+    /// Listed explicitly, not applied blanket: `.hosts` opens on the computer
+    /// you're on, by ID (`openHostMenu`), `.sessionEnded` picks its own
+    /// headline action right after presenting, and the HUD / cheat sheet
+    /// deliberately leave the home screen's focus untouched underneath them
+    /// (rebuildFocus returns early for those, so forcing focus would move the
+    /// shelf behind the card).
     private func opensOnDeclaredFirstChoice(_ overlay: Overlay) -> Bool {
         switch overlay {
         case .confirmRemoveHost, .confirmClearPreset, .confirmOverridePreset,
