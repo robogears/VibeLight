@@ -518,19 +518,63 @@ final class StreamSessionManager: StreamEngine {
                 enterStreaming(app: app, host: host, generation: currentGen)
             }
         } else if body.hasPrefix("FAILED") {
-            if let reason = Self.parseField("reason", in: String(body)) {
-                lastStatusFailure = reason
+            if let message = Self.failureMessage(fromStatusBody: String(body)) {
+                lastStatusFailure = message
             }
         }
     }
 
-    /// Extracts a `key="value"` field from an `@VL` status line.
-    private static func parseField(_ key: String, in line: String) -> String? {
+    /// The user-facing message for one `FAILED …` status body, or nil when the
+    /// line carries nothing usable. The helper writes two shapes: `FAILED
+    /// code=N reason="…"` (a finished failure with its own sentence) and
+    /// `FAILED code=N stage="…" ports="…"` (a connection stage that failed —
+    /// blocked ports, a failed handshake), which has no reason at all. Only the
+    /// first used to be read, so the most common startup failures fell through
+    /// to "The stream exited before it started." and a log path.
+    /// (audit ERR-helper-failure-reason-dropped)
+    nonisolated static func failureMessage(fromStatusBody body: String) -> String? {
+        if let reason = parseField("reason", in: body) { return reason }
+        guard let stage = parseField("stage", in: body) else { return nil }
+        var message = "Couldn't start the stream: \(stage) failed"
+        if let code = plainField("code", in: body), code != "0" { message += " (error \(code))" }
+        message += "."
+        if let ports = parseField("ports", in: body) {
+            message += " Check that the PC's firewall allows ports \(ports), then try again."
+        } else {
+            message += " Check that the PC is on and reachable, then try again."
+        }
+        return message
+    }
+
+    /// Extracts a `key="value"` field from an `@VL` status line, undoing the
+    /// helper's escaping: its sanitize() writes `\"` for a quote and `\\` for
+    /// a backslash. Stopping at the first quote cut a reason that names a PC or
+    /// app with a quote in it off mid-sentence, ending in a stray backslash.
+    /// (audit ERR-helper-failure-reason-dropped)
+    nonisolated static func parseField(_ key: String, in line: String) -> String? {
         guard let start = line.range(of: "\(key)=\"") else { return nil }
-        let rest = line[start.upperBound...]
-        guard let end = rest.firstIndex(of: "\"") else { return nil }
-        let value = String(rest[..<end])
-        return value.isEmpty ? nil : value
+        var value = ""
+        var escaped = false
+        for c in line[start.upperBound...] {
+            if escaped {
+                value.append(c)
+                escaped = false
+            } else if c == "\\" {
+                escaped = true
+            } else if c == "\"" {
+                return value.isEmpty ? nil : value
+            } else {
+                value.append(c)
+            }
+        }
+        return nil   // unterminated — a truncated line, not a field
+    }
+
+    /// Extracts an unquoted `key=value` field (`code=10060`).
+    nonisolated private static func plainField(_ key: String, in line: String) -> String? {
+        line.split(separator: " ").first { $0.hasPrefix("\(key)=") }
+            .map { String($0.dropFirst(key.count + 1)) }
+            .flatMap { $0.isEmpty || $0.hasPrefix("\"") ? nil : $0 }
     }
 
     /// Single funnel for entering the streaming phase, from either the helper's

@@ -81,6 +81,43 @@ final class StatusLineFramingTests: XCTestCase {
         let got = try await lines(of: atCap + "\n")
         XCTAssertEqual(got, [atCap])
     }
+
+    // MARK: FAILED lines reach the user whole (audit ERR-helper-failure-reason-dropped)
+
+    func testStageFailureWithoutReasonBecomesAPlainMessage() {
+        // The helper's onStageFailed shape — no reason= at all. This used to be
+        // dropped, leaving "The stream exited before it started."
+        let got = StreamSessionManager.failureMessage(
+            fromStatusBody: #"FAILED code=10060 stage="RTSP handshake" ports="TCP 48010, UDP 47998""#)
+        XCTAssertEqual(got, "Couldn't start the stream: RTSP handshake failed (error 10060). "
+                       + "Check that the PC's firewall allows ports TCP 48010, UDP 47998, then try again.")
+    }
+
+    func testStageFailureWithNoPortsStillSaysWhatToDo() {
+        let got = StreamSessionManager.failureMessage(
+            fromStatusBody: #"FAILED code=-1 stage="name resolution" ports="""#)
+        XCTAssertEqual(got, "Couldn't start the stream: name resolution failed (error -1). "
+                       + "Check that the PC is on and reachable, then try again.")
+    }
+
+    func testEscapedQuoteInReasonIsNotCutShort() {
+        // sanitize() writes \" for a quote and \\ for a backslash.
+        let got = StreamSessionManager.failureMessage(
+            fromStatusBody: #"FAILED code=2 reason="Couldn't launch \"Halo\" on Bob\\PC.""#)
+        XCTAssertEqual(got, #"Couldn't launch "Halo" on Bob\PC."#)
+    }
+
+    func testPlainReasonStillWins() {
+        let got = StreamSessionManager.failureMessage(
+            fromStatusBody: #"FAILED code=0 reason="The PC refused the stream.""#)
+        XCTAssertEqual(got, "The PC refused the stream.")
+    }
+
+    func testUnterminatedOrEmptyFieldsYieldNothing() {
+        XCTAssertNil(StreamSessionManager.failureMessage(fromStatusBody: #"FAILED code=3 reason="cut off"#))
+        XCTAssertNil(StreamSessionManager.failureMessage(fromStatusBody: #"FAILED code=3 reason="""#))
+        XCTAssertNil(StreamSessionManager.failureMessage(fromStatusBody: "FAILED code=3"))
+    }
 }
 
 /// A minimal `AsyncSequence` of bytes, standing in for `FileHandle.AsyncBytes`.
