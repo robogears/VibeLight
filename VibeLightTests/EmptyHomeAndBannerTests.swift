@@ -21,6 +21,19 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         XCTAssertTrue(all.contains("Nothing was deleted"), "the reassurance must survive the cut")
     }
 
+    /// With no readable computer left the "some" wording's "your other
+    /// computers still work" is false — and the no-computer panel shows it.
+    func testUnreadableWarningNeverMentionsOtherComputersWhenNoneAreLeft() {
+        XCTAssertEqual(AppState.savedHostsWarning(blobUnreadable: false, unreadableCount: 1, readableCount: 0),
+                       AppState.savedHostsUnreadableMessage)
+        XCTAssertEqual(AppState.savedHostsWarning(blobUnreadable: false, unreadableCount: 1, readableCount: 2),
+                       AppState.someSavedHostsUnreadableMessage)
+        XCTAssertEqual(AppState.savedHostsWarning(blobUnreadable: true, unreadableCount: 0, readableCount: 0),
+                       AppState.savedHostsUnreadableMessage)
+        XCTAssertNil(AppState.savedHostsWarning(blobUnreadable: false, unreadableCount: 0, readableCount: 0))
+        XCTAssertNil(AppState.savedHostsWarning(blobUnreadable: false, unreadableCount: 0, readableCount: 3))
+    }
+
     func testRestartingIsANoticeNotAnError() {
         XCTAssertEqual(AppState.hostBanner(error: nil, notice: "Restarting Gaming PC…",
                                            online: false, hasMAC: true),
@@ -154,6 +167,63 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         let app = try source("VibeLight/App/AppState.swift")
         let wake = try body(of: "func wakeSelectedHost() {", until: "\n    func wakeHost(", in: app)
         XCTAssertEqual(wake.components(separatedBy: "rebuildFocus()").count - 1, 2, String(wake))
+    }
+
+    /// Starting the wake from the shelf's button removes that button; focus
+    /// must land on the header's Wake button (still drawn while waking), not
+    /// fall down to a preset slot where a second A replaces the settings.
+    func testWakingFromTheShelfMovesFocusToTheHeaderWakeButton() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let wake = try body(of: "func wakeSelectedHost() {", until: "\n    func wakeHost(", in: app)
+        let first = try XCTUnwrap(wake.range(of: "rebuildFocus()"))
+        let tail = wake[first.upperBound...]
+        let move = try XCTUnwrap(tail.range(of: "if wasOnShelfWake { focus.focus(itemID: \"header:power\") }"),
+                                 String(wake))
+        XCTAssertNil(tail[..<move.lowerBound].range(of: "rebuildFocus()"),
+                     "focus must move right after the rebuild that drops shelf:wake")
+        XCTAssertTrue(wake.contains("let wasOnShelfWake = focus.focusedItemID == \"shelf:wake\""))
+        // header:power is still emitted while waking only because its gate
+        // ignores the waking state.
+        let gate = try body(of: "var canWakeSelectedHost: Bool {", until: "}", in: app)
+        XCTAssertFalse(gate.contains("wakingHostID"), String(gate))
+    }
+
+    /// "Pair Computer" must start pairing, not just open the Computers menu.
+    func testPairComputerStartsPairing() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let branch = try body(of: "} else if focus.focusedItemID == \"shelf:pair\" {",
+                              until: "} else if focus.focusedItemID == \"header:restart\" {", in: app)
+        XCTAssertTrue(branch.contains("openHostMenu()\n"
+                                      + "                if let host = selectedHost, needsPairing(host) { beginPairing(host) }"),
+                      String(branch))
+    }
+
+    /// A computer whose certificate changed (or that now refuses us) needs
+    /// pairing again: the empty shelf must offer Pair Computer, so it is
+    /// judged by needsPairing, not by whether a certificate is stored.
+    func testEmptyShelfOffersPairingWhenPairingBroke() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let shelfVar = try body(of: "var emptyShelf: EmptyShelf? {", until: "\n    }\n", in: app)
+        XCTAssertTrue(shelfVar.contains("isPaired: host.map { !needsPairing($0) } ?? false"), String(shelfVar))
+        XCTAssertFalse(shelfVar.contains("host?.isPaired"), String(shelfVar))
+        let home = try source("VibeLight/UI/HomeView.swift")
+        let panel = try body(of: "private struct EmptyShelfPanel: View {", until: "\n}\n", in: home)
+        XCTAssertTrue(panel.contains("case .notPaired: state.selectedHost?.isPaired == true ? \"Pair \\(name) again\""),
+                      "a computer that was paired needs pairing AGAIN, not 'yet'")
+    }
+
+    /// The saved-computers warning on the no-computer panel is chosen by
+    /// savedHostsWarning and drawn in warning orange.
+    func testLaunchWarningUsesTheRuleAndPanelDrawsItOrange() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        let load = try body(of: "let savedHosts = Self.loadAddedHosts()", until: "let savedPresets = Self.loadPresets()", in: app)
+        XCTAssertTrue(load.contains("Self.savedHostsWarning(blobUnreadable: savedHosts.blobUnreadable,"), String(load))
+        XCTAssertTrue(load.contains("readableCount: hosts.count)"), String(load))
+        XCTAssertFalse(load.contains("hostError = Self.someSavedHostsUnreadableMessage"), String(load))
+        let home = try source("VibeLight/UI/HomeView.swift")
+        let panel = try body(of: "private struct EmptyShelfPanel: View {", until: "\n}\n", in: home)
+        XCTAssertTrue(panel.contains("private var isWarning: Bool { shelf == .noComputer && state.hostError != nil }"))
+        XCTAssertTrue(panel.contains(".foregroundStyle(isWarning ? Color.orange"), String(panel))
     }
 
     /// The "answered yet" flag belongs to one computer: switching or removing

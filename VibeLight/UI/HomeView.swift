@@ -342,7 +342,9 @@ private struct EmptyShelfPanel: View {
     private var title: String {
         switch shelf {
         case .noComputer: "Add your gaming PC"
-        case .notPaired: "\(name) isn't paired yet"
+        // A computer that WAS paired (certificate changed, or it now refuses
+        // us) needs pairing again — "isn't paired yet" would be wrong.
+        case .notPaired: state.selectedHost?.isPaired == true ? "Pair \(name) again" : "\(name) isn't paired yet"
         case .checking: "Looking for \(name)…"
         case .asleep: "\(name) is asleep"
         case .waking: "Waking \(name)…"
@@ -369,6 +371,8 @@ private struct EmptyShelfPanel: View {
         }
     }
 
+    private var isWarning: Bool { shelf == .noComputer && state.hostError != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: symbol)
@@ -380,7 +384,10 @@ private struct EmptyShelfPanel: View {
                 .foregroundStyle(Theme.textPrimary)
             Text(message)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
+                // A saved-computers warning is orange, as everywhere else
+                // (DESIGN.md › Semantic colours); the normal invitation is not.
+                .foregroundStyle(isWarning ? Color.orange
+                                 : contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if shelf == .noComputer {
                 OverlayButton(id: "header:addhost", title: "Add Computer", symbol: "plus.circle.fill")

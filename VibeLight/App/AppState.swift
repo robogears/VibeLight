@@ -269,6 +269,19 @@ final class AppState {
     nonisolated static let savedHostsUnreadableMessage =
         "Your saved computers couldn't be read, so the list starts empty. Nothing was deleted — the original is kept aside."
 
+    /// The saved-computers warning to show at launch, if any. With NO readable
+    /// computer left, the "some" wording's "your other computers still work"
+    /// would be false (the no-computer panel shows it), so every-record-failed
+    /// reads like the whole list failing — which, to the person, it did
+    /// (3H review: unreadable warning on the no-computer panel).
+    nonisolated static func savedHostsWarning(blobUnreadable: Bool, unreadableCount: Int,
+                                              readableCount: Int) -> String? {
+        if blobUnreadable || (unreadableCount > 0 && readableCount == 0) {
+            return savedHostsUnreadableMessage
+        }
+        return unreadableCount > 0 ? someSavedHostsUnreadableMessage : nil
+    }
+
     /// What the selected computer's header chip says beside its name.
     enum HostBanner: Equatable, Sendable {
         case error(String)    // orange, up to two lines
@@ -331,7 +344,11 @@ final class AppState {
     var emptyShelf: EmptyShelf? {
         guard apps.isEmpty else { return nil }
         let host = selectedHost
-        return Self.emptyShelf(hasHost: host != nil, isPaired: host?.isPaired ?? false,
+        // needsPairing, not isPaired: a computer whose certificate changed or
+        // that now refuses us needs pairing again too, and the shelf should
+        // offer Pair Computer rather than point at the header chip (3H review:
+        // broken pairing showed no button).
+        return Self.emptyShelf(hasHost: host != nil, isPaired: host.map { !needsPairing($0) } ?? false,
                                checked: selectedHostChecked, online: hostOnline,
                                notResponding: hostNotResponding,
                                hasError: hostError != nil, canWake: canWakeSelectedHost,
@@ -545,10 +562,10 @@ final class AppState {
         apps = displayApps(from: selectedHost?.apps ?? [])
         // (No "No computers yet" banner: with no computer the shelf itself
         // says so and offers Add Computer — UX-empty-home-no-invitation.)
-        if savedHosts.blobUnreadable {
-            hostError = Self.savedHostsUnreadableMessage
-        } else if !savedHosts.unreadable.isEmpty {
-            hostError = Self.someSavedHostsUnreadableMessage
+        if let warning = Self.savedHostsWarning(blobUnreadable: savedHosts.blobUnreadable,
+                                                unreadableCount: savedHosts.unreadable.count,
+                                                readableCount: hosts.count) {
+            hostError = warning
         }
 
         let savedPresets = Self.loadPresets()
@@ -1799,10 +1816,17 @@ final class AppState {
         guard let host = selectedHost, host.macAddress != nil, !hostOnline else { return }
         wakeHost(host)
         wakingHostID = host.id
+        let wasOnShelfWake = focus.focusedItemID == "shelf:wake"
         // The empty shelf swaps its Wake Computer button (shelf:wake) for a
         // spinner while waking — rebuild so the engine never holds an id no
         // view draws (UX-empty-home-no-invitation).
         rebuildFocus()
+        // With the shelf's button gone the engine would fall DOWN to a preset
+        // slot, and a second A (nothing seemed to happen) would apply it over
+        // the current settings. Land on the header's Wake button instead: it's
+        // still drawn while waking, and pressing it again only re-sends the
+        // wake (3H review: wake focus falls onto presets).
+        if wasOnShelfWake { focus.focus(itemID: "header:power") }
         wakeClearTask?.cancel()
         wakeClearTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(90))
@@ -2271,7 +2295,12 @@ final class AppState {
             } else if focus.focusedItemID == "header:power" || focus.focusedItemID == "shelf:wake" {
                 wakeSelectedHost()
             } else if focus.focusedItemID == "shelf:pair" {
-                openHostMenu()   // the computer's row there starts pairing
+                // "Pair Computer" starts pairing, as it says — not just the
+                // Computers menu with a second press still to make. The menu
+                // draws the PIN panel while pairing; Cancel lands back on this
+                // computer's row (3H review: Pair Computer only opened the menu).
+                openHostMenu()
+                if let host = selectedHost, needsPairing(host) { beginPairing(host) }
             } else if focus.focusedItemID == "header:restart" {
                 requestRestartPC()
             } else if let app = focusedApp {
