@@ -14,15 +14,19 @@ import XCTest
 final class BoundedResponseTests: XCTestCase {
 
     private var server: LocalTLSServer!
+    private var identityDir: URL!
 
     override func setUpWithError() throws {
         try XCTSkipIf(LocalTLSServer.python3 == nil, "python3 unavailable")
         server = try LocalTLSServer()
+        identityDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vl-bounded-\(UUID().uuidString)", isDirectory: true)
     }
 
     override func tearDown() {
         server?.stop()
         server = nil
+        if let identityDir { try? FileManager.default.removeItem(at: identityDir) }
     }
 
     /// A host record pointing at the local server. Unpaired (no pinned cert) so
@@ -37,9 +41,8 @@ final class BoundedResponseTests: XCTestCase {
                    macAddress: nil, serverCertPEM: nil, apps: [])
     }
 
-    private func client() -> HostAPIClient {
-        let identity = IdentityStore.resolve(moonlightIdentity: nil)
-        return HostAPIClient(identityProvider: ClientIdentityProvider(identity: identity))
+    private func client() throws -> HostAPIClient {
+        try TestHostAPIClient.make(in: identityDir)
     }
 
     // MARK: - The path must still work
@@ -66,37 +69,52 @@ final class BoundedResponseTests: XCTestCase {
         // before any body byte is read.
         server.serve(Data(repeating: 0x41, count: 20 * 1024 * 1024), declaredLength: true)
 
+        let api = try client()
         do {
-            _ = try await client().serverInfo(for: host())
+            _ = try await api.serverInfo(for: host())
             XCTFail("a 20 MB response must be rejected")
         } catch {
             XCTAssertTrue("\(error)".contains("too large"), "unexpected error: \(error)")
         }
         // The property that matters, and the one the OLD code failed: a declared
-        // oversize is refused from the headers, so the body is never served at
-        // all. Asserting only the error message would pass against the previous
+        // oversize is refused from the headers, so the body is never read.
+        // Asserting only the error message would pass against the previous
         // implementation, which buffered all 20 MB and complained afterwards.
-        let served = server.bytesServed() ?? 0
-        XCTAssertLessThan(served, 1 * 1024 * 1024,
+        //
+        // Not zero: the server writes into the loopback socket buffers before
+        // the refusal reaches it (measured ~0.4 MB here). The ceiling is those
+        // two buffers' macOS maximum (4 MB each way), so machine load can't
+        // push past it — and it is still half the 16 MB cap, so a client that
+        // read the body and refused only on reaching the cap fails it. The old
+        // 1 MB ceiling sat inside the buffering margin.
+        // (audit QUA-bounded-test-loopback-flake)
+        let served = try XCTUnwrap(server.bytesServed(), "the server never reported what it sent")
+        XCTAssertLessThan(served, 8 * 1024 * 1024,
                           "declared oversize must be refused before the body is read; server sent \(served) bytes")
     }
 
     func testOversizedBodyWithNoContentLengthIsRejectedMidTransfer() async throws {
         // Chunked, no declared length — the case the old post-hoc check could
         // not catch, because the body was fully buffered before it ran.
-        server.serve(Data(repeating: 0x42, count: 20 * 1024 * 1024), declaredLength: false)
+        // 64 MB, not 20: the abort lands just past the 16 MB cap (measured
+        // 16 MB + one 64 KB chunk), and a 20 MB payload left under 4 MB of room
+        // for loopback buffering and a slow delegate queue on a loaded machine.
+        // (audit QUA-bounded-test-loopback-flake)
+        let payload = 64 * 1024 * 1024
+        server.serve(Data(repeating: 0x42, count: payload), declaredLength: false)
 
+        let api = try client()
         do {
-            _ = try await client().serverInfo(for: host())
-            XCTFail("an undeclared 20 MB response must be rejected")
+            _ = try await api.serverInfo(for: host())
+            XCTFail("an undeclared 64 MB response must be rejected")
         } catch {
             XCTAssertTrue("\(error)".contains("too large"), "unexpected error: \(error)")
         }
         // Killed MID-transfer: the server must not have managed to send the
-        // whole 20 MB. The old post-hoc check consumed every byte first, so this
+        // whole body. The old post-hoc check consumed every byte first, so this
         // assertion — not the error message — is what proves the fix.
-        let served = server.bytesServed() ?? Int.max
-        XCTAssertLessThan(served, 20 * 1024 * 1024,
+        let served = try XCTUnwrap(server.bytesServed(), "the server never reported what it sent")
+        XCTAssertLessThan(served, payload,
                           "transfer must be aborted before the full body is served; server sent \(served) bytes")
     }
 
@@ -112,6 +130,28 @@ final class BoundedResponseTests: XCTestCase {
     }
 }
 
+// MARK: - A client that never touches the real app's data
+
+/// A `HostAPIClient` whose client identity, PKCS#12 cache and `uniqueid` all
+/// live in `directory`. The Mac tests run inside a copy of the app with the
+/// real app's bundle id, so the defaults (`IdentityStore.resolve`, the
+/// provider's Application Support folder, `IdentityStore.uniqueID()`) are the
+/// owner's REAL identity, cached bundle and preferences — the provider even
+/// prunes "stale" bundles in its folder. (audit QUA-macos-tests-boot-real-app)
+enum TestHostAPIClient {
+    static func make(in directory: URL) throws -> HostAPIClient {
+        guard case .ready(let cert, let key) = IdentityStore.loadOrCreateOwn(
+            in: directory.appendingPathComponent("identity", isDirectory: true)) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "could not create a throwaway client identity in \(directory.path)"])
+        }
+        let identity = ClientIdentity(certificatePEM: cert, privateKeyPEM: key, uniqueID: "0123456789abcdef")
+        let provider = ClientIdentityProvider(
+            identity: identity, supportDirectory: directory, identityProblem: nil)
+        return HostAPIClient(identityProvider: provider, uniqueID: identity.uniqueID)
+    }
+}
+
 // MARK: - Local HTTPS server
 
 /// A throwaway self-signed HTTPS server, so the tests exercise the real TLS
@@ -124,7 +164,10 @@ final class LocalTLSServer {
         return nil
     }()
 
-    let port: Int
+    /// The port the server actually bound — valid once `serve` returns. The OS
+    /// picks it (bind to port 0), so two servers can never collide, whether in
+    /// this run or in another checkout's tests running at the same time.
+    private(set) var port = 0
     private var process: Process?
     private let dir: URL
     private let payloadURL: URL
@@ -134,7 +177,6 @@ final class LocalTLSServer {
             .appendingPathComponent("vibelight-tls-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         payloadURL = dir.appendingPathComponent("payload.bin")
-        port = Int.random(in: 45000...45999)
 
         // Self-signed cert for 127.0.0.1 — the client pins on first sight
         // (unpaired TOFU), so its contents don't matter, only that TLS completes.
@@ -163,7 +205,9 @@ final class LocalTLSServer {
     /// the client's error surfaces immediately, while the server only notices
     /// on its next blocked write — so reading straight away races it.
     func bytesServed() -> Int? {
-        let deadline = Date().addingTimeInterval(5)
+        // Generous: under heavy machine load Python can take seconds to notice
+        // the hang-up. Only a missing count waits; a present one returns at once.
+        let deadline = Date().addingTimeInterval(30)
         repeat {
             if let text = try? String(contentsOf: sentURL, encoding: .utf8),
                let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -187,12 +231,16 @@ final class LocalTLSServer {
     func serve(_ data: Data, declaredLength: Bool, tls: Bool = true, chunkDelay: Double = 0) {
         try? data.write(to: payloadURL)
         start(declaredLength: declaredLength, tls: tls, chunkDelay: chunkDelay)
-        waitUntilListening()
+        waitUntilReady()
     }
 
     private func start(declaredLength: Bool, tls: Bool = true, chunkDelay: Double = 0) {
         let script = """
-        import http.server, ssl, sys, time
+        import http.server, os, ssl, sys, time
+        def publish(path, text):
+            # Write-then-rename, so the test never reads a half-written number.
+            open(path + '.tmp', 'w').write(text)
+            os.replace(path + '.tmp', path)
         payload = open(sys.argv[1], 'rb').read()
         declared = sys.argv[2] == '1'
         delay = float(sys.argv[7])
@@ -225,13 +273,16 @@ final class LocalTLSServer {
                         self.wfile.write(b'0\\r\\n\\r\\n')
                 except Exception:
                     pass  # client hung up mid-transfer — that is the point
-                open(sys.argv[5], 'w').write(str(sent))
+                publish(sys.argv[5], str(sent))
             def log_message(self, *a): pass
-        srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[3])), H)
+        srv = http.server.HTTPServer(('127.0.0.1', 0), H)
         if sys.argv[6] == '1':
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(sys.argv[4])
             srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        # Announced only now: listening AND wrapped, so the first connection the
+        # test makes is the real request, never a race with start-up.
+        publish(sys.argv[3], str(srv.server_address[1]))
         srv.serve_forever()
         """
         let scriptURL = dir.appendingPathComponent("server.py")
@@ -244,7 +295,7 @@ final class LocalTLSServer {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.python3!)
-        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", "\(port)",
+        p.arguments = [scriptURL.path, payloadURL.path, declaredLength ? "1" : "0", portURL.path,
                        pemPath, sentURL.path, tls ? "1" : "0", "\(chunkDelay)"]
         p.standardOutput = errHandle
         p.standardError = errHandle
@@ -253,23 +304,27 @@ final class LocalTLSServer {
         self.stderrURL = errURL
     }
 
-    private func waitUntilListening() {
-        for _ in 0..<100 {
-            let sock = socket(AF_INET, SOCK_STREAM, 0)
-            defer { close(sock) }
-            var addr = sockaddr_in()
-            addr.sin_family = sa_family_t(AF_INET)
-            addr.sin_port = UInt16(port).bigEndian
-            addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-            let ok = withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    connect(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
-                }
+    private var portURL: URL { dir.appendingPathComponent("port.txt") }
+
+    /// Waits for the server to announce the port it bound. This used to probe a
+    /// random fixed port for at most 5 s and then carry on regardless; on a
+    /// heavily loaded Mac Python could take longer than that to start (or the
+    /// random port was already taken), and the test then failed as
+    /// `unreachable("Local Test Host")` — a test-harness race, not a bug in the
+    /// code under test. (audit QUA-bounded-test-loopback-flake)
+    private func waitUntilReady() {
+        let deadline = Date().addingTimeInterval(60)
+        repeat {
+            if let text = try? String(contentsOf: portURL, encoding: .utf8),
+               let bound = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)), bound > 0 {
+                port = bound
+                return
             }
-            if ok { return }
-            usleep(50_000)
-        }
-        print("SERVER-NEVER-LISTENED on port \(port):\n\(diagnostics)")
+            // A server that died (bad script, missing cert) will never announce.
+            if let process, !process.isRunning { break }
+            usleep(20_000)
+        } while Date() < deadline
+        print("SERVER-NEVER-LISTENED:\n\(diagnostics)")
     }
 
     func stop() {
