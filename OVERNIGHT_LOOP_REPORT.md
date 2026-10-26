@@ -22,6 +22,7 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN (168 Mac) · last: iPa
 - 💡 Claude's old memory folder for the previous path (`~/.claude/projects/-Users-william-Documents-VibeLight/`) — why: its 10 notes were copied to the new path and verified identical — how: delete it whenever you like.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct 17:50 The previous session ended (the Mac restarted) while three jobs were running; you said "keep going". Nothing was lost: fix group 5 had all four fixes committed, the TV-dead-end batch both of its fixes, and the menu-sounds batch's work was saved as an unverified WIP commit. All three resumed to verify and finish their reviews.
 - 26 Oct 17:05 iPad text and touch targets merged (audit Medium):
   - on iPad the launcher is a little larger (it fits the same canvas as a Mac window);
   - small labels are at least 13 pt and buttons have 44 pt tap areas on iPad/iPhone; the Mac keeps its exact sizes;
