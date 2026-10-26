@@ -1,5 +1,4 @@
 import XCTest
-import CryptoKit
 @testable import VibeLight
 
 /// The pairing crypto gates whether we can talk to a host at all — verify the
@@ -39,11 +38,22 @@ final class GameStreamCryptoTests: XCTestCase {
         XCTAssertEqual(GameStreamCrypto.aesEcbDecrypt(ct!, key: key), plaintext)
     }
 
-    // MARK: SHA-256
+    // MARK: SHA-256 (NIST FIPS 180-2 published vectors)
 
-    func testSHA256MatchesCryptoKit() {
-        let data = Data("moonlight".utf8)
-        XCTAssertEqual(GameStreamCrypto.sha256(data), Data(SHA256.hash(data: data)))
+    /// Fixed published digests, not CryptoKit's answer for the same input:
+    /// `sha256` IS CryptoKit today, so comparing the two could never fail. A
+    /// fixed value catches a swap to a truncated or hand-rolled hash, which
+    /// would silently break the PIN-derived pairing key.
+    /// (audit QUA-sha256-test-tautology)
+    func testSHA256MatchesPublishedVectors() {
+        XCTAssertEqual(GameStreamCrypto.sha256(Data("abc".utf8)).lowercaseHex,
+                       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        XCTAssertEqual(GameStreamCrypto.sha256(Data()).lowercaseHex,
+                       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        // Two blocks: catches an implementation that only gets one block right.
+        XCTAssertEqual(
+            GameStreamCrypto.sha256(Data("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".utf8)).lowercaseHex,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
     }
 
     // MARK: X.509 signature extraction
