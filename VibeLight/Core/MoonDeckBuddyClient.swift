@@ -29,6 +29,29 @@ final class MoonDeckBuddyClient: Sendable {
     static let targetAPIVersion = 8
     static let minSupportedAPIVersion = 7
     static let defaultPort = 59999
+    /// The only ports a request may use. URLComponents' `port` setter raises
+    /// an exception Swift can't catch on a negative value, so a "-1" typed into
+    /// the port box (and saved) crashed the app on every pairing attempt.
+    /// (audit NET-negative-buddy-port)
+    static let validPorts = 1...65535
+
+    /// The setup card's port field: blank means the default port; anything
+    /// else must be a whole number in `validPorts`, or nil.
+    static func port(fromField text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return defaultPort }
+        guard let port = Int(trimmed), validPorts.contains(port) else { return nil }
+        return port
+    }
+
+    /// The request URL, or nil for a port outside `validPorts` — checked here
+    /// too so a bad port saved by an older build can't reach the setter.
+    static func requestURL(host: String, port: Int, path: String) -> URL? {
+        guard validPorts.contains(port) else { return nil }
+        var comps = URLComponents()
+        comps.scheme = "https"; comps.host = host; comps.port = port; comps.path = path
+        return comps.url
+    }
 
     /// Pairing state as reported by `GET /pairingState`.
     enum PairState: Int, Sendable { case paired = 0, pairing = 1, notPaired = 2 }
@@ -190,9 +213,8 @@ final class MoonDeckBuddyClient: Sendable {
 
     private func send(_ method: String, host: String, port: Int, path: String,
                       body: [String: Any]? = nil, authClientID: String? = nil) async throws -> Data {
-        var comps = URLComponents()
-        comps.scheme = "https"; comps.host = host; comps.port = port; comps.path = path
-        guard let url = comps.url else { throw MDError.badResponse("bad url") }
+        guard Self.validPorts.contains(port) else { throw MDError.badResponse("port \(port) is not a valid port") }
+        guard let url = Self.requestURL(host: host, port: port, path: path) else { throw MDError.badResponse("bad url") }
 
         var req = URLRequest(url: url)
         req.httpMethod = method

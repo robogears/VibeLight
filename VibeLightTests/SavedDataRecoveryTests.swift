@@ -201,4 +201,29 @@ final class SavedDataRecoveryTests: XCTestCase {
         XCTAssertEqual(step(30, false), 30)
         XCTAssertEqual(step(240, true), 240)
     }
+
+    // MARK: - Restart PC port (NET-negative-buddy-port)
+
+    func testRestartPCPortFieldRejectsPortsOutsideOneTo65535() {
+        for bad in ["-1", "0", "70000", "65536", "port", "1.5"] {
+            XCTAssertNil(MoonDeckBuddyClient.port(fromField: bad), "\(bad) is not a port")
+        }
+        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: ""), MoonDeckBuddyClient.defaultPort)
+        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: " 59999 "), 59999)
+        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: "1"), 1)
+        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: "65535"), 65535)
+    }
+
+    func testStoredNegativeRestartPCPortThrowsInsteadOfCrashing() async {
+        XCTAssertNil(MoonDeckBuddyClient.requestURL(host: "192.0.2.10", port: -1, path: "/apiVersion"))
+        XCTAssertNotNil(MoonDeckBuddyClient.requestURL(host: "192.0.2.10", port: 59999, path: "/apiVersion"))
+        // The real request path: a negative port used to reach URLComponents'
+        // port setter, which raises an exception that ends the app.
+        do {
+            try await MoonDeckBuddyClient().checkReachable(host: "192.0.2.10", port: -1)
+            XCTFail("a negative port must be refused")
+        } catch {
+            XCTAssertEqual(error as? MoonDeckBuddyClient.MDError, .badResponse("port -1 is not a valid port"))
+        }
+    }
 }

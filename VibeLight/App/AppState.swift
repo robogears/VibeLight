@@ -1013,7 +1013,15 @@ final class AppState {
         guard case .moonDeckSetup(let hostID)? = overlay,
               let host = hostForCapturedID(hostID),
               let addr = moonDeckConnectAddress(for: host) else { return }
-        let port = Int(moonDeckPortText.trimmingCharacters(in: .whitespaces)) ?? MoonDeckBuddyClient.defaultPort
+        // Reject an out-of-range port before it is saved or reaches a URL.
+        // (audit NET-negative-buddy-port)
+        guard let port = MoonDeckBuddyClient.port(fromField: moonDeckPortText) else {
+            moonDeckPairing = MoonDeckPairing(
+                hostID: hostID, pin: "",
+                status: .failed("Enter a port from 1 to 65535. MoonDeckBuddy uses 59999 unless you changed it."))
+            rebuildFocus()
+            return
+        }
         let pin = String(format: "%04d", Int.random(in: 0...9999))
         updateMoonDeckConfig(for: host) { $0.port = port }
         moonDeckPairing = MoonDeckPairing(hostID: hostID, pin: pin, status: .connecting)
