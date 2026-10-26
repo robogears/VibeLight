@@ -211,6 +211,11 @@ private struct WakePCButton: View {
                     Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
                 }
                 .symbolEffect(.pulse, options: .repeating, isActive: waking)
+                // The 38 pt circle stays the look; the padding makes the tap
+                // area 44 pt, Apple's touch minimum once the canvas is scaled
+                // (UX-ios-scale-shrinks-text-targets).
+                .padding(3)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .scaleEffect(isFocused ? 1.06 : 1.0)
@@ -240,6 +245,8 @@ private struct RestartPCButton: View {
                 .overlay {
                     Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
                 }
+                .padding(3)   // 44 pt tap area around the 38 pt circle, as Wake
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .scaleEffect(isFocused ? 1.06 : 1.0)
@@ -256,7 +263,7 @@ private struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .font(.system(size: 13, weight: .heavy, design: .rounded))
             .tracking(1.2)
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
@@ -362,7 +369,7 @@ private struct PresetSlotChip: View {
                     .lineLimit(1)
                 if let preset {
                     Text(preset.summary)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(lit ? .white.opacity(0.85) : Theme.textSecondary)
                         .lineLimit(1)
                 } else {
@@ -372,7 +379,7 @@ private struct PresetSlotChip: View {
                     // and the row's edges visibly wobble (fine in the old
                     // vertical rail, where heights never shared an edge).
                     Text(" ")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .hidden()
                 }
             }

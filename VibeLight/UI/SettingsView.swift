@@ -86,7 +86,7 @@ private struct SettingsTabBar: View {
                     .frame(width: 1, height: 26)
                     .padding(.horizontal, 6)
                 Text("PRESETS")
-                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
                     .tracking(1.5)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize()
@@ -225,7 +225,7 @@ private struct SettingsRowView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -244,7 +244,7 @@ private struct SettingsRowView: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
                                          : (showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)

@@ -583,7 +583,7 @@ struct ThemeCard: View {
                 // A small tag so the static/animated split is legible at a glance.
                 .overlay(alignment: .topTrailing) {
                     Text(theme.isAnimated ? "Animated" : "Static")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.92))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -594,7 +594,7 @@ struct ThemeCard: View {
                 .overlay(alignment: .bottomLeading) {
                     if theme == .parallaxDeep {
                         Text("my favourite")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(.red)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
