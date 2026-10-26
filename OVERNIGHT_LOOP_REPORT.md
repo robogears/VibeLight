@@ -12,6 +12,7 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - ❓ Visual / design changes from the audit — build them, or keep them parked? — options: build after you review | keep parked — parked item: "Visual / design changes" (you said "no visual changes for now")
 
 ## Recommendations (things the loop chose not to do unattended)
+- 💡 Two sentences for your CLAUDE.md (fix group 5; it's your instruction file, so I haven't edited it) — under "Host protocol": "macOS: a read error on `Application Support/VibeLight/identity` is never treated as absent — an identity is generated only when both `client.pem` and `client.key` are missing or empty, into a staging folder, and moved into place only after the key and certificate are checked to match." — and under the iOS identity note: "Pairing re-reads the keychain certificate when it starts (never a launch-time copy); `IOSKeychainIdentity` takes a `Namespace`, the app always uses `.production`, and tests use their own."
 - 💡 FS-update-swap-unchecked-stage (rest) — the relauncher script still copies the new version over the old one in place; building it beside the old copy and swapping with two renames would make a half-finished install impossible — why not done: it changes the install path itself, which can only be proven by running a real update. Do it with an updater end-to-end test run.
 - 💡 After a failed update rolls back, the next launch says nothing — a one-line "The update couldn't be installed; you're still on X" card would tell you why the version didn't change.
 - 💡 Leftover (Low) — on a landscape iPhone or a Mac window under ~860 pt tall, Interface Size ▸ Large can't make anything bigger, and the row doesn't say so. iPhone really needs a compact Home layout (the design lead's recommendation), which is a bigger design job.
@@ -126,6 +127,11 @@ STATUS: LOOPING · cycle 0 · 8 done · build+tests GREEN (198 Mac; the one inte
 - Mac: hover a Settings tab or a card button — it brightens and doesn't grow.
 - On the companion panel, tap "Use the iPad Instead": the launcher returns to the iPad and Settings ▸ Video ▸ Use TV / Monitor reads Off.
 - AirPlay mirroring (with and without a controller): tell me what happens — this path couldn't be checked from code.
+
+- Mac, your normal setup: open VibeLight — your paired computers still connect, and nothing in `~/Library/Application Support/VibeLight/identity` changed.
+- iPad: restart it, open VibeLight before unlocking, then unlock and pair a computer without reopening the app — pairing works. Tried before unlocking, it says to try again before the PC asks for a PIN.
+- iPad: after installing this build over the old one, your computers are still paired.
+- (Optional, on a throwaway copy only) Mac with `client.pem` made unreadable (`chmod 000`): a host action says VibeLight can't read its identity file and changed nothing; `client.key` is untouched. Restore the permissions afterwards.
 
 ## Test status
 - Baseline (23:24, HEAD 8c51dc7, full output in `.overnight-loop/baseline.txt`): **GREEN.**
