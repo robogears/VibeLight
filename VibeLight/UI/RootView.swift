@@ -311,6 +311,8 @@ struct RootView: View {
 /// can render the SAME UI (bound to the SAME `AppState`) on a connected TV.
 struct LauncherContent: View {
     @Environment(AppState.self) private var state
+    /// This launcher's tile positions for the starting card (see LiftGeometry).
+    @State private var lift = LiftGeometry()
 
     var body: some View {
         ZStack {
@@ -335,6 +337,10 @@ struct LauncherContent: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }
         }
+        // Tiles and the starting card share this space, so the card can start
+        // exactly over the tile that was pressed.
+        .coordinateSpace(.named(LiftGeometry.space))
+        .environment(\.liftGeometry, lift)
         .animation(Theme.focusSpring, value: state.screen)
         .animation(.easeOut(duration: 0.18), value: state.overlay)
         .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)

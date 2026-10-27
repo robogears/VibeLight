@@ -246,6 +246,11 @@ final class AppState {
     }
     var hostOnline: Bool { serverInfo != nil }
 
+    /// The app the starting card (Poster Lift) is about. Known from the press,
+    /// so the card can name and lift it before the engine's phase carries it
+    /// (macOS reconciles first). Only read while that card is up.
+    private(set) var launchTarget: StreamApp?
+
     /// The status dot beside a computer's name.
     enum HostDot: Equatable, Sendable {
         case online        // green
@@ -889,6 +894,20 @@ final class AppState {
         session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
             chrome?.beginStreamPresentation(helperPID: helperPID)
+            #if os(iOS)
+            // The starting card's exit (the poster growing into the picture)
+            // plays under the stream's 0.45 s fade-in, so keep it until that
+            // fade is done. (macOS: the helper's window covers us at once.)
+            if overlay == .sessionHUD {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    guard let self, overlay == .sessionHUD else { return }
+                    overlay = nil
+                    rebuildFocus()
+                }
+                return
+            }
+            #endif
             overlay = nil
             rebuildFocus()
         }
@@ -2858,6 +2877,7 @@ final class AppState {
         // rebuild (post-stream refresh) — resorting the array mid-launch would
         // yank the tile out from under the animation the user is looking at.
         recordLaunch(of: app, on: host)
+        launchTarget = app   // the starting card lifts this tile (set before it appears)
         presentOverlay(.sessionHUD)
         Task {
             await session.launch(app: app, on: host, settings: settings)

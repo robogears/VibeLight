@@ -235,7 +235,7 @@ the iPad becomes a companion — an OLED-safe "Playing on X" panel (✕ + keyboa
 buttons) that fades to black after 5 s untouched (display stays on). A tap on it is
 NOT sent to the game: it mirrors the game onto the iPad (second display layer fed
 the same frames, `attachMirror`) and touch plays it; 15 s untouched returns to the
-panel. The leave-hold animation ("Frame Trace", `StreamExitOverlay`) shows on the TV too. The idle launcher
+panel. The leave-hold animation ("Frame Trace", `StreamExitOverlay`) shows on the TV too. Starting a game shows "Poster Lift" (`PosterLiftCard`): the pressed tile lifts to centre, the engine's real `launchStep` underneath, and the TV keeps the launcher until the first frame (`ExternalDisplay.showStream`). The idle launcher
 also renders ON the TV, super-sampled to ≥2× so it's crisp even on 1× 1080p panels
 (see `docs/STREAMING-STATUS.md`). Perf HUD mirrors to both iPad and TV. Always on
 and auto-engages (the Use TV / Monitor option was removed by the owner). Remaining

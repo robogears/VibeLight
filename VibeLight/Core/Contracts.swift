@@ -130,6 +130,15 @@ enum SessionEvent: Sendable {
 /// so observation stays exact; this protocol keeps the two implementations in
 /// lockstep. See docs/plans/ios-support-plan.md §3.2.
 @MainActor
+/// Which real step a launch is on, for the starting card's status line
+/// (Poster Lift). Only what the engine actually does — never a percentage.
+enum LaunchStep: Equatable, Sendable {
+    case checkingHost
+    case starting(resume: Bool)
+    case connecting
+    case waitingForVideo
+}
+
 protocol StreamEngine: AnyObject {
     var phase: SessionPhase { get }
     var remoteQuitRequested: Bool { get }
@@ -140,6 +149,12 @@ protocol StreamEngine: AnyObject {
     func disconnect()
     func quitCompletely(host: StreamHost) async
     func acknowledgeEnd()
+}
+
+extension StreamEngine {
+    /// Engines that can't see their steps (the macOS helper reports none)
+    /// leave the starting card on its phase-based line.
+    var launchStep: LaunchStep? { nil }
 }
 
 // MARK: - Platform chrome seam

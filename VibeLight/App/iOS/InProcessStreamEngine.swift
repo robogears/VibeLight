@@ -21,9 +21,13 @@ final class InProcessStreamEngine: StreamEngine {
     private(set) var phase: SessionPhase = .idle {
         didSet {
             guard oldValue != phase else { return }
+            if case .launching = phase {} else { launchStep = nil }   // steps only exist mid-launch
             onPhaseChange?(phase)
         }
     }
+    /// The real step of the launch in progress (nil otherwise), shown under the
+    /// poster on the starting card.
+    private(set) var launchStep: LaunchStep?
     private(set) var remoteQuitRequested = false
 
     @ObservationIgnored var onPhaseChange: ((SessionPhase) -> Void)?
@@ -181,8 +185,10 @@ final class InProcessStreamEngine: StreamEngine {
         var resolvedAddress: String?
         do {
             // Fresh serverinfo for the working address + host generation/codecs.
+            launchStep = .checkingHost
             let (info, address) = try await api.serverInfo(for: host)
             resolvedAddress = address
+            launchStep = .starting(resume: info.runningAppID != nil)
 
             let effective = Self.settingsForStream(settings)
             NSLog("[VibeLight] requested stream: \(effective.width)×\(effective.height)@\(effective.fps) \(effective.bitrateKbps)kbps tv=\(effective.externalDisplay)")
@@ -252,6 +258,7 @@ final class InProcessStreamEngine: StreamEngine {
             self.session = session
             self.launchingApp = app
             session.start()
+            launchStep = .connecting
         } catch is CancellationError {
             // Deliberately DON'T deactivate audio here: a CancellationError almost
             // always means a newer launch() superseded us and has already
@@ -1091,10 +1098,14 @@ final class InProcessStreamEngine: StreamEngine {
     fileprivate func handleStage(_ stage: MoonlightStage) {
         guard let app = launchingApp else { return }
         NSLog("[VibeLight] stream reached stage \(stage.rawValue)")
+        if case .launching = phase, stage.rawValue >= MoonlightStage.videoInit.rawValue {
+            launchStep = .waitingForVideo
+        }
         // "Connected" (or reaching the video-start stage) means the stream is live.
         if !connectedOnce, stage == .connected || stage.rawValue >= MoonlightStage.videoStart.rawValue {
             connectedOnce = true
             phase = .streaming(app)
+            ExternalDisplay.shared.showStream()   // TV: launcher + starting card → the stream
             setStreamInput(active: true)
             setStatsHUD(active: true)
             armCompanionIdle()   // the iPad companion's panel / dim / show-the-game timers

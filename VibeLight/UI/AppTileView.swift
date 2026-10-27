@@ -32,11 +32,19 @@ struct AppTileView: View {
     /// `AppState.shelfPrecedes`). Same rule and green as the hero's RUNNING
     /// badge, so the two always agree.
     private var isLive: Bool { state.serverInfo?.runningAppID == app.id }
+    /// Where this launcher keeps tile positions for the starting card.
+    @Environment(\.liftGeometry) private var lift
+    /// The starting card has lifted this tile's art out of the shelf (Poster
+    /// Lift), so the tile shows an empty slot where it was.
+    private var isLifted: Bool { state.overlay == .sessionHUD && state.launchTarget?.id == app.id }
 
     var body: some View {
         VStack(spacing: Metrics.labelSpacing) {
             artworkView
                 .frame(width: Metrics.art.width, height: Metrics.art.height)
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(LiftGeometry.space)) }) {
+                    lift?.artFrames[focusID] = $0
+                }
                 .overlay { if isLive { LiveShade() } }
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay {
@@ -49,6 +57,7 @@ struct AppTileView: View {
                 .overlay(alignment: .topLeading) {
                     if isLive { LiveBadge().padding(10) }
                 }
+                .opacity(isLifted ? 0 : 1)
                 .shadow(
                     color: showFocus ? Theme.accentGlow : .black.opacity(0.5),
                     radius: showFocus ? 24 : 10,
@@ -150,4 +159,18 @@ private struct LiveBadge: View {
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { dim = true }
         }
     }
+}
+
+/// Where each tile's art sits in its launcher, so the starting card can lift
+/// the pressed tile out of the shelf (Poster Lift). One per launcher — the
+/// iPad's and the TV's lay out differently. Written on every layout and never
+/// observed: tile positions must not re-render anything.
+@MainActor
+final class LiftGeometry {
+    static let space = "vibelight.launcher"
+    var artFrames: [String: CGRect] = [:]
+}
+
+extension EnvironmentValues {
+    @Entry var liftGeometry: LiftGeometry? = nil
 }

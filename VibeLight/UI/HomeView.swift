@@ -254,7 +254,7 @@ private struct RestartPCButton: View {
     }
 }
 
-private struct Badge: View {
+struct Badge: View {   // also on the starting card (PosterLiftCard)
     let text: String
     var tint: Color = Theme.accent
 

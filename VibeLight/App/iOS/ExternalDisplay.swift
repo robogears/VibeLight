@@ -82,6 +82,10 @@ final class ExternalDisplay {
     /// needs `AppState`.
     @ObservationIgnored private var makeStreamOverlay: ((CGFloat) -> UIViewController)?
     @ObservationIgnored private var streamOverlayVC: UIViewController?
+    /// The TV shows the stream (not the launcher). False while a launch is
+    /// still connecting, so the TV keeps the launcher — and the starting
+    /// card on it — until the first frame (`showStream`).
+    @ObservationIgnored private var streamShowing = false
 
     private init() {
         let nc = NotificationCenter.default
@@ -173,7 +177,7 @@ final class ExternalDisplay {
         if let layer = streamLayer {
             host.attach(layer)
             host.setPerf(latestPerf)   // restore the HUD on the fresh host
-            window.rootViewController = streamVC
+            if streamShowing { window.rootViewController = streamVC } else { showLauncher() }
         } else {
             showLauncher()
         }
@@ -197,12 +201,27 @@ final class ExternalDisplay {
     // MARK: - Engine hand-off
 
     /// Stream starting (or mid-stream connect): show the video on the TV.
+    /// Launch: the layer goes onto the TV's stream view now, so the first
+    /// frames have somewhere to go — but the TV keeps showing the launcher
+    /// (with the starting card) until `showStream()`. It used to switch to
+    /// the still-black stream view at once, so the TV never showed the card.
     func present(_ layer: AVSampleBufferDisplayLayer) {
         streamLayer = layer
+        streamShowing = false
         guard let host = streamHost else { return }
         host.attach(layer)
-        window?.rootViewController = streamVC
         NSLog("[VibeLight] external video attached: \(Int(host.bounds.width))×\(Int(host.bounds.height)) pt")
+    }
+
+    /// The first frame is here: cross-fade the TV from the launcher to the
+    /// stream over the same 0.45 s the iPad uses.
+    func showStream() {
+        guard streamLayer != nil, !streamShowing else { return }
+        streamShowing = true
+        guard let window, let streamVC else { return }
+        UIView.transition(with: window, duration: 0.45, options: [.transitionCrossDissolve, .allowAnimatedContent]) {
+            window.rootViewController = streamVC
+        }
     }
 
     /// Mirror the iPad's perf HUD onto the TV (nil hides it). Cached so a TV
@@ -215,6 +234,7 @@ final class ExternalDisplay {
     /// Stream ending: clear the last frame (no frozen image) and return the TV
     /// to the launcher UI.
     func dismiss() {
+        streamShowing = false
         latestPerf = nil
         streamHost?.setPerf(nil)
         streamLayer?.removeFromSuperlayer()

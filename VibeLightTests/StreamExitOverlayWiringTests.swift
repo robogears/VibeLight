@@ -99,3 +99,52 @@ final class ExitOverlaySmoothnessTests: XCTestCase {
         XCTAssertFalse(view.contains(".animation(.linear(duration: 0.05), value: state.session.streamQuitProgress)"))
     }
 }
+
+/// The starting card is Poster Lift (owner's pick of five): the pressed tile
+/// lifts to centre, real steps underneath, grows into the stream.
+final class PosterLiftWiringTests: XCTestCase {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    func testStartingCardIsPosterLift() throws {
+        let overlays = try source("VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(overlays.contains("case .sessionHUD:\n                PosterLiftCard()"))
+        XCTAssertFalse(overlays.contains("struct SessionHUD"))
+        XCTAssertTrue(overlays.contains("liftOff(from: lift?.artFrames[\"app:\\(state.appKey(app))\"], to: frame)"))
+    }
+
+    /// Tiles report where their art is, in the launcher's shared space, and
+    /// hide while lifted; each launcher (iPad, TV) keeps its own positions.
+    func testTilesFeedTheLift() throws {
+        let tile = try source("VibeLight/UI/AppTileView.swift")
+        XCTAssertTrue(tile.contains("lift?.artFrames[focusID] = $0"))
+        XCTAssertTrue(tile.contains(".opacity(isLifted ? 0 : 1)"))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertTrue(root.contains("@State private var lift = LiftGeometry()"))
+        XCTAssertTrue(root.contains(".coordinateSpace(.named(LiftGeometry.space))"))
+    }
+
+    /// The status line shows the engine's real steps; the TV keeps the
+    /// launcher (and the card) until the first frame, then cross-fades.
+    func testRealStepsAndTheTVHandOff() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        for step in ["launchStep = .checkingHost", "launchStep = .starting(resume: info.runningAppID != nil)",
+                     "launchStep = .connecting", "launchStep = .waitingForVideo"] {
+            XCTAssertTrue(engine.contains(step), step)
+        }
+        XCTAssertTrue(engine.contains("ExternalDisplay.shared.showStream()"))
+        let tv = try source("VibeLight/App/iOS/ExternalDisplay.swift")
+        XCTAssertTrue(tv.contains("func showStream()"))
+        XCTAssertTrue(tv.contains("if streamShowing { window.rootViewController = streamVC } else { showLauncher() }"))
+    }
+
+    /// Engines that can't see their steps (the Mac's helper) report none, so
+    /// the card falls back to the phase.
+    func testEnginesWithoutStepsReportNone() throws {
+        let contracts = try source("VibeLight/Core/Contracts.swift")
+        XCTAssertTrue(contracts.contains("extension StreamEngine {\n    /// Engines that can't see their steps"))
+        XCTAssertTrue(contracts.contains("var launchStep: LaunchStep? { nil }"))
+    }
+}

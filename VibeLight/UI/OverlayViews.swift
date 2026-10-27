@@ -28,7 +28,7 @@ struct OverlayHost: View {
     @ViewBuilder private var card: some View {
         switch overlay {
             case .sessionHUD:
-                SessionHUD()
+                PosterLiftCard()
             case .sessionEnded(let app):
                 SessionEndedCard(app: app)
             case .error(let message):
@@ -63,71 +63,157 @@ struct OverlayHost: View {
     }
 }
 
-// MARK: - Launching HUD
+// MARK: - Starting card (Poster Lift)
 
-private struct SessionHUD: View {
+/// The starting card — "Poster Lift", the owner's pick of five (Fable design
+/// lead, Oct 2026). The tile you pressed lifts out of the shelf to the middle
+/// of the screen as a poster; its accent glow breathes while the real launch
+/// steps tick by underneath (never a percentage). When the first frame
+/// arrives it grows into the picture under the stream's 0.45 s fade-in (the
+/// card is dismissed after that fade — AppState.onStreamDidStart). Replaced a
+/// spinner with rotating quips.
+private struct PosterLiftCard: View {
     @Environment(AppState.self) private var state
-    @State private var quipIndex = Int.random(in: 0..<SessionHUD.quips.count)
+    @Environment(\.liftGeometry) private var lift
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Rotating flavor text under the launch label — relevant nonsense beats
-    /// a static "please wait".
-    static let quips = [
-        "Convincing your PC it's a console…",
-        "Herding pixels across the network…",
-        "Bribing the router for lower ping…",
-        "Warming up the virtual HDMI cable…",
-        "Asking the GPU nicely to share…",
-        "Teleporting your rig to the couch…",
-        "Negotiating frame rates with the encoder…",
-        "Stuffing frames into tiny packets…",
-        "Reticulating stream splines…",
-        "Waking pixels from their nap…",
-        "Counting frames before they hatch…",
-        "Telling your monitor it's not needed…",
-        "Rolling out the red carpet for keyframes…",
-        "Spinning up fans you can't hear from here…",
-        "Charging the controller's ego…",
-        "Sneaking past the loading screen's loading screen…",
-        "Pressing A to continue for you…",
-        "Untangling the invisible HDMI cables…",
-        "Feeding the hungry bitrate…",
-        "Politely evicting the screensaver…",
-    ]
+    static let size = CGSize(width: 300, height: 400)
 
-    var body: some View {
-        VStack(spacing: 22) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(Theme.accent)
-            Text(label)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .foregroundStyle(Theme.textPrimary)
-            Text(Self.quips[quipIndex])
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .id(quipIndex)
-                .transition(.opacity)
-        }
-        .padding(60)
-        .background(Theme.surface.opacity(0.9), in: RoundedRectangle(cornerRadius: 24))
-        .task {
-            // Fresh quip every few seconds while the HUD is up.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(4))
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    quipIndex = (quipIndex + Int.random(in: 1..<Self.quips.count)) % Self.quips.count
-                }
-            }
+    /// The pressed tile's art, relative to the poster's resting place — where
+    /// the lift starts. Nil until both are measured, or when there's no tile
+    /// to lift from (then the poster fades in place).
+    @State private var start: (offset: CGSize, scale: CGSize)?
+    @State private var landed = false
+    @State private var breathe = false
+
+    /// The game: from the engine once it says so, from the press before that
+    /// (macOS checks the PC first, with no app in its phase).
+    private var app: StreamApp? {
+        switch state.session.phase {
+        case .launching(let app), .streaming(let app): app
+        default: state.launchTarget
         }
     }
 
-    private var label: String {
+    private var streamingNow: Bool {
+        if case .streaming = state.session.phase { return true }
+        return false
+    }
+
+    var body: some View {
+        VStack(spacing: 26) {
+            if let app {
+                poster(app)
+                VStack(spacing: 10) {
+                    Text(app.name)
+                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(statusLine)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: statusLine)
+                    HStack(spacing: 12) {
+                        Badge(text: state.value(for: .resolution))
+                        Badge(text: "\(state.settings.fps) FPS")
+                        Badge(text: "\(state.settings.bitrateKbps / 1000) MBPS")
+                    }
+                }
+                .opacity(landed && !streamingNow ? 1 : 0)
+                .animation(.easeOut(duration: streamingNow ? 0.2 : 0.25), value: landed && !streamingNow)
+            }
+        }
+        .onAppear {
+            if reduceMotion { breathe = true; return }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { breathe = true }
+        }
+    }
+
+    private func poster(_ app: StreamApp) -> some View {
+        let lifting = !landed && start != nil
+        return PosterArt(app: app)
+            .frame(width: Self.size.width, height: Self.size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.accent, lineWidth: 4))
+            .background {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Theme.accent)
+                    .blur(radius: 36)
+                    .opacity(landed ? (breathe ? 0.75 : 0.25) : 0)
+            }
+            // The lift: begin exactly over the pressed tile, spring to here.
+            .scaleEffect(lifting ? start!.scale : CGSize(width: 1, height: 1))
+            .offset(lifting ? start!.offset : .zero)
+            // The exit: grow into the picture as the stream fades in above.
+            .scaleEffect(streamingNow && !reduceMotion ? 1.35 : 1)
+            .opacity(streamingNow ? 0 : (landed || start != nil ? 1 : 0))
+            .animation(.easeIn(duration: 0.4), value: streamingNow)
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(LiftGeometry.space)) }) { frame in
+                guard !landed, start == nil else { return }
+                liftOff(from: lift?.artFrames["app:\(state.appKey(app))"], to: frame)
+            }
+    }
+
+    /// One frame drawn over the tile, then the spring to centre. No tile to
+    /// lift from (or Reduce Motion): a plain fade in place.
+    private func liftOff(from tile: CGRect?, to poster: CGRect) {
+        guard let tile, !reduceMotion, poster.width > 0, poster.height > 0 else {
+            withAnimation(.easeOut(duration: 0.25)) { landed = true }
+            return
+        }
+        start = (CGSize(width: tile.midX - poster.midX, height: tile.midY - poster.midY),
+                 CGSize(width: tile.width / poster.width, height: tile.height / poster.height))
+        Task { @MainActor in
+            withAnimation(Theme.focusSpring) { landed = true }
+        }
+    }
+
+    /// The real step, in words. macOS's helper reports no steps, so there the
+    /// line follows the phase alone.
+    private var statusLine: String {
+        let host = state.selectedHost?.name ?? "the PC"
         switch state.session.phase {
-        case .reconciling: "Checking what's running…"
-        case .waitingForQuit(let app): "Closing \(app.name)…"
-        case .launching(let app): "Starting \(app.name)"
-        case .streaming(let app): "Streaming \(app.name)"
-        default: "Preparing…"
+        case .reconciling: return "Checking \(host)…"
+        case .waitingForQuit(let running): return "Closing \(running.name)…"
+        default: break
+        }
+        switch state.session.launchStep {
+        case .checkingHost: return "Checking \(host)…"
+        case .starting(resume: true): return "Resuming on \(host)…"
+        case .connecting: return "Connecting…"
+        case .waitingForVideo: return "Waiting for video…"
+        case .starting(resume: false), nil: return "Starting on \(host)…"
+        }
+    }
+}
+
+/// The poster's art: the same box art (or bespoke tile) as the shelf tile.
+private struct PosterArt: View {
+    @Environment(AppState.self) private var state
+    let app: StreamApp
+    @State private var artwork: TileArtwork = .pending
+
+    var body: some View {
+        Group {
+            switch artwork {
+            case .image(let url):
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        BespokeTileView(kind: .generic, title: app.name)
+                    }
+                }
+            case .bespoke(let kind):
+                BespokeTileView(kind: kind, title: app.name)
+            case .pending:
+                Theme.surface
+            }
+        }
+        .task(id: app.id) {
+            guard let host = state.selectedHost else { return }
+            artwork = await state.artwork.artwork(for: app, host: host, address: state.hostAddress)
         }
     }
 }
