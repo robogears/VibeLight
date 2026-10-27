@@ -226,7 +226,7 @@ both platforms behind the two `Core/Contracts.swift` seams (`StreamEngine`,
 `PlatformChrome`). Convention: AppKit/`Process`/macOS-only code is under
 `#if os(macOS)`. **Streaming is real on iOS**: in-process moonlight-common-c
 (H.264 to native res @ 120fps, Opus audio, full controller passthrough with a
-held Start+Select+LB+RB leave chord that shows a 2 s progress ring, touch-as-input
+held (1.7 s) Start+Select+LB+RB leave chord drawn as "Frame Trace" that ends in a black curtain while the stream closes, touch-as-input
 with native passthrough + mouse fallback, Moonlight-parity perf HUD, keep-awake,
 quit-on-exit). **External display / TV output (SHIPPED, device-verified & loved):**
 when a TV/monitor is attached (`App/iOS/ExternalDisplay.swift`, a real

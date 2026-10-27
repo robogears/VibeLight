@@ -155,6 +155,7 @@ final class InProcessStreamEngine: StreamEngine {
         connectedOnce = false
         remoteQuitRequested = false
         streamQuitProgress = nil   // never start a new stream pre-blacked (ON-7 pin)
+        exitCurtain = 0
         activeTouchIDs.removeAll()
         showPerfOverlay = settings.performanceOverlay
         touchControlsEnabled = settings.touchControls
@@ -662,9 +663,23 @@ final class InProcessStreamEngine: StreamEngine {
         session.sendKeyboardEvent(KeyboardMap.backspaceVK, down: false, modifiers: keyboardModifiers)
     }
 
-    /// 0…1 fill of the hold-to-leave combo ring (nil = not holding). RootView
-    /// renders `HoldProgressRing` from this.
+    /// 0…1 progress of the hold-to-leave chord (nil = not holding).
+    /// `StreamExitOverlay` (Frame Trace) draws from this.
     private(set) var streamQuitProgress: Double?
+
+    /// How long Start + Select + L1 + R1 must be held to leave (owner: 0.7 s
+    /// longer than the original 1.0 s, so it can't fire by accident).
+    nonisolated static let leaveHoldSeconds = 1.7
+
+    /// Black over EVERYTHING — iPad and the TV launcher — from the end of the
+    /// hold until the stream has fully closed (owner: "fade to black for a
+    /// second, the stream completely closed, then slowly fade back into the
+    /// menu"). 1 = black; set back to 0 after `exitBlackHold`, and
+    /// `ExitCurtain` animates that over `exitCurtainFadeOut` seconds. It has
+    /// to live here, not in the stream view: teardown removes that view.
+    private(set) var exitCurtain: Double = 0
+    nonisolated static let exitBlackHold: Duration = .seconds(1)
+    nonisolated static let exitCurtainFadeOut = 0.9
     @ObservationIgnored private var quitHoldTask: Task<Void, Never>?
     /// The pad holding the leave chord — only ITS deviating input aborts the
     /// hold. Without this, player 2's ordinary inputs would cancel player 1's
@@ -677,7 +692,7 @@ final class InProcessStreamEngine: StreamEngine {
         guard quitHoldTask == nil else { return }
         let start = ContinuousClock.now
         quitHoldTask = Task { @MainActor [weak self] in
-            let grace = 0.15, total = 1.0
+            let grace = 0.15, total = Self.leaveHoldSeconds
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(40))
                 guard let self, !Task.isCancelled else { return }
@@ -704,7 +719,14 @@ final class InProcessStreamEngine: StreamEngine {
                     // game faded straight into the launcher instead of to black.
                     setStreamInput(active: false)
                     try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(60))
-                    if case .streaming = phase { disconnect() }   // unless it already ended on its own
+                    guard case .streaming = phase else { return }   // it already ended on its own
+                    // The screen is black under the swell now; the curtain
+                    // takes over (no visible change) and outlives the stream
+                    // view, so teardown — the old "chop" — happens unseen.
+                    exitCurtain = 1
+                    disconnect()
+                    try? await Task.sleep(for: Self.exitBlackHold)
+                    exitCurtain = 0                       // ExitCurtain fades this out slowly
                     return
                 }
                 if elapsed >= grace {
@@ -790,7 +812,7 @@ final class InProcessStreamEngine: StreamEngine {
             }
         }
 
-        // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~1s (with a
+        // Leave-stream combo — Start + Select/Share + L1 + R1. HELD 1.7 s (with a
         // progress ring, like the launcher's hold-to-quit) so it's deliberate and
         // gives feedback. While held, the buttons are suppressed (not forwarded
         // to the game). The game keeps running on the PC.

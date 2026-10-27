@@ -33,8 +33,19 @@ final class StreamExitOverlayWiringTests: XCTestCase {
     func testFireWaitsForTheSwellBeforeTeardown() throws {
         let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
         let stop = try XCTUnwrap(engine.range(of: "setStreamInput(active: false)\n                    try? await Task.sleep(for: StreamExitOverlay.fireDuration"))
-        let leave = try XCTUnwrap(engine.range(of: "if case .streaming = phase { disconnect() }"))
+        let leave = try XCTUnwrap(engine.range(of: "exitCurtain = 1\n                    disconnect()"))
         XCTAssertLessThan(stop.lowerBound, leave.lowerBound)
+    }
+
+    /// Owner: black for about a second while the stream closes, then a slow
+    /// fade into the menu — on the iPad and on the TV launcher.
+    func testCurtainCoversTeardownThenFadesSlowly() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("nonisolated static let leaveHoldSeconds = 1.7"))
+        XCTAssertTrue(engine.contains("disconnect()\n                    try? await Task.sleep(for: Self.exitBlackHold)\n                    exitCurtain = 0"))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertEqual(root.components(separatedBy: ".overlay { ExitCurtain() }").count - 1, 2,
+                       "one curtain on the iPad, one on the TV launcher")
     }
 
     /// The stats task re-checks cancellation after its sleep, or a turned-off

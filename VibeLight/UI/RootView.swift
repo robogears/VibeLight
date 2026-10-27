@@ -233,6 +233,9 @@ struct RootView: View {
         // Always-present, invisible probe: reads RootView's own hosting window and
         // updates `placement` on attach + cross-screen moves + display churn.
         .background(ScenePlacementProbe(placement: placement))
+        // Leaving a stream: black until it has fully closed, then a slow fade
+        // into the menu. Above the stream view and the session-ended card.
+        .overlay { ExitCurtain() }
         #endif
         // First-run setup wizard — unskippable, over everything (both platforms).
         // Input is already gated to it in AppState.route while a step is active.
@@ -353,11 +356,14 @@ struct StreamExitOverlay: View {
     /// bottom; gameplay stays visible. At fire the border swells inward and
     /// swallows the picture. The engine waits this long after fire before
     /// tearing the stream view down, so the swell always lands on black.
-    static let fireDuration: Duration = .milliseconds(200)
+    static let fireDuration: Duration = .milliseconds(350)
 
     /// Set one transaction after progress pins at 1, so the p = 1 frame (the
     /// thick, complete border) is drawn once before the swell runs.
     @State private var fired = false
+    private static var fireSeconds: Double {
+        Double(fireDuration.components.seconds) + Double(fireDuration.components.attoseconds) / 1e18
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -372,7 +378,7 @@ struct StreamExitOverlay: View {
                 }
             }
             .onChange(of: p == 1) { _, isFired in
-                withAnimation(reduceMotion ? nil : .easeIn(duration: 0.2)) { fired = isFired }
+                withAnimation(reduceMotion ? nil : .easeIn(duration: Self.fireSeconds)) { fired = isFired }
             }
         }
         .ignoresSafeArea()
@@ -473,6 +479,26 @@ struct ExternalDisplayContent: View {
         }
         .ignoresSafeArea()
         .background(Theme.background)
+        // The TV swaps from the stream to this launcher the moment the stream
+        // closes; the curtain keeps that swap black until it fades with the iPad.
+        .overlay { ExitCurtain() }
+    }
+}
+
+/// The leave-stream curtain (`InProcessStreamEngine.exitCurtain`). Goes black
+/// instantly — the Frame Trace swell has already made the screen black — and
+/// fades out slowly once the stream has closed.
+struct ExitCurtain: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        let opacity = state.session.exitCurtain
+        Color.black
+            .opacity(opacity)
+            .ignoresSafeArea()
+            .allowsHitTesting(opacity > 0)   // nothing is tapped through the black
+            .animation(opacity == 0 ? .easeInOut(duration: InProcessStreamEngine.exitCurtainFadeOut) : nil,
+                       value: opacity)
     }
 }
 
