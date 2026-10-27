@@ -35,8 +35,13 @@ struct AppTileView: View {
     /// Where this launcher keeps tile positions for the starting card.
     @Environment(\.liftGeometry) private var lift
     /// The starting card has lifted this tile's art out of the shelf (Poster
-    /// Lift), so the tile shows an empty slot where it was.
-    private var isLifted: Bool { state.overlay == .sessionHUD && state.launchTarget?.id == app.id }
+    /// Lift), or the still-running card holds it (Poster Rest), so the tile
+    /// shows an empty slot where it was.
+    private var isLifted: Bool {
+        if case .sessionEnded(let ended) = state.overlay { return ended.id == app.id }
+        return state.overlay == .sessionHUD && state.launchTarget?.id == app.id
+    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: Metrics.labelSpacing) {
@@ -56,6 +61,21 @@ struct AppTileView: View {
                 }
                 .overlay(alignment: .topLeading) {
                     if isLive { LiveBadge().padding(10) }
+                }
+                // Back from the still-running card: one green ring blooms out
+                // of the tile the poster just flew into.
+                .phaseAnimator(LandingBloom.allCases, trigger: state.tileBlooms[focusID, default: 0]) { art, phase in
+                    art.overlay {
+                        if !reduceMotion {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.green, lineWidth: 3)
+                                .scaleEffect(phase.scale)
+                                .opacity(phase.opacity)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                } animation: { phase in
+                    phase == .fade ? Animation.easeOut(duration: 0.7) : Animation.easeOut(duration: 0.12)
                 }
                 .opacity(isLifted ? 0 : 1)
                 .shadow(
@@ -131,28 +151,42 @@ private struct LiveShade: View {
     }
 }
 
-/// "● LIVE" on the running tile. The dot breathes slowly; under Reduce Motion
-/// it holds still.
-private struct LiveBadge: View {
+/// The landing bloom's steps: invisible at rest, a ring that flashes in on
+/// the tile, then grows and fades out.
+private enum LandingBloom: CaseIterable {
+    case rest, flash, fade
+    var scale: CGFloat { self == .fade ? 1.15 : 1 }
+    var opacity: Double { self == .flash ? 1 : 0 }
+}
+
+/// "● LIVE" on the running tile (and on the still-running card's poster).
+/// The dot breathes slowly; under Reduce Motion it holds still. On the card
+/// it also reads CLOSING while Quit is held and CLOSED once the PC has
+/// ended the game.
+struct LiveBadge: View {
+    enum Mode { case live, closing, closed }
+    var mode: Mode = .live
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dim = false
 
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(.green)
+                .fill(mode == .live ? Color.green : .white.opacity(mode == .closing ? 1 : 0.4))
                 .frame(width: 8, height: 8)
-                .opacity(dim ? 0.45 : 1)
-                .shadow(color: .green.opacity(0.8), radius: 4)
-            Text("LIVE")
+                .opacity(mode == .live && dim ? 0.45 : 1)
+                .shadow(color: .green.opacity(mode == .live ? 0.8 : 0), radius: 4)
+            Text(mode == .live ? "LIVE" : mode == .closing ? "CLOSING" : "CLOSED")
                 .font(.system(size: 11, weight: .heavy, design: .rounded))
                 .tracking(1.2)
-                .foregroundStyle(.white)
+                .foregroundStyle(mode == .closed ? Theme.textSecondary : .white)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(.black.opacity(0.55), in: Capsule())
-        .overlay(Capsule().strokeBorder(.green.opacity(0.5), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(mode == .live ? Color.green.opacity(0.5) : .white.opacity(0.3),
+                                        lineWidth: 1))
         .accessibilityHidden(true)   // the tile itself says "Running now"
         .onAppear {
             guard !reduceMotion else { return }

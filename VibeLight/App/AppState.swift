@@ -250,6 +250,35 @@ final class AppState {
     /// so the card can name and lift it before the engine's phase carries it
     /// (macOS reconciles first). Only read while that card is up.
     private(set) var launchTarget: StreamApp?
+    /// Where the starting card lifts its poster from: the pressed tile, or
+    /// the still-running card's poster when Resume carries on from it.
+    private(set) var liftSourceID: String?
+
+    /// What the still-running card (Poster Rest) knows about the session it
+    /// ended. Set when the card appears; only read while it is up.
+    struct EndedSession: Equatable {
+        /// How long the stream ran ("played 42 min"); nil if never seen live.
+        var played: TimeInterval?
+        /// Set when the connection dropped rather than the player leaving.
+        var dropReason: String?
+        /// The PC has since reported the game gone: Resume becomes Play Again
+        /// and Quit disappears.
+        var closedOnHost = false
+        /// Select / Back are ignored until then, so a button still being
+        /// mashed from the stream can't pick something on the card unseen.
+        var readyAt: Date
+        /// Back to Library is under way (the poster flies home).
+        var leaving = false
+    }
+    private(set) var endedSession: EndedSession?
+    /// Bumped when Quit on the card is tapped instead of held, so its hint flashes.
+    private(set) var endedQuitNudges = 0
+    /// Per tile (focus id): bumped to play the one-time landing bloom.
+    private(set) var tileBlooms: [String: Int] = [:]
+    /// The stream this device has live and when it started: "played 42 min",
+    /// and how a mid-stream drop is told from a failed launch.
+    @ObservationIgnored private var liveStream: (app: StreamApp, since: Date)?
+    @ObservationIgnored private var endedWatchTask: Task<Void, Never>?
 
     /// The status dot beside a computer's name.
     enum HostDot: Equatable, Sendable {
@@ -859,6 +888,7 @@ final class AppState {
             return screen == .home && overlay == nil
         }
         controller.quitGameChordEnabled = { [weak self] in self?.canQuitRemoteGame ?? false }
+        controller.selectHoldEnabled = { [weak self] in self?.focusedHoldButton ?? false }
         focus.onFocusChange = { [weak self] _, new in
             guard let self, let new else { return }
             self.controller.focusTick()   // haptic on every move (unchanged)
@@ -879,9 +909,21 @@ final class AppState {
         session.onPhaseChange = { [weak self] phase in
             guard let self else { return }
             refreshKeepAwake()
+            switch phase {
+            case .streaming(let app): liveStream = (app: app, since: Date())
+            case .idle: liveStream = nil
+            default: break
+            }
             if case .failed(let message) = phase {
                 chrome?.endStreamPresentationIfActive()
-                presentOverlay(.error(message))
+                // Dropped mid-stream: the game is still on the PC, so land on
+                // the still-running card and say why, instead of an error
+                // card that hides Resume. A failed launch stays an error.
+                if let live = liveStream {
+                    presentSessionEnded(live.app, dropReason: message)
+                } else {
+                    presentOverlay(.error(message))
+                }
             }
             // A launch-time update offer that arrived mid-stream waits for the
             // stream to be over. The phase turns idle a moment before the
@@ -922,13 +964,11 @@ final class AppState {
                 if session.remoteQuitRequested {
                     // The user explicitly quit the game — no "still running"
                     // decision card, straight back to the library.
+                    liveStream = nil
                     session.acknowledgeEnd()
                     dismissOverlay()
                 } else {
-                    presentOverlay(.sessionEnded(app))
-                    // Default focus = the headline action. Landing on "Resume"
-                    // meant an impatient double-press resumed by accident.
-                    focus.focus(itemID: "ended:quit")
+                    presentSessionEnded(app)
                 }
             } else {
                 rebuildFocus()
@@ -2091,8 +2131,11 @@ final class AppState {
         var sections: [FocusSection] = []
         switch overlay {
         case .sessionEnded:
-            sections = [FocusSection(id: "ended", kind: .vList,
-                                     itemIDs: ["ended:resume", "ended:quit", "ended:home"])]
+            // Quit leaves once the PC has closed the game — nothing to quit.
+            let ids = endedSession?.closedOnHost == true
+                ? ["ended:resume", "ended:home"]
+                : ["ended:resume", "ended:quit", "ended:home"]
+            sections = [FocusSection(id: "ended", kind: .vList, itemIDs: ids)]
         case .error:
             sections = [FocusSection(id: "error", kind: .vList, itemIDs: ["error:ok"])]
         case .update:
@@ -2238,8 +2281,8 @@ final class AppState {
     }
 
     /// Listed explicitly, not applied blanket: `.hosts` opens on the computer
-    /// you're on, by ID (`openHostMenu`), `.sessionEnded` picks its own
-    /// headline action right after presenting, and the HUD / cheat sheet
+    /// you're on, by ID (`openHostMenu`), `.sessionEnded` opens on Resume
+    /// (`presentSessionEnded`), and the HUD / cheat sheet
     /// deliberately leave the home screen's focus untouched underneath them
     /// (rebuildFocus returns early for those, so forcing focus would move the
     /// shelf behind the card).
@@ -2284,6 +2327,21 @@ final class AppState {
         if inputMode != .pointer { inputMode = .pointer }
         focus.focus(itemID: id)
         route(.select)
+    }
+
+    /// A touch or click went down on a hold-to-activate button (the
+    /// still-running card's Quit): focus it and start filling it.
+    func pressHoldButton(_ id: String, event: NavigationEvent) {
+        intro.skip()
+        if inputMode != .pointer { inputMode = .pointer }
+        focus.focus(itemID: id)
+        controller.beginPointerHold(for: event, onButton: true)
+    }
+
+    /// …and came up. Before the hold finished, that was a tap: select it,
+    /// which the card answers with its "hold it" nudge.
+    func releaseHoldButton(_ id: String) {
+        if controller.cancelPointerHold(), focus.focusedItemID == id { route(.select) }
     }
 
     // MARK: - TV companion panel (iOS)
@@ -2610,24 +2668,25 @@ final class AppState {
                 dismissOverlay()
             }
         case .sessionEnded(let app):
+            if endedSession?.leaving == true { return }   // the poster is flying home
+            if event == .select || event == .back, !endedAcceptsInput { return }
             switch event {
             case .select:
                 switch focus.focusedItemID {
                 case "ended:resume":
+                    // Poster Lift carries on from this card's poster.
                     session.acknowledgeEnd()
                     dismissOverlay()
-                    launch(app)
+                    launch(app, liftFrom: Self.endedPosterID)
                 case "ended:quit":
-                    quitRemoteGameCompletely()
+                    // A tap. Quit only fires from a hold (A held on it, or
+                    // a press-and-hold), which arrives as .quitChord.
+                    endedQuitNudges += 1
                 case "ended:home", nil, .some:
-                    session.acknowledgeEnd()
-                    dismissOverlay()
-                    Task { await refreshSelectedHost() }
+                    returnHomeFromEnded(app)
                 }
             case .back:
-                session.acknowledgeEnd()
-                dismissOverlay()
-                Task { await refreshSelectedHost() }
+                returnHomeFromEnded(app)
             default:
                 _ = focus.handle(event)
             }
@@ -2852,7 +2911,9 @@ final class AppState {
 
     // MARK: - Actions
 
-    func launch(_ app: StreamApp) {
+    /// `liftFrom`: where the starting card lifts its poster from (a lift
+    /// geometry id); the pressed tile when nil.
+    func launch(_ app: StreamApp, liftFrom sourceID: String? = nil) {
         guard selectedHost != nil else { return }
         // Host already streaming something ELSE → offer to switch instead of
         // erroring out (the engines close the running app on the way in).
@@ -2866,18 +2927,19 @@ final class AppState {
             presentOverlay(.confirmSwitchStream(running: runningName, target: app))
             return
         }
-        forceLaunch(app)
+        forceLaunch(app, liftFrom: sourceID)
     }
 
     /// The unguarded launch path: used directly by the switch-stream confirm
     /// (the user already chose to close what's running).
-    private func forceLaunch(_ app: StreamApp) {
+    private func forceLaunch(_ app: StreamApp, liftFrom sourceID: String? = nil) {
         guard let host = selectedHost else { return }
         // Recency for the shelf order: recorded NOW, applied on the next shelf
         // rebuild (post-stream refresh) — resorting the array mid-launch would
         // yank the tile out from under the animation the user is looking at.
         recordLaunch(of: app, on: host)
         launchTarget = app   // the starting card lifts this tile (set before it appears)
+        liftSourceID = sourceID ?? "app:\(appKey(app))"
         presentOverlay(.sessionHUD)
         Task {
             await session.launch(app: app, on: host, settings: settings)
@@ -2890,6 +2952,8 @@ final class AppState {
     /// The headline feature: fully terminate the remote game, from anywhere.
     func quitRemoteGameCompletely() {
         guard let host = selectedHost else { return }
+        // Not a drop: a quit that fails must surface as the error card.
+        liveStream = nil
         // Dismiss the card on the SAME press: the /cancel round-trip (~1 s)
         // used to hold it open, which read as "the button didn't work" and
         // invited a double-press that resumed the stream instead.
@@ -2931,7 +2995,127 @@ final class AppState {
     /// closes), or this device is streaming one. Gates the quit-game hold and
     /// its hint; they used to appear with nothing running at all.
     var canQuitRemoteGame: Bool {
-        serverInfo?.runningAppID != nil || isLocalStreamActive
+        serverInfo?.runningAppID != nil || isLocalStreamActive || endedCardOffersQuit
+    }
+
+    // MARK: - Still running (Poster Rest)
+
+    /// The still-running card — "Poster Rest", the owner's pick of five (Fable
+    /// design lead, Oct 2026). The poster that lifted when the game started
+    /// is what you land on when you leave it, LIVE and green, with Resume,
+    /// a held Quit and Back to Library beside it. Opens on Resume: Quit can't
+    /// fire from one press any more, and input waits for the curtain.
+    private func presentSessionEnded(_ app: StreamApp, dropReason: String? = nil) {
+        let played = liveStream.map { Date().timeIntervalSince($0.since) }
+        liveStream = nil
+        endedSession = EndedSession(played: played, dropReason: dropReason,
+                                    readyAt: Date().addingTimeInterval(endedInputDelay))
+        presentOverlay(.sessionEnded(app))
+        focus.focus(itemID: "ended:resume")
+        watchEndedGame(app)
+    }
+
+    /// The lift geometry id of the card's poster (Resume lifts from it).
+    nonisolated static let endedPosterID = "ended:poster"
+
+    /// How long the card ignores Select / Back after it appears. On the iPad
+    /// it appears under the leave curtain (1 s black, then a 0.9 s fade), so
+    /// it waits until the card is plainly visible; otherwise a beat.
+    private var endedInputDelay: TimeInterval {
+        #if os(iOS)
+        if session.exitCurtain > 0 { return 1.5 }
+        #endif
+        return 0.5
+    }
+
+    /// The card takes Select / Back: shown long enough, and not still black.
+    var endedAcceptsInput: Bool {
+        #if os(iOS)
+        if session.exitCurtain > 0 { return false }
+        #endif
+        return Date() >= (endedSession?.readyAt ?? .distantPast)
+    }
+
+    /// The card is up and its game is still running, so there is a game to quit.
+    private var endedCardOffersQuit: Bool {
+        guard case .sessionEnded = overlay, let ended = endedSession else { return false }
+        return !ended.closedOnHost && !ended.leaving
+    }
+
+    /// Focus is on the card's Quit and it may be held now — A / Return /
+    /// a press start the hold instead of selecting (ControllerManager).
+    var focusedHoldButton: Bool {
+        endedCardOffersQuit && focus.focusedItemID == "ended:quit" && endedAcceptsInput
+    }
+
+    /// Back to Library: the poster flies back into its tile and the scrim
+    /// lifts, then the card goes and the tile blooms once. The game keeps
+    /// running.
+    private func returnHomeFromEnded(_ app: StreamApp) {
+        endedSession?.leaving = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(420))
+            guard let self else { return }
+            // Resolved as the card goes, as before the flight existed: an
+            // update offer waiting on the stream's end looks again once the
+            // card is gone (onPhaseChange's idle hook).
+            session.acknowledgeEnd()
+            guard isShowingEnded(app) else { return }
+            let tile = "app:\(appKey(app))"
+            dismissOverlay(returningTo: apps.contains(where: { $0.id == app.id }) ? tile : nil)
+            tileBlooms[tile, default: 0] += 1
+            await refreshSelectedHost()
+        }
+    }
+
+    /// While the card is up, ask the PC now and then whether the game is
+    /// still running (the 12 s refresh stands down until the session is
+    /// resolved). If it has gone, the card says so: Play Again, no Quit.
+    private func watchEndedGame(_ app: StreamApp) {
+        endedWatchTask?.cancel()
+        guard let host = selectedHost else { return }
+        endedWatchTask = Task { [weak self] in
+            var wait: Duration = .seconds(2)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: wait)
+                wait = .seconds(6)
+                guard let self, !Task.isCancelled, isShowingEnded(app) else { return }
+                // A failed ask changes nothing: no answer isn't "closed".
+                guard let answer = try? await api.serverInfo(for: host) else { continue }
+                guard isShowingEnded(app), endedSession?.leaving == false else { return }
+                setEndedClosed(answer.info.runningAppID != app.id)
+            }
+        }
+    }
+
+    private func isShowingEnded(_ app: StreamApp) -> Bool {
+        if case .sessionEnded(let shown) = overlay { return shown.id == app.id }
+        return false
+    }
+
+    private func setEndedClosed(_ closed: Bool) {
+        guard endedSession != nil, endedSession?.closedOnHost != closed else { return }
+        endedSession?.closedOnHost = closed
+        let wasOnQuit = focus.focusedItemID == "ended:quit"
+        rebuildFocus()
+        if wasOnQuit || focus.focusedItemID == nil { focus.focus(itemID: "ended:resume") }
+    }
+
+    /// The card's line under the game's name.
+    nonisolated static func endedStatusLine(game: String, host: String, closed: Bool,
+                                            played: TimeInterval?) -> String {
+        let head = closed ? "\(game) has closed on \(host)" : "Still running on \(host)"
+        guard let played else { return head }
+        return "\(head) · \(playedText(played))"
+    }
+
+    /// "played 42 min", "played 1 h 5 min", "played under a minute".
+    nonisolated static func playedText(_ seconds: TimeInterval) -> String {
+        let minutes = Int(max(seconds, 0) / 60)
+        if minutes < 1 { return "played under a minute" }
+        if minutes < 60 { return "played \(minutes) min" }
+        let h = minutes / 60, m = minutes % 60
+        return m == 0 ? "played \(h) h" : "played \(h) h \(m) min"
     }
 
     /// THIS device owns a live (or in-progress) stream. Deliberately narrower

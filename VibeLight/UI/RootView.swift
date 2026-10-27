@@ -332,7 +332,8 @@ struct LauncherContent: View {
                     .transition(.opacity)
             }
 
-            if let hold = state.controller.holdProgress {
+            // A held button (the still-running card's Quit) fills itself.
+            if let hold = state.controller.holdProgress, hold.kind != .quitGameButton {
                 HoldProgressRing(progress: hold)
                     .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }

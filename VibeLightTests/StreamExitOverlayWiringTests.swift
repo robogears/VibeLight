@@ -112,7 +112,7 @@ final class PosterLiftWiringTests: XCTestCase {
         let overlays = try source("VibeLight/UI/OverlayViews.swift")
         XCTAssertTrue(overlays.contains("case .sessionHUD:\n                PosterLiftCard()"))
         XCTAssertFalse(overlays.contains("struct SessionHUD"))
-        XCTAssertTrue(overlays.contains("liftOff(from: lift?.artFrames[\"app:\\(state.appKey(app))\"], to: frame)"))
+        XCTAssertTrue(overlays.contains("liftOff(from: lift?.artFrames[state.liftSourceID ?? \"app:\\(state.appKey(app))\"], to: frame)"))
     }
 
     /// Tiles report where their art is, in the launcher's shared space, and

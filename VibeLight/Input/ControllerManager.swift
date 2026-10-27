@@ -100,6 +100,11 @@ final class ControllerManager {
     /// (pad Menu-hold, ⌘⇧Q, the hint button). Its ring used to fill — "Keep
     /// holding to quit the game" — with nothing running. nil = allowed.
     @ObservationIgnored var quitGameChordEnabled: (@MainActor () -> Bool)?
+    /// Whether the focused button acts only when HELD (the still-running
+    /// card's Quit). While true, A (or Return) starts a hold instead of firing
+    /// `.select`; the hold fires `.quitChord`, and letting go early sends a
+    /// plain `.select`, which the card answers with its "hold it" nudge.
+    @ObservationIgnored var selectHoldEnabled: (@MainActor () -> Bool)?
 
     /// Fired on every input event with the modality that produced it, so the
     /// UI can hide the cursor on controller/keyboard use and swap to pointer
@@ -173,6 +178,8 @@ final class ControllerManager {
         /// short-press `.back` on release. Longer than the Menu chord so a
         /// deliberate "close the app" gesture is never a fumbled Back tap.
         static let quitAppHold: Duration = .seconds(1.5)
+        /// A held on a hold-to-activate button (the still-running card's Quit).
+        static let buttonHold: Duration = .milliseconds(800)
     }
 
     // MARK: - Private state
@@ -189,6 +196,11 @@ final class ControllerManager {
     @ObservationIgnored private var backIsDown = false
     @ObservationIgnored private var backLongPressFired = false
     @ObservationIgnored private var backHoldTask: Task<Void, Never>?
+
+    // A (pad) or Return (keyboard) held on a hold-to-activate button.
+    @ObservationIgnored private var selectIsDown = false
+    @ObservationIgnored private var selectHoldFired = false
+    @ObservationIgnored private var selectHoldTask: Task<Void, Never>?
 
     // Press-and-hold quit from the keyboard (⌘⇧Q / ⌘Q) and from touch/mouse hint
     // buttons — both reuse `runHoldChord` so they share the controller's ring.
@@ -380,7 +392,13 @@ final class ControllerManager {
             }
         }
 
-        bind(pad.buttonA, to: .select)
+        // A fires on the press like every button — except on a hold-to-activate
+        // button, where it needs both edges (see selectButtonChanged).
+        pad.buttonA.pressedChangedHandler = { [weak self] _, _, pressed in
+            MainActor.assumeIsolated {
+                self?.selectButtonChanged(pressed: pressed, source: .pad)
+            }
+        }
         bind(pad.buttonX, to: .contextMenu)
         bind(pad.buttonY, to: .detail)
         bind(pad.leftShoulder, to: .prevSection)
@@ -491,10 +509,15 @@ final class ControllerManager {
 
     /// Begin a press-and-hold quit from a touch or mouse hint button — drives the
     /// same ring and fires the same event as the controller/keyboard holds.
-    func beginPointerHold(for event: NavigationEvent) {
+    /// `onButton`: the press is on a hold-to-activate button (the still-running
+    /// card's Quit), which fills itself instead of showing the ring.
+    func beginPointerHold(for event: NavigationEvent, onButton: Bool = false) {
         let kind: HoldProgress.Kind
         let duration: Duration
         switch event {
+        case .quitChord where onButton:
+            guard selectHoldEnabled?() ?? false else { return }
+            kind = .quitGameButton; duration = Tuning.buttonHold
         case .quitChord:
             guard quitGameChordEnabled?() ?? true else { return }   // nothing running: no ring
             kind = .quitGame; duration = Tuning.quitChordHold
@@ -509,17 +532,22 @@ final class ControllerManager {
             guard let self else { return }
             await self.runHoldChord(
                 kind: kind, duration: duration, event: event, source: nil,
-                stillHeld: { self.pointerHoldActive },
+                stillHeld: { self.pointerHoldActive
+                             && (!onButton || (self.selectHoldEnabled?() ?? false)) },
                 markFired: { self.pointerHoldActive = false })
         }
     }
 
-    /// Release before completion cancels the hold (the ring clears).
-    func cancelPointerHold() {
+    /// Release before completion cancels the hold (the ring clears). Returns
+    /// whether the hold was still running — i.e. let go early, nothing fired.
+    @discardableResult
+    func cancelPointerHold() -> Bool {
+        let releasedEarly = pointerHoldActive
         pointerHoldActive = false
         pointerHoldTask?.cancel()
         pointerHoldTask = nil
         if holdProgress != nil { holdProgress = nil }
+        return releasedEarly
     }
 
     // MARK: - Menu button (short press vs quit chord)
@@ -596,6 +624,46 @@ final class ControllerManager {
         }
     }
 
+    // MARK: - Select (tap = select, held on a hold button = its action)
+
+    /// A everywhere is the press-edge `.select`. On a hold-to-activate button
+    /// (`selectHoldEnabled`) the press starts the hold instead: it fills the
+    /// button for 0.8 s, then fires `.quitChord`; letting go first sends a
+    /// plain `.select`, so nothing destructive ever rides a single press.
+    private func selectButtonChanged(pressed: Bool, source: DirectedSource) {
+        if pressed {
+            guard selectHoldEnabled?() ?? false else {
+                emit(.select, from: source)
+                return
+            }
+            selectIsDown = true
+            selectHoldFired = false
+            lastDirectedSource = source   // the hint's glyphs follow the hand on the button
+            selectHoldTask?.cancel()
+            selectHoldTask = Task { [weak self] in
+                guard let self else { return }
+                await self.runHoldChord(
+                    kind: .quitGameButton, duration: Tuning.buttonHold, event: .quitChord,
+                    source: source,
+                    // Moving off the button (or the card changing) lets go.
+                    stillHeld: { self.selectIsDown && !self.selectHoldFired
+                                 && (self.selectHoldEnabled?() ?? false) },
+                    markFired: { self.selectHoldFired = true }
+                )
+            }
+        } else {
+            let wasDown = selectIsDown
+            let fired = selectHoldFired
+            selectIsDown = false
+            selectHoldFired = false
+            selectHoldTask?.cancel()
+            selectHoldTask = nil
+            // A tap on the button, never a select of whatever focus moved to
+            // mid-hold.
+            if wasDown && !fired && (selectHoldEnabled?() ?? false) { emit(.select, from: source) }
+        }
+    }
+
     // MARK: - State reset
 
     /// Clears every piece of transient held/repeat state. Called on
@@ -608,6 +676,10 @@ final class ControllerManager {
         menuHoldTask = nil
         backHoldTask?.cancel()
         backHoldTask = nil
+        selectHoldTask?.cancel()
+        selectHoldTask = nil
+        selectIsDown = false
+        selectHoldFired = false
         heldDirection = nil
         dpadLatch.reset()
         stickLatch.reset()
@@ -681,7 +753,7 @@ final class ControllerManager {
     /// Local (own-app-only, no Accessibility permission) keyDown monitor so
     /// the keyboard drives the exact same NavigationEvent stream as a pad.
     private func installKeyboardMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             // Local monitors run on the main thread; hop into the actor
             // without a send (NSEvent is not Sendable).
@@ -689,6 +761,12 @@ final class ControllerManager {
             MainActor.assumeIsolated {
                 if event.type == .flagsChanged {
                     self.handleFlagsChanged(event)   // observe only; never consume
+                } else if event.type == .keyUp {
+                    // Only Return's release matters: it ends a hold on a
+                    // hold-to-activate button. Observe only; never consume.
+                    if [36, 76].contains(event.keyCode), self.selectIsDown {
+                        self.selectButtonChanged(pressed: false, source: .keyboard)
+                    }
                 } else {
                     verdict = self.handleKeyDown(event)
                 }
@@ -778,6 +856,12 @@ final class ControllerManager {
             if case .move = navEvent {
                 emit(navEvent, from: .keyboard)
             }
+            return nil
+        }
+        // Return goes through A's path, so it can hold a hold-to-activate
+        // button (the keyUp above releases it).
+        if navEvent == .select {
+            selectButtonChanged(pressed: true, source: .keyboard)
             return nil
         }
         emit(navEvent, from: .keyboard)

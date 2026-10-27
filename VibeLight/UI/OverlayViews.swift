@@ -17,6 +17,10 @@ struct OverlayHost: View {
                 .background(.ultraThinMaterial)
                 .contentShape(Rectangle())
                 .onTapGesture { state.route(.back) }
+                // Back to Library from the still-running card lifts the scrim
+                // while the poster flies into its tile, so you see it land.
+                .opacity(scrimLifted ? 0 : 1)
+                .animation(.easeOut(duration: 0.3), value: scrimLifted)
 
             // The card absorbs its own taps so tapping inside never dismisses.
             card
@@ -25,12 +29,17 @@ struct OverlayHost: View {
         }
     }
 
+    private var scrimLifted: Bool {
+        if case .sessionEnded = overlay { return state.endedSession?.leaving == true }
+        return false
+    }
+
     @ViewBuilder private var card: some View {
         switch overlay {
             case .sessionHUD:
                 PosterLiftCard()
             case .sessionEnded(let app):
-                SessionEndedCard(app: app)
+                PosterRestCard(app: app)
             case .error(let message):
                 ErrorCard(message: message)
             case .cheatSheet:
@@ -151,7 +160,8 @@ private struct PosterLiftCard: View {
             .animation(.easeIn(duration: 0.4), value: streamingNow)
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(LiftGeometry.space)) }) { frame in
                 guard !landed, start == nil else { return }
-                liftOff(from: lift?.artFrames["app:\(state.appKey(app))"], to: frame)
+                // The pressed tile, or the still-running card's poster on Resume.
+                liftOff(from: lift?.artFrames[state.liftSourceID ?? "app:\(state.appKey(app))"], to: frame)
             }
     }
 
@@ -218,32 +228,187 @@ private struct PosterArt: View {
     }
 }
 
-// MARK: - Stream ended
+// MARK: - Still running (Poster Rest)
 
-private struct SessionEndedCard: View {
+/// The still-running card — "Poster Rest", the owner's pick of five (Fable
+/// design lead, Oct 2026): Poster Lift at rest. The curtain fades onto the
+/// game's poster, LIVE and green, with the choices beside it. Resume lifts
+/// this poster straight into Poster Lift (AppState.endedPosterID); Quit is
+/// held — A, Return or a press — filling the button while the badge reads
+/// CLOSING; Back to Library flies the poster home into its tile. If the PC
+/// closes the game meanwhile, it greys out: Play Again, no Quit.
+private struct PosterRestCard: View {
     @Environment(AppState.self) private var state
+    @Environment(\.liftGeometry) private var lift
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let app: StreamApp
 
-    var body: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 8) {
-                Text(app.name)
-                    .font(.system(size: 30, weight: .black, design: .rounded))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("is still running on the host")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-            }
+    @State private var settled = false
+    @State private var breathe = false
+    @State private var posterFrame: CGRect = .zero
+    /// The way home on Back to Library: onto the tile's art.
+    @State private var home: (offset: CGSize, scale: CGSize)?
+    @State private var faded = false
+    @State private var nudged = false
 
-            VStack(spacing: 12) {
-                OverlayButton(id: "ended:resume", title: "Resume Stream", symbol: "play.fill")
-                OverlayButton(id: "ended:quit", title: "Quit Stream Completely", symbol: "xmark.octagon.fill", destructive: true)
+    private var ended: AppState.EndedSession? { state.endedSession }
+    private var closed: Bool { ended?.closedOnHost == true }
+    private var leaving: Bool { ended?.leaving == true }
+    private var hostName: String { state.selectedHost?.name ?? "the PC" }
+    /// How far Quit has been held, 0…1.
+    private var hold: Double {
+        guard let p = state.controller.holdProgress, p.kind == .quitGameButton else { return 0 }
+        return p.fraction
+    }
+    /// The leave curtain (iPad) has lifted, so the arrival plays where it's seen.
+    private var curtainDown: Bool {
+        #if os(iOS)
+        return state.session.exitCurtain == 0
+        #else
+        return true
+        #endif
+    }
+
+    var body: some View {
+        HStack(spacing: 26) {
+            poster
+            column
+                .frame(width: 380, alignment: .leading)
+                .opacity(settled && !leaving ? 1 : 0)
+                .animation(leaving ? Animation.easeOut(duration: 0.2)
+                                   : Animation.easeOut(duration: 0.25).delay(0.45),
+                           value: settled && !leaving)
+        }
+        .onAppear {
+            if curtainDown { settle() }
+            if reduceMotion { breathe = true; return }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { breathe = true }
+        }
+        .onChange(of: curtainDown) { _, down in if down { settle() } }
+        .onChange(of: leaving) { _, now in if now { flyHome() } }
+        .onChange(of: state.endedQuitNudges) { _, _ in nudge() }
+    }
+
+    private var poster: some View {
+        PosterArt(app: app)
+            .frame(width: PosterLiftCard.size.width, height: PosterLiftCard.size.height)
+            // Holding Quit drains the colour; a game the PC closed is grey.
+            .saturation(closed ? 0 : 1 - 0.8 * hold)
+            .brightness(closed ? -0.15 : 0)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(closed ? Color.white.opacity(0.3) : .green, lineWidth: 4))
+            .overlay(alignment: .topLeading) {
+                LiveBadge(mode: closed ? .closed : hold > 0 ? .closing : .live).padding(14)
+            }
+            .background {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.green)
+                    .blur(radius: 36)
+                    .opacity(closed || leaving ? 0 : (breathe ? 0.55 : 0.2))
+            }
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(LiftGeometry.space)) }) { frame in
+                guard !leaving else { return }
+                posterFrame = frame
+                lift?.artFrames[AppState.endedPosterID] = frame   // Resume lifts from here
+            }
+            .scaleEffect(home?.scale ?? CGSize(width: 1, height: 1))
+            .offset(home?.offset ?? .zero)
+            .scaleEffect(settled || reduceMotion ? 1 : 0.96)
+            .opacity(faded ? 0 : 1)
+            .animation(.easeOut(duration: 0.3), value: closed)
+            .animation(.linear(duration: 0.05), value: hold)
+            .accessibilityHidden(true)
+    }
+
+    private var column: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(app.name)
+                .font(.system(size: 34, weight: .black, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+            if let reason = ended?.dropReason, !closed {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("The stream dropped")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.orange)
+                    Text(reason)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text(AppState.endedStatusLine(game: app.name, host: hostName, closed: closed,
+                                          played: ended?.played))
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 12) {
+                OverlayButton(id: "ended:resume", title: closed ? "Play Again" : "Resume Stream",
+                              symbol: "play.fill")
+                if !closed {
+                    OverlayButton(id: "ended:quit", title: "Quit Stream Completely",
+                                  symbol: "xmark.octagon.fill", destructive: true, holdEvent: .quitChord)
+                }
                 OverlayButton(id: "ended:home", title: "Back to Library", symbol: "square.grid.2x2")
             }
+            .padding(.top, 8)
+            if !closed { holdHint }
         }
-        .padding(52)
-        .frame(width: 480)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .animation(.easeOut(duration: 0.3), value: closed)
+    }
+
+    /// "Hold Ⓐ on Quit…" in the glyphs of the hand in use; a tap on Quit
+    /// (which does nothing by itself) makes it flash.
+    @ViewBuilder private var holdHint: some View {
+        let ink = nudged ? Theme.textPrimary : Theme.textSecondary
+        Group {
+            if HintBarView.touchPresentation(state) {
+                Text("Press and hold Quit to end the game on \(hostName)")
+            } else {
+                HStack(spacing: 6) {
+                    Text("Hold")
+                    GlyphBadge(glyph: InputGlyphs.glyph(for: .select, style: state.effectiveGlyphStyle))
+                    Text("on Quit to end the game on \(hostName)")
+                }
+            }
+        }
+        .font(.system(size: Theme.labelSize(12), weight: .semibold))
+        .foregroundStyle(ink)
+        .scaleEffect(nudged && !reduceMotion ? 1.06 : 1, anchor: .leading)
+        .animation(Theme.focusSpring, value: nudged)
+        .padding(.top, 4)
+    }
+
+    /// The arrival, as the curtain fades: the poster settles, the choices
+    /// follow (their delay is on the column).
+    private func settle() {
+        guard !settled else { return }
+        withAnimation(.easeOut(duration: 0.5)) { settled = true }
+    }
+
+    /// Back to Library: onto the tile's art on the focus spring. The card is
+    /// dismissed a beat later (AppState) and its fade cross-fades the poster
+    /// into the tile underneath. No tile to land on, or Reduce Motion: a fade.
+    private func flyHome() {
+        guard !reduceMotion, let tile = lift?.artFrames["app:\(state.appKey(app))"],
+              posterFrame.width > 0, posterFrame.height > 0 else {
+            withAnimation(.easeOut(duration: 0.25)) { faded = true }
+            return
+        }
+        withAnimation(Theme.focusSpring) {
+            home = (CGSize(width: tile.midX - posterFrame.midX, height: tile.midY - posterFrame.midY),
+                    CGSize(width: tile.width / posterFrame.width, height: tile.height / posterFrame.height))
+        }
+    }
+
+    private func nudge() {
+        nudged = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            nudged = false
+        }
     }
 }
 
@@ -374,10 +539,21 @@ struct OverlayButton: View {
     let title: String
     let symbol: String
     var destructive = false
+    /// Hold-to-activate: the button fires this event only when held (A,
+    /// Return, or a press), filling as it goes; a tap just selects it, which
+    /// its card answers with a nudge. The still-running card's Quit.
+    var holdEvent: NavigationEvent? = nil
 
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
+    @State private var pressing = false
     private var isFocused: Bool { state.focus.focusedItemID == id }
+    /// How far this button has been held, 0…1.
+    private var holdFraction: Double {
+        guard holdEvent != nil, isFocused,
+              let p = state.controller.holdProgress, p.kind == .quitGameButton else { return 0 }
+        return p.fraction
+    }
     /// Hover feedback only reads while the mouse is the active device, so a
     /// cursor parked over a button can't glow while you navigate by controller.
     private var hoverActive: Bool { hovering && state.inputMode == .pointer }
@@ -396,11 +572,20 @@ struct OverlayButton: View {
         .padding(.vertical, 15)
         .frame(width: 360)
         .contentShape(Rectangle())   // whole button (incl. padding) is clickable
-        .background(
-            isFocused ? (destructive ? Color.red.opacity(0.85) : Theme.accent)
-                      : (hoverActive ? Color.white.opacity(0.12) : Theme.surface),
-            in: RoundedRectangle(cornerRadius: 13)
-        )
+        .background {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 13)
+                    .fill(isFocused ? (destructive ? Color.red.opacity(0.85) : Theme.accent)
+                                    : (hoverActive ? Color.white.opacity(0.12) : Theme.surface))
+                // The hold, filling from the leading edge.
+                if holdEvent != nil {
+                    RoundedRectangle(cornerRadius: 13)
+                        .fill(.white.opacity(0.3))
+                        .scaleEffect(x: holdFraction, anchor: .leading)
+                        .animation(.linear(duration: 0.05), value: holdFraction)
+                }
+            }
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 13)
                 .strokeBorder(Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast),
@@ -413,14 +598,47 @@ struct OverlayButton: View {
         .onHover { hovering = $0
             if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) }
         }
-        // Click activates THIS button (focus it first), not whatever the
-        // controller last focused.
-        .onTapGesture { state.pointerSelect(id) }
+        .modifier(Activation(id: id, holdEvent: holdEvent, pressing: $pressing))
         // A tap-gesture stack, not a Button: tell VoiceOver what it is and
-        // what activating it does.
+        // what activating it does. VoiceOver's activation is deliberate, so a
+        // hold button fires outright there.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isFocused ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { state.pointerSelect(id) }
+        .accessibilityAction {
+            if let holdEvent { state.route(holdEvent) } else { state.pointerSelect(id) }
+        }
+    }
+
+    /// Click/tap activates THIS button (focus it first), not whatever the
+    /// controller last focused. A hold button instead holds while pressed;
+    /// letting go early counts as a tap.
+    private struct Activation: ViewModifier {
+        @Environment(AppState.self) private var state
+        let id: String
+        let holdEvent: NavigationEvent?
+        @Binding var pressing: Bool
+
+        @ViewBuilder func body(content: Content) -> some View {
+            if let holdEvent {
+                content.gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            guard !pressing else { return }
+                            pressing = true
+                            state.pressHoldButton(id, event: holdEvent)
+                        }
+                        .onEnded { _ in
+                            pressing = false
+                            state.releaseHoldButton(id)
+                        }
+                )
+                .onDisappear {
+                    if pressing { pressing = false; state.controller.cancelPointerHold() }
+                }
+            } else {
+                content.onTapGesture { state.pointerSelect(id) }
+            }
+        }
     }
 }
 

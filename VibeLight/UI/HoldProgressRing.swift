@@ -46,7 +46,7 @@ struct HoldProgressRing: View {
             return "xmark.circle"
         case .quitApp:
             return InputGlyphs.glyph(for: .quitApp, style: state.effectiveGlyphStyle).symbolName
-        case .quitGame:
+        case .quitGame, .quitGameButton:
             return InputGlyphs.glyph(for: .quitChord, style: state.effectiveGlyphStyle).symbolName
         }
     }
@@ -54,7 +54,7 @@ struct HoldProgressRing: View {
     private var label: String {
         switch progress.kind {
         case .quitApp: "Keep holding to quit VibeLight"
-        case .quitGame: "Keep holding to quit the game"
+        case .quitGame, .quitGameButton: "Keep holding to quit the game"
         case .disconnectStream: "Keep holding to leave the stream"
         }
     }
@@ -62,7 +62,7 @@ struct HoldProgressRing: View {
     private var tint: Color {
         switch progress.kind {
         case .quitApp: Theme.accent
-        case .quitGame: Color.red.opacity(0.9)   // destructive: kills the remote game
+        case .quitGame, .quitGameButton: Color.red.opacity(0.9)   // destructive: kills the remote game
         case .disconnectStream: Theme.accent     // game keeps running on the PC
         }
     }
