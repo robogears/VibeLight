@@ -169,21 +169,24 @@ struct HintBarView: View {
     private var hints: [(String, NavigationEvent, String?)] {
         switch state.screen {
         case .home:
-            // On a preset slot in the row under the shelf. A filled slot can be
-            // used/managed; an empty one can only be filled from Settings, so
-            // say THAT instead of dangling a "Use Preset" that does nothing.
-            if let i = state.presetSlotIndex(state.focus.focusedItemID) {
-                if state.presets[i] != nil {
-                    return [
-                        ("use", .select, "Use Preset"),
-                        ("opts", .contextMenu, "Rename / Clear"),
-                        ("games", .move(.up), "Back to Games"),
-                    ]
-                }
-                return [
-                    ("fill", .settings, "Save One in Settings"),
+            // On the preset row under the shelf: what A, X and Y do to THIS
+            // chip, named. A on the loaded preset after a change keeps it.
+            if state.focus.focusedItemID == "preset:add" {
+                return Self.withUndo(state, [
+                    ("save", .select, "Save as Preset"),
                     ("games", .move(.up), "Back to Games"),
+                ])
+            }
+            if let id = state.presetID(fromFocusID: state.focus.focusedItemID),
+               let preset = state.presets.first(where: { $0.id == id }) {
+                let edited = id == state.activePresetID && state.isActivePresetEdited
+                var row: [(String, NavigationEvent, String?)] = [
+                    ("use", .select, edited ? "Update \(preset.name)" : "Use \(preset.name)"),
+                    ("opts", .contextMenu, edited ? "Options · Revert" : "Options"),
                 ]
+                if state.presetRowOffersSaveAsNew { row.append(("saveas", .detail, "Save as New")) }
+                row.append(("games", .move(.up), "Back to Games"))
+                return Self.withUndo(state, row)
             }
             // No "Presets" hint: the row is one nudge down and discoverable.
             // No quit-app hint on iOS: apps don't self-quit there (HIG), and
@@ -199,22 +202,27 @@ struct HintBarView: View {
             #if os(macOS)
             home.append(("quitapp", .quitApp, "Quit VibeLight"))
             #endif
-            return home
+            return Self.withUndo(state, home)
         case .settings:
-            // On a preset slot: save into it / manage it. On a row the value
-            // arrows are directly tappable and tabs are tappable up top, so no
-            // "Adjust"/"Switch Tab" chips — they only restated the obvious.
-            if let i = state.presetSlotIndex(state.focus.focusedItemID) {
-                var slot: [(String, NavigationEvent, String?)] = [
-                    ("save", .select, "Save to Preset"),
-                ]
-                if state.presets[i] != nil { slot.append(("opts", .contextMenu, "Rename / Clear")) }
-                slot.append(("back", .back, "Done"))
-                return slot
+            // The value arrows are directly tappable and tabs are tappable up
+            // top, so no "Adjust"/"Switch Tab" chips. What's offered is the
+            // loaded preset: keep or drop a change, or save these as one.
+            var rows: [(String, NavigationEvent, String?)] = []
+            if let preset = state.activePreset, state.isActivePresetEdited {
+                rows.append(("update", .detail, "Update \(preset.name)"))
+                rows.append(("revert", .contextMenu, "Revert"))
+            } else if state.activePresetID == nil, state.canSaveNewPreset {
+                rows.append(("savepreset", .detail, "Save as Preset"))
             }
-            return [
-                ("back", .back, "Done"),
-            ]
+            rows.append(("back", .back, "Done"))
+            return Self.withUndo(state, rows)
         }
+    }
+
+    /// While a toast offers Undo, Y is Undo — say so in Y's place.
+    private static func withUndo(_ state: AppState,
+                                 _ hints: [(String, NavigationEvent, String?)]) -> [(String, NavigationEvent, String?)] {
+        guard state.canUndoPresetChange else { return hints }
+        return [("undo", .detail, "Undo")] + hints.filter { $0.1 != .detail }
     }
 }

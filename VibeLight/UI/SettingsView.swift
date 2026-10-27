@@ -70,7 +70,7 @@ private struct SettingsTabBar: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        // Horizontal scroll so the tabs + preset slots never compress on a
+        // Horizontal scroll so the tabs + preset pill never compress on a
         // narrow window (on a wide Mac it all fits with no scrolling).
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
@@ -80,19 +80,11 @@ private struct SettingsTabBar: View {
                 }
                 bumper(.nextSection)
 
-                // Divider, then the six preset slots. Clicking a slot saves the
-                // current settings into it (override-confirm if taken).
+                // Divider, then which preset these settings belong to.
                 Rectangle().fill(.white.opacity(0.12))
                     .frame(width: 1, height: 26)
                     .padding(.horizontal, 6)
-                Text("PRESETS")
-                    .font(.system(size: Theme.labelSize(10), weight: .heavy, design: .rounded))
-                    .tracking(1.5)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize()
-                ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
-                    SettingsPresetSlot(slot: slot)
-                }
+                PresetStatusPill()
             }
         }
         .animation(Theme.focusSpring, value: state.settingsTab)
@@ -140,70 +132,58 @@ private struct TabChip: View {
     }
 }
 
-/// One of the six preset slots in the settings header. Number always shown; a
-/// filled slot gets a solid look + dot, empty is a dashed ghost. Click = save
-/// current settings here (override-confirm if taken); right-click = rename/clear.
-private struct SettingsPresetSlot: View {
+/// Which preset these settings are (Live Loadout): its name with a check;
+/// "edited" in orange once a row has changed it (Y updates it, X reverts);
+/// "Not saved as a preset" when nothing is loaded (Y saves). Click or
+/// right-click for the same actions.
+private struct PresetStatusPill: View {
     @Environment(AppState.self) private var state
-    let slot: Int
-    @State private var hovering = false
 
-    private var preset: StreamPreset? { state.presets[slot] }
-    private var isFilled: Bool { preset != nil }
-    private var isActive: Bool { state.activePresetSlot == slot }
-    private var focusID: String { "presetslot:\(slot)" }
-    private var isFocused: Bool { state.focus.focusedItemID == focusID }
-    private var lit: Bool { isActive || isFocused }
-    /// Only the ACTIVE slot is filled with the full-strength accent; a merely
-    /// focused one is a 0.4 tint and keeps white (UX-white-on-accent-contrast).
-    private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }
+    private var edited: Bool { state.isActivePresetEdited }
 
     var body: some View {
-        VStack(spacing: 3) {
-            Text("\(slot + 1)")
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .foregroundStyle(lit || isFilled ? ink : Theme.textSecondary)
-            Circle()
-                .fill(isFilled ? (lit ? ink : Theme.accent) : .clear)
-                .frame(width: 5, height: 5)
-        }
-        .frame(width: 44, height: 44)
-        .background(fill, in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(border, style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1,
-                                                         dash: isFilled ? [] : [4, 3]))
-        }
-        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 10, y: 2)
-        .scaleEffect(isFocused ? 1.07 : 1.0)
-        .help(preset?.name ?? "Empty — click to save the current settings here")
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onHover {
-            hovering = $0
-            if $0 && state.inputMode == .pointer { state.focus.focus(itemID: focusID) }
-        }
-        .onTapGesture { state.requestSaveToSlot(slot) }
-        .contextMenu {
-            if isFilled {
-                Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
-                Button(role: .destructive) { state.requestClearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+        HStack(spacing: 8) {
+            if let preset = state.activePreset {
+                Text(preset.name)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if edited {
+                    Circle().fill(Color.orange).frame(width: 7, height: 7)
+                    Text("edited")
+                        .font(.system(size: Theme.labelSize(12), weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.orange)
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.accent)
+                }
+            } else {
+                Text("Not saved as a preset")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
             }
         }
-        .animation(Theme.focusSpring, value: isActive)
-        .animation(Theme.focusSpring, value: isFocused)
-        .animation(Theme.focusSpring, value: isFilled)
-    }
-
-    private var fill: AnyShapeStyle {
-        if isActive { return AnyShapeStyle(Theme.accent) }
-        if isFocused { return AnyShapeStyle(Theme.accent.opacity(0.4)) }
-        if isFilled { return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.16 : 0.1)) }
-        return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.08 : 0.035))
-    }
-    private var border: Color {
-        if isFocused { return .white.opacity(0.8) }
-        if isActive { return .white.opacity(0.3) }
-        return .white.opacity(isFilled ? 0.15 : 0.2)
+        .fixedSize()
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(edited ? Color.orange.opacity(0.12) : Theme.accent.opacity(state.activePreset == nil ? 0.06 : 0.16),
+                    in: Capsule())
+        .overlay(Capsule().strokeBorder(edited ? Color.orange.opacity(0.5) : .white.opacity(0.1), lineWidth: 1))
+        .animation(Theme.focusSpring, value: edited)
+        .contentShape(Capsule())
+        .onTapGesture { state.route(.detail) }
+        .contextMenu {
+            if let preset = state.activePreset, edited {
+                Button { state.updateActivePreset() } label: { Label("Update \(preset.name)", systemImage: "square.and.arrow.down") }
+                Button { state.revertActivePreset() } label: { Label("Revert Changes", systemImage: "arrow.uturn.backward") }
+            }
+            if state.canSaveNewPreset {
+                Button { state.openPresetNameCard(.new) } label: { Label("Save as New Preset", systemImage: "plus.square.on.square") }
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

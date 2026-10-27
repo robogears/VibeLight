@@ -52,16 +52,12 @@ struct OverlayHost: View {
                 RelocateCard()
             case .customResolution:
                 CustomResolutionCard()
-            case .confirmOverridePreset(let slot):
-                ConfirmOverridePresetCard(slot: slot)
-            case .confirmClearPreset(let slot):
-                ConfirmClearPresetCard(slot: slot)
             case .confirmRemoveHost(let hostID):
                 ConfirmRemoveHostCard(hostID: hostID)
-            case .presetSlotMenu(let slot):
-                PresetSlotMenuCard(slot: slot)
-            case .renamePreset(let slot):
-                RenamePresetCard(slot: slot)
+            case .presetMenu(let id):
+                PresetMenuCard(id: id)
+            case .namePreset(let target):
+                NamePresetCard(target: target)
             case .moonDeckSetup(let hostID):
                 MoonDeckSetupCard(hostID: hostID)
             case .confirmRestartPC(let hostID):
@@ -127,6 +123,10 @@ private struct PosterLiftCard: View {
                         Badge(text: state.value(for: .resolution))
                         Badge(text: "\(state.settings.fps) FPS")
                         Badge(text: "\(state.settings.bitrateKbps / 1000) MBPS")
+                        if let preset = state.activePreset {
+                            Badge(text: preset.name.uppercased(),
+                                  tint: state.isActivePresetEdited ? .orange : .white)
+                        }
                     }
                 }
                 .opacity(landed && !streamingNow ? 1 : 0)
@@ -642,68 +642,6 @@ struct OverlayButton: View {
     }
 }
 
-// MARK: - Presets
-
-/// "Slot N is taken — replace it with the current settings?"
-private struct ConfirmOverridePresetCard: View {
-    @Environment(AppState.self) private var state
-    let slot: Int
-
-    var body: some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 6) {
-                Image(systemName: "square.stack.3d.up.fill")
-                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
-                Text("Override Preset \(slot + 1)?")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("\u{201C}\(state.presets[slot]?.name ?? "Preset \(slot + 1)")\u{201D} will be replaced with the current settings.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-            }
-            VStack(spacing: 12) {
-                OverlayButton(id: "override:yes", title: "Override", symbol: "square.and.arrow.down.fill")
-                OverlayButton(id: "override:cancel", title: "Cancel", symbol: "xmark")
-            }
-        }
-        .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
-    }
-}
-
-/// Clearing a preset destroys it outright and persists immediately — strictly
-/// more loss than overriding one, which already confirmed. Cancel is focused
-/// first so the destructive action is never the default.
-private struct ConfirmClearPresetCard: View {
-    @Environment(AppState.self) private var state
-    let slot: Int
-
-    var body: some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 6) {
-                Image(systemName: "trash.fill")
-                    .font(.system(size: 34)).foregroundStyle(.orange)
-                Text("Clear Preset \(slot + 1)?")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("\u{201C}\(state.presets[slot]?.name ?? "Preset \(slot + 1)")\u{201D} will be emptied. This can't be undone.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-            }
-            VStack(spacing: 12) {
-                OverlayButton(id: "clearpreset:cancel", title: "Keep It", symbol: "xmark")
-                OverlayButton(id: "clearpreset:yes", title: "Clear Preset", symbol: "trash.fill", destructive: true)
-            }
-        }
-        .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
-    }
-}
-
 /// Removing a computer erases its pairing certificate and box art. That is one
 /// PIN re-entry away from unrecoverable, and the trash glyph sits inside a row
 /// that is itself a tap target — so it gets a confirm, with Cancel focused.
@@ -740,75 +678,174 @@ private struct ConfirmRemoveHostCard: View {
     }
 }
 
-/// Rename / clear a filled slot (the controller path; the mouse gets a native
-/// right-click menu on the chip).
-private struct PresetSlotMenuCard: View {
+// MARK: - Presets (Live Loadout)
+
+/// One preset's options (X on its chip): no slot numbers, one card. Revert
+/// leads when the loaded preset has changed; Delete is immediate (the toast
+/// holds Undo), so there's no confirm card behind it.
+private struct PresetMenuCard: View {
     @Environment(AppState.self) private var state
-    let slot: Int
+    let id: String
+
+    private var preset: StreamPreset? { state.presets.first { $0.id == id } }
 
     var body: some View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
-                Text("Preset \(slot + 1)")
+                Text(preset?.name ?? "Preset")
                     .font(.system(size: 26, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
-                Text(state.presets[slot]?.name ?? "")
+                    .lineLimit(1)
+                Text(preset?.summary ?? "")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
             }
             VStack(spacing: 12) {
-                OverlayButton(id: "slotmenu:rename", title: "Rename", symbol: "pencil")
-                OverlayButton(id: "slotmenu:clear", title: "Clear", symbol: "trash", destructive: true)
-                OverlayButton(id: "slotmenu:cancel", title: "Cancel", symbol: "xmark")
+                ForEach(state.presetMenuItems(for: id), id: \.self) { item in
+                    switch item {
+                    case "presetmenu:revert":
+                        OverlayButton(id: item, title: "Revert Changes", symbol: "arrow.uturn.backward")
+                    case "presetmenu:edit":
+                        OverlayButton(id: item, title: "Edit in Settings", symbol: "slider.horizontal.3")
+                    case "presetmenu:rename":
+                        OverlayButton(id: item, title: "Rename", symbol: "pencil")
+                    case "presetmenu:saveas":
+                        OverlayButton(id: item, title: "Save Current as New", symbol: "plus.square.on.square")
+                    default:
+                        OverlayButton(id: item, title: "Delete", symbol: "trash.fill", destructive: true)
+                    }
+                }
             }
         }
-        .padding(48).frame(width: 420)
+        .padding(48).frame(width: 460)
         .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
     }
 }
 
-/// Type a new name for a preset slot.
-private struct RenamePresetCard: View {
+/// Name a new preset, or rename one: suggestions taken from the settings
+/// first ("4K · 120", "Smooth", the computer's name) — ◀ ▶ picks, A saves —
+/// and a field for typing your own. The field never opens by itself, so the
+/// iPad's keyboard only appears when you tap it.
+private struct NamePresetCard: View {
     @Environment(AppState.self) private var state
-    let slot: Int
+    let target: PresetNameTarget
     @FocusState private var fieldFocused: Bool
 
+    private var title: String {
+        if case .rename = target { return "Rename Preset" }
+        return "Name This Preset"
+    }
+
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: 20) {
             VStack(spacing: 6) {
-                Image(systemName: "pencil")
-                    .font(.system(size: 34)).foregroundStyle(Theme.accent)
-                Text("Rename Preset \(slot + 1)")
+                Text(title)
                     .font(.system(size: 26, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
+                if case .new = target {
+                    Text("Saved from your current settings · \(StreamPreset.summary(of: state.settings))")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                }
             }
-            let text = Binding(get: { state.renameText }, set: { state.renameText = $0 })
-            TextField("Preset \(slot + 1)", text: text)
+            HStack(spacing: 8) {
+                ForEach(Array(state.presetNameSuggestions.enumerated()), id: \.offset) { i, name in
+                    SuggestionPill(id: "namesugg:\(i)", name: name)
+                }
+            }
+            let draft = Binding(get: { state.presetNameDraft }, set: { state.presetNameDraft = $0 })
+            TextField("Name", text: draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .focused($fieldFocused)
-                .onSubmit { state.applyRename(slot) }
-                .padding(.horizontal, 18).padding(.vertical, 14).frame(width: 300)
+                .onSubmit { state.commitPresetName(target) }
+                .padding(.horizontal, 18).padding(.vertical, 12).frame(width: 320)
                 .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
                 .overlay {
                     RoundedRectangle(cornerRadius: 13)
                         .strokeBorder(.white.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
                 }
                 .onTapGesture { fieldFocused = true }
+            Text("◀ ▶ pick a name · or tap to type your own")
+                .font(.system(size: Theme.labelSize(12), weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
             VStack(spacing: 12) {
-                OverlayButton(id: "rename:set", title: "Save Name", symbol: "checkmark")
-                OverlayButton(id: "rename:cancel", title: "Cancel", symbol: "xmark")
+                OverlayButton(id: "name:save", title: target == .new ? "Save Preset" : "Save Name",
+                              symbol: "checkmark")
+                OverlayButton(id: "name:cancel", title: "Cancel", symbol: "xmark")
             }
         }
-        .padding(48).frame(width: 460)
+        .padding(44).frame(width: 480)
         .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
         .onChange(of: fieldFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }
-        .onAppear { fieldFocused = true }
         .onDisappear { state.controller.keyboardCaptureEnabled = true }
+    }
+}
+
+/// One suggested name: a capsule in the focus row; picking it fills the field.
+private struct SuggestionPill: View {
+    @Environment(AppState.self) private var state
+    let id: String
+    let name: String
+
+    private var isFocused: Bool { state.focus.focusedItemID == id }
+
+    var body: some View {
+        Text(name)
+            .font(.system(size: 15, weight: .bold, design: .rounded))
+            .foregroundStyle(isFocused ? Theme.onAccent : Theme.textPrimary.opacity(0.85))
+            .lineLimit(1)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(isFocused ? Theme.accent : Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(isFocused ? 0.4 : 0.1), lineWidth: 1))
+            .scaleEffect(isFocused ? 1.05 : 1)
+            .animation(Theme.focusSpring, value: isFocused)
+            .contentShape(Capsule())
+            .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) } }
+            .onTapGesture { state.pointerSelect(id) }
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The preset confirmation under the header: "Using Tailscale · 1080p · 60
+/// fps · 20 Mbps", or "Deleted Handheld · Undo" (Y, or tap it).
+struct PresetToastView: View {
+    @Environment(AppState.self) private var state
+    let toast: AppState.PresetToast
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(toast.verb).foregroundStyle(Theme.textSecondary)
+            Text(toast.name).foregroundStyle(Theme.accent).fontWeight(.heavy)
+            if let detail = toast.detail {
+                Text("· \(detail)").foregroundStyle(Theme.textSecondary)
+            }
+            if toast.canUndo {
+                HStack(spacing: 6) {
+                    if !HintBarView.touchPresentation(state) {
+                        GlyphBadge(glyph: InputGlyphs.glyph(for: .detail, style: state.effectiveGlyphStyle))
+                    }
+                    Text("Undo").fontWeight(.heavy).foregroundStyle(Theme.textPrimary)
+                }
+                .padding(.leading, 6)
+            }
+        }
+        .font(.system(size: 15, weight: .semibold, design: .rounded))
+        .lineLimit(1)
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .background(Theme.surface.opacity(0.95), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+        .contentShape(Capsule())
+        .onTapGesture { if toast.canUndo { state.undoPresetChange() } }
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Undo") { state.undoPresetChange() }
     }
 }
 

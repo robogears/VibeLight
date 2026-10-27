@@ -80,24 +80,21 @@ final class ThemeContrastTests: XCTestCase {
         XCTAssertTrue(body.contains("Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast)"))
     }
 
-    /// Only the ACTIVE preset chip is a solid fill; a merely focused chip is a
-    /// 0.35 tint, so its ink must key off `isActive`, never `lit`.
+    /// Only the loaded, unchanged preset chip is a solid fill; a merely
+    /// focused (or edited) chip is a tint, so its ink must key off `solid`.
     func testPresetChipInkKeysOffTheSolidFill() throws {
-        let body = try source(of: "private struct PresetSlotChip: View {", in: "VibeLight/UI/HomeView.swift")
-        XCTAssertTrue(body.contains("private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }"))
+        let body = try source(of: "private struct PresetChip: View {", in: "VibeLight/UI/HomeView.swift")
+        XCTAssertTrue(body.contains("private var ink: Color { Theme.labelInk(onSolidAccent: solid) }"))
         XCTAssertFalse(body.contains("lit ? .white"))
-        XCTAssertTrue(body.contains("return Theme.hairline(isFilled ? 0.08 : 0.14, contrast)"))
+        XCTAssertTrue(body.contains("return Theme.hairline(0.08, contrast)"))
     }
 
-    /// The Settings ▸ Presets slot follows the same rule: the active slot is the
-    /// solid accent (navy number and dot), a focused one is a 0.4 tint (white).
-    func testSettingsPresetSlotInkKeysOffTheSolidFill() throws {
-        let body = try source(of: "private struct SettingsPresetSlot: View {", in: "VibeLight/UI/SettingsView.swift")
-        XCTAssertTrue(body.contains("private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }"))
-        XCTAssertTrue(body.contains(".foregroundStyle(lit || isFilled ? ink : Theme.textSecondary)"))
-        XCTAssertTrue(body.contains(".fill(isFilled ? (lit ? ink : Theme.accent) : .clear)"))
-        XCTAssertFalse(body.contains("lit || isFilled ? .white"))
-        XCTAssertFalse(body.contains("lit ? Color.white"))
+    /// The Settings pill is never a solid accent fill (a tint, or orange when
+    /// edited), so white text on it is fine.
+    func testSettingsPresetPillIsATint() throws {
+        let body = try source(of: "private struct PresetStatusPill: View {", in: "VibeLight/UI/SettingsView.swift")
+        XCTAssertTrue(body.contains("Theme.accent.opacity(state.activePreset == nil ? 0.06 : 0.16)"))
+        XCTAssertFalse(body.contains(".background(Theme.accent,"))
     }
 
     /// Every other full-strength accent fill carries navy ink.
@@ -120,11 +117,11 @@ final class ThemeContrastTests: XCTestCase {
     // MARK: - The last destructive button is always red (UX-destructive-styling-inconsistent)
 
     /// The buttons that actually delete turn red when focused, like Restart PC
-    /// and the preset menu's "Clear" that leads to them.
+    /// and a preset's Delete.
     func testFinalDestructiveButtonsAreMarkedDestructive() throws {
-        let clear = try source(of: "private struct ConfirmClearPresetCard: View {",
-                               in: "VibeLight/UI/OverlayViews.swift")
-        XCTAssertTrue(clear.contains("OverlayButton(id: \"clearpreset:yes\", title: \"Clear Preset\", symbol: \"trash.fill\", destructive: true)"))
+        let delete = try source(of: "private struct PresetMenuCard: View {",
+                                in: "VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(delete.contains("OverlayButton(id: item, title: \"Delete\", symbol: \"trash.fill\", destructive: true)"))
         let forget = try source(of: "private struct ConfirmRemoveHostCard: View {",
                                 in: "VibeLight/UI/OverlayViews.swift")
         XCTAssertTrue(forget.contains("OverlayButton(id: \"removehost:yes\", title: \"Forget Computer\", symbol: \"trash.fill\",\n"

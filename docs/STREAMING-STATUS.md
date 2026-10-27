@@ -150,7 +150,7 @@ previously; no frame-rate cap or automatic quality reduction was introduced.
 ### Presets remain authoritative on the TV (27 October 2026)
 
 Owner report: "It seems to be ignoring presets and just jumping to tv resolution
-and fps". `AppState.applySlot` loaded the preset correctly, but the iOS engine
+and fps". `AppState.applySlot` (now `applyPreset`) loaded the preset correctly, but the iOS engine
 then replaced its width/height with TV pixels before calling the host. That
 override is removed. `settingsForStream` preserves all preset values except the
 existing unsupported-HDR flag; both the host request and native connection use

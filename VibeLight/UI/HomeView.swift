@@ -40,6 +40,12 @@ struct HomeView: View {
                         Badge(text: state.value(for: .resolution))
                         Badge(text: "\(state.settings.fps) FPS")
                         Badge(text: "\(state.settings.bitrateKbps / 1000) MBPS")
+                        // Which preset those numbers are; orange once changed.
+                        if let preset = state.activePreset {
+                            Badge(text: state.isActivePresetEdited ? "\(preset.name.uppercased()) · EDITED"
+                                                                   : preset.name.uppercased(),
+                                  tint: state.isActivePresetEdited ? .orange : .white)
+                        }
                         if let info = state.serverInfo, info.runningAppID == app.id {
                             Badge(text: "RUNNING", tint: .green)
                         }
@@ -528,9 +534,9 @@ private struct EmptyShelfPanel: View {
     }
 }
 
-/// The preset row under the games shelf: pick which saved settings preset a
-/// launch uses. One d-pad DOWN from the shelf (a real focus-engine section,
-/// unlike the old right-edge rail's bolt-on focus), or click/tap a chip.
+/// The preset row under the games shelf — "Live Loadout" (owner's pick, Oct
+/// 2026). One chip per saved preset, "+" last when the live settings aren't
+/// saved anywhere. One d-pad DOWN from the shelf, or click/tap a chip.
 private struct PresetRow: View {
     @Environment(AppState.self) private var state
 
@@ -541,63 +547,77 @@ private struct PresetRow: View {
                 .tracking(2)
                 .foregroundStyle(Theme.textSecondary)
             HStack(spacing: 10) {
-                ForEach(0..<AppState.presetSlotCount, id: \.self) { slot in
-                    PresetSlotChip(slot: slot)
-                        // Equal flexible widths: six chips share the row and cap
-                        // at the old rail's 252pt (room for the full
-                        // "1440p · 120 fps · 100 Mbps" summary at 11 or 13 pt);
-                        // on narrow screens they compress together instead of
-                        // wrapping, and the summary shortens to fit.
+                ForEach(state.presets) { preset in
+                    PresetChip(preset: preset)
+                        // Equal flexible widths that cap at 252 pt (room for the
+                        // full "1440p · 120 fps · 100 Mbps" summary); on narrow
+                        // screens they compress together and the summary
+                        // shortens to fit.
                         .frame(maxWidth: 252)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+                if state.offersSaveCurrentPreset {
+                    SavePresetChip()
+                        .frame(maxWidth: 252)
+                        .transition(.opacity)
                 }
             }
+            .animation(Theme.focusSpring, value: state.presetRowFocusIDs)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// One of the six fixed slots. Empty slots show a dashed, ghosted "Empty N";
-/// filled slots show the name + summary. Active slot glows with a checkmark;
-/// focused slot gets the white ring. Tap a filled slot to apply it; right-click
-/// a filled slot to rename or clear it.
-private struct PresetSlotChip: View {
+/// One saved preset. Loaded = solid accent + check + glow. Loaded but changed
+/// since = "edited": an accent ring, an orange dot, and the change itself in
+/// place of the summary ("Edited · 80 → 60 Mbps") — A keeps it, Options ▸
+/// Revert drops it. Focus is the white ring. Tap = A; right-click / long-press
+/// = rename, revert, delete.
+private struct PresetChip: View {
     @Environment(AppState.self) private var state
-    let slot: Int
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let preset: StreamPreset
     @State private var hovering = false
 
-    private var focusID: String { "presetslot:\(slot)" }
-    private var preset: StreamPreset? { state.presets[slot] }
-    private var isFilled: Bool { preset != nil }
-    private var isActive: Bool { state.activePresetSlot == slot }
+    private var focusID: String { "preset:\(preset.id)" }
+    private var isLoaded: Bool { state.activePresetID == preset.id }
+    private var edited: Bool { isLoaded && state.isActivePresetEdited }
+    /// Only the loaded, unchanged preset is a solid accent fill.
+    private var solid: Bool { isLoaded && !edited }
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
-    private var lit: Bool { isActive || isFocused }
-    /// Only the ACTIVE chip sits on the full-strength accent; a merely focused
+    /// Only the solid chip sits on the full-strength accent; a merely focused
     /// one is a 0.35 tint over the dark backdrop and keeps white ink.
-    private var ink: Color { Theme.labelInk(onSolidAccent: isActive) }
+    private var ink: Color { Theme.labelInk(onSolidAccent: solid) }
 
     private func summaryLine(_ text: String) -> some View {
         Text(text)
             .font(.system(size: Theme.labelSize(11), weight: .medium))
-            .foregroundStyle(lit ? ink.opacity(0.85) : Theme.textSecondary)
+            .foregroundStyle(solid || isFocused ? ink.opacity(0.85) : Theme.textSecondary)
             .lineLimit(1)
+    }
+
+    /// "Edited · 80 → 60 Mbps", "+1" when more than one thing changed.
+    private var changeLine: String {
+        let changes = state.activePresetChanges
+        guard let first = changes.first else { return "Edited" }
+        return changes.count > 1 ? "Edited · \(first) +\(changes.count - 1)" : "Edited · \(first)"
     }
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("\(slot + 1)")
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
-                .foregroundStyle(lit ? ink : (isFilled ? Theme.accent : Theme.textSecondary))
-                .frame(width: 22, height: 22)
-                .background(Color.white.opacity(lit ? 0.22 : (isFilled ? 0.1 : 0.05)), in: Circle())
-
             VStack(alignment: .leading, spacing: 2) {
-                Text(preset?.name ?? "Empty")
+                Text(preset.name)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(isFilled ? (lit ? ink : Theme.textPrimary)
-                                     : Theme.textSecondary.opacity(0.7))
+                    .foregroundStyle(solid || isFocused ? ink : Theme.textPrimary)
                     .lineLimit(1)
-                if let preset {
+                if edited {
+                    Text(changeLine)
+                        .font(.system(size: Theme.labelSize(11), weight: .bold))
+                        .foregroundStyle(Color.orange)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                } else {
                     // The first form that fits, so a narrow chip shows
                     // "1080p · 144 fps" instead of "1080p · 144 fps · 8…".
                     ViewThatFits(in: .horizontal) {
@@ -605,22 +625,16 @@ private struct PresetSlotChip: View {
                         summaryLine(preset.shortSummary)
                         summaryLine(preset.resolutionLabel)
                     }
-                } else {
-                    // Invisible second line: keeps EMPTY chips the exact height
-                    // of filled ones. Chips now sit side by side, where a
-                    // filled chip's summary line otherwise makes it ~7pt taller
-                    // and the row's edges visibly wobble (fine in the old
-                    // vertical rail, where heights never shared an edge).
-                    Text(" ")
-                        .font(.system(size: Theme.labelSize(11), weight: .medium))
-                        .hidden()
                 }
             }
             Spacer(minLength: 4)
-            if isActive {
+            if solid {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.onAccent)
+            } else if edited {
+                Circle().fill(Color.orange).frame(width: 8, height: 8)
+                    .shadow(color: .orange.opacity(0.8), radius: 4)
             }
         }
         .padding(.horizontal, 14)
@@ -630,16 +644,14 @@ private struct PresetSlotChip: View {
         .background(fill, in: RoundedRectangle(cornerRadius: 13))
         .overlay {
             RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(border, style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1,
-                                                         dash: isFilled ? [] : [4, 3]))
+                .strokeBorder(border, lineWidth: isFocused ? 2.5 : 1)
         }
-        .shadow(color: isActive ? Theme.accentGlow : .clear, radius: 12, y: 3)
-        .scaleEffect(isFocused ? 1.03 : 1.0)
-        // Increase Contrast: an empty slot isn't conveyed by faintness alone.
-        .opacity(isFilled || isFocused || contrast == .increased ? 1 : 0.6)
-        .animation(Theme.focusSpring, value: isActive)
+        .shadow(color: solid ? Theme.accentGlow : .clear, radius: 12, y: 3)
+        .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+        .animation(Theme.focusSpring, value: solid)
+        .animation(Theme.focusSpring, value: edited)
         .animation(Theme.focusSpring, value: isFocused)
-        .animation(Theme.focusSpring, value: isFilled)
+        .animation(.easeInOut(duration: 0.25), value: state.activePresetChanges)
         .onHover { over in
             hovering = over
             // Hover-focus parity with the app tiles: pointer and controller
@@ -650,26 +662,81 @@ private struct PresetSlotChip: View {
             }
         }
         // Route through pointerSelect so a click focuses the chip and then
-        // behaves exactly like pressing A on it (applies when filled).
+        // behaves exactly like pressing A on it.
         .onTapGesture { state.pointerSelect(focusID) }
         .contextMenu {
-            if isFilled {
-                Button { state.openRename(slot) } label: { Label("Rename", systemImage: "pencil") }
-                Button(role: .destructive) { state.requestClearSlot(slot) } label: { Label("Clear", systemImage: "trash") }
+            if edited {
+                Button { state.updateActivePreset() } label: { Label("Update with These Settings", systemImage: "square.and.arrow.down") }
+                Button { state.revertActivePreset() } label: { Label("Revert Changes", systemImage: "arrow.uturn.backward") }
             }
+            Button { state.openPresetNameCard(.rename(preset.id)) } label: { Label("Rename", systemImage: "pencil") }
+            Button(role: .destructive) { state.deletePreset(preset.id) } label: { Label("Delete", systemImage: "trash") }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(solid ? Text("Loaded") : edited ? Text("Loaded, edited: \(changeLine)") : Text(""))
     }
 
     private var fill: AnyShapeStyle {
-        if isActive { return AnyShapeStyle(Theme.accent) }
+        if solid { return AnyShapeStyle(Theme.accent) }
         if isFocused { return AnyShapeStyle(Theme.accent.opacity(0.35)) }
-        if isFilled { return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.12 : 0.07)) }
-        return AnyShapeStyle(Color.white.opacity(0.03))
+        if edited { return AnyShapeStyle(Theme.accent.opacity(0.08)) }
+        return AnyShapeStyle(Color.white.opacity(hovering && state.inputMode == .pointer ? 0.12 : 0.07))
     }
     private var border: Color {
         if isFocused { return .white.opacity(0.7) }
-        if isActive { return .white.opacity(0.25) }
-        return Theme.hairline(isFilled ? 0.08 : 0.14, contrast)
+        if edited { return Theme.accent }
+        if solid { return .white.opacity(0.25) }
+        return Theme.hairline(0.08, contrast)
+    }
+}
+
+/// "+": the live settings aren't saved as any preset. A names them (with
+/// suggestions) and saves. With no presets at all it's the row's invitation.
+private struct SavePresetChip: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let focusID = "preset:add"
+    private var isFocused: Bool { state.focus.focusedItemID == focusID }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(isFocused ? Theme.textPrimary : Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.presets.isEmpty ? "Save your setup as a preset" : "Save current")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(isFocused ? Theme.textPrimary : Theme.textPrimary.opacity(0.85))
+                    .lineLimit(1)
+                Text(StreamPreset.summary(of: state.settings))
+                    .font(.system(size: Theme.labelSize(11), weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(isFocused ? Theme.accent.opacity(0.25) : Color.white.opacity(0.03),
+                    in: RoundedRectangle(cornerRadius: 13))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13)
+                .strokeBorder(isFocused ? Color.white.opacity(0.7) : Theme.hairline(0.2, contrast),
+                              style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1, dash: [4, 3]))
+        }
+        .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+        .animation(Theme.focusSpring, value: isFocused)
+        .onHover { over in
+            if over && state.inputMode == .pointer { state.focus.focus(itemID: focusID) }
+        }
+        .onTapGesture { state.pointerSelect(focusID) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 

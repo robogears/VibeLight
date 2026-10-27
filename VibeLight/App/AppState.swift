@@ -22,14 +22,18 @@ enum Overlay: Equatable {
     case hosts                      // computer list + add-by-IP
     case relocate                   // offer to move into /Applications
     case customResolution           // type an arbitrary WxH
-    case confirmOverridePreset(Int) // slot already taken — override it?
-    case confirmClearPreset(Int)    // wipe a filled slot — destructive, confirm
     case confirmRemoveHost(String)  // forget a computer + its pairing — confirm
-    case presetSlotMenu(Int)        // rename / clear a filled slot
-    case renamePreset(Int)          // type a new preset name
+    case presetMenu(String)         // one preset's options (preset id)
+    case namePreset(PresetNameTarget)  // name a new preset, or rename one
     case moonDeckSetup(String)      // set up / pair MoonDeckBuddy for host id
     case confirmRestartPC(String)   // confirm force-restarting host id
     case confirmSwitchStream(running: String, target: StreamApp)  // host busy — switch to target?
+}
+
+/// What the preset name card is naming.
+enum PresetNameTarget: Equatable {
+    case new                // the live settings, as a new preset
+    case rename(String)     // an existing preset (id)
 }
 
 /// First-run setup wizard steps (see `OnboardingFlow`). Unskippable; shown once
@@ -442,14 +446,13 @@ final class AppState {
     var settings: StreamSettings {
         didSet {
             persistSettings()
-            // The "this preset is active" marker documents itself as "nil once
-            // settings diverge", but nothing ever cleared it: only clearSlot
-            // did, so every tweak after applying a preset left the slots still
-            // showing that slot as active while the live settings no longer
-            // matched it. Clear it the moment they stop agreeing.
-            if let i = activePresetSlot, presets.indices.contains(i),
-               presets[i]?.settings != settings {
-                activePresetSlot = nil
+            // A change keeps the loaded preset marked — it reads "edited"
+            // (Live Loadout) instead of the marker silently dropping. With
+            // nothing loaded, settings that land exactly on a saved preset
+            // pick it up, so the row never shows "+ Save current" for
+            // something already saved.
+            if activePresetID == nil, let match = presets.first(where: { $0.settings == settings }) {
+                activePresetID = match.id
                 persistPresets()
             }
         }
@@ -518,23 +521,57 @@ final class AppState {
     /// screen short instead of one long scroll.
     var settingsTab: SettingsTab = .video
 
-    // MARK: Presets — six fixed slots (nil = empty)
+    // MARK: Presets — a short named list ("Live Loadout")
 
-    static let presetSlotCount = 6
-    /// Exactly `presetSlotCount` entries; `nil` = an empty slot. Slot index i
-    /// (0-based) is shown as "Preset i+1".
-    private(set) var presets: [StreamPreset?] = Array(repeating: nil, count: presetSlotCount)
-    /// The original bytes of saved slots this build can't read (nil where the
-    /// slot read fine), written back unchanged on every preset save.
-    /// (audit DAT-preset-recovery-loss)
-    @ObservationIgnored private var unreadablePresetSlots: [Data?] = []
-    /// Which slot's settings are currently loaded (nil once settings diverge or
-    /// a slot is cleared).
-    private(set) var activePresetSlot: Int?
-    private static let presetsKey = "vibelight.presets.v2"
-    private static let activePresetKey = "vibelight.activePresetSlot"
+    /// "Live Loadout", the owner's pick of five preset reworks (Fable design
+    /// lead, Oct 2026): six numbered slots became a short list of named
+    /// presets, and the loaded one stays marked when you change a setting —
+    /// it shows "edited" and what changed, A keeps the change, Revert drops
+    /// it — instead of silently going dark.
+    static let maxPresets = 6
+    private(set) var presets: [StreamPreset] = []
+    /// Saved entries this build can't read, kept as their original bytes and
+    /// written back on every save. (audit DAT-preset-recovery-loss)
+    @ObservationIgnored private var unreadablePresets: [Data] = []
+    /// The preset the live settings came from. It is NOT cleared when a
+    /// setting changes — that's the "edited" state (`isActivePresetEdited`).
+    private(set) var activePresetID: String?
+    private static let presetsKey = "vibelight.presets.v3"
+    private static let slotPresetsKey = "vibelight.presets.v2"     // the six-slot store, read once
+    private static let activePresetKey = "vibelight.activePresetID"
+    private static let activeSlotKey = "vibelight.activePresetSlot" // its marker, read once
 
-    func defaultPresetName(forSlot i: Int) -> String { "Preset \(i + 1)" }
+    var activePreset: StreamPreset? { presets.first { $0.id == activePresetID } }
+    /// The loaded preset and the live settings no longer agree.
+    var isActivePresetEdited: Bool { activePreset.map { $0.settings != settings } ?? false }
+    /// What changed since the loaded preset, in the chip's words.
+    var activePresetChanges: [String] {
+        activePreset.map { StreamPreset.changes(from: $0.settings, to: settings) } ?? []
+    }
+    var canSaveNewPreset: Bool { presets.count < Self.maxPresets }
+    /// The row's "+" chip: nothing is loaded (the settings match no preset),
+    /// so offer to save them. An edited preset offers Save as New instead.
+    var offersSaveCurrentPreset: Bool { activePresetID == nil && canSaveNewPreset }
+
+    /// A confirmation under the header ("Using Tailscale", "Deleted Handheld ·
+    /// Undo"). Deleting and updating can be undone while it shows.
+    struct PresetToast: Equatable {
+        var verb: String
+        var name: String
+        var detail: String?
+        var canUndo: Bool
+        var serial: Int
+    }
+    private(set) var presetToast: PresetToast?
+    @ObservationIgnored private var presetUndo: (@MainActor () -> Void)?
+    @ObservationIgnored private var presetToastTask: Task<Void, Never>?
+    @ObservationIgnored private var presetToastSerial = 0
+
+    /// The name card's text (a picked suggestion, or typed) and its offers.
+    var presetNameDraft = ""
+    private(set) var presetNameSuggestions: [String] = []
+    /// Where focus goes back to when a preset card closes.
+    @ObservationIgnored private var presetCardReturnID: String?
 
     /// Which input device is driving right now. Controller/keyboard hides the
     /// mouse cursor and disables hover-focus (so tiles scrolling under a parked
@@ -649,15 +686,14 @@ final class AppState {
         }
 
         let savedPresets = Self.loadPresets()
-        presets = savedPresets.slots
-        unreadablePresetSlots = savedPresets.raw
-        // Range-check AND require the slot to actually hold a preset: after one
-        // fails to decode (FailableDecodable -> nil slot) the saved index could
-        // point at an empty slot, leaving the row highlighting nothing.
-        let savedSlot = UserDefaults.standard.object(forKey: Self.activePresetKey) as? Int
-        activePresetSlot = savedSlot.flatMap {
-            (0..<Self.presetSlotCount).contains($0) && presets[$0] != nil ? $0 : nil
-        }
+        presets = savedPresets.list
+        unreadablePresets = savedPresets.unreadable
+        // Only an id that's really in the list; else whichever preset the
+        // live settings already match (none: the row offers "+ Save current").
+        let savedActive = UserDefaults.standard.string(forKey: Self.activePresetKey) ?? savedPresets.migratedActiveID
+        activePresetID = presets.contains { $0.id == savedActive } ? savedActive
+            : presets.first { $0.settings == settings }?.id
+        if savedPresets.migrated { persistPresets() }
 
         // MoonDeckBuddy: a stable per-install client id + saved per-host configs.
         if let existing = UserDefaults.standard.string(forKey: Self.moonDeckClientKey), !existing.isEmpty {
@@ -712,14 +748,14 @@ final class AppState {
 
     /// Touch Control and Touch With Controller became default-on (owner, Oct
     /// 2026). Once, turn them on in what was saved before — every preset FIRST,
-    /// then the live settings: settings' didSet drops the active-preset marker
-    /// the moment the two disagree, and an old preset left at Off would switch
-    /// touch back off the next time it was applied.
+    /// then the live settings, so the loaded preset never reads "edited" over
+    /// it, and an old preset left at Off can't switch touch back off the next
+    /// time it's applied.
     private func migrateTouchDefaultsOnce() {
         guard !UserDefaults.standard.bool(forKey: Self.touchDefaultsMigratedKey) else { return }
         for i in presets.indices {
-            presets[i]?.settings.touchControls = true
-            presets[i]?.settings.touchWithController = true
+            presets[i].settings.touchControls = true
+            presets[i].settings.touchWithController = true
         }
         persistPresets()
         // One assignment, not two: between two separate ones the live settings
@@ -734,139 +770,244 @@ final class AppState {
 
     // MARK: - Presets
 
-    private static func loadPresets() -> (slots: [StreamPreset?], raw: [Data?]) {
-        let empty = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
-        guard let data = UserDefaults.standard.data(forKey: presetsKey) else {
-            // No v2 blob. Before giving up, adopt the pre-0.1.7 one: presets
-            // moved from a dynamic list to six fixed slots and the key gained a
-            // ".v2" suffix with no migration, so every preset made before that
-            // release has been sitting in defaults unread ever since.
-            return (migrateLegacyPresets() ?? empty, [])
+    private static func loadPresets() -> (list: [StreamPreset], unreadable: [Data],
+                                          migratedActiveID: String?, migrated: Bool) {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: presetsKey) {
+            // An entry this build can't read is kept as its bytes and written
+            // back with every save. (audit DAT-preset-recovery-loss)
+            guard let decoded = SavedDataRecovery.decodeList(StreamPreset.self, from: data) else {
+                // Not even a list: the next save writes over it, so keep the
+                // original aside first.
+                SavedDataRecovery.backUpOnce(data, to: "\(presetsKey).unreadable", in: .standard)
+                return ([], [], nil, false)
+            }
+            return (decoded.records, decoded.unreadable, nil, false)
         }
-        // A bad or incompatible slot shows as empty — preserving slot positions
-        // — instead of dropping EVERY preset when one entry can't be read. Its
-        // original bytes are kept and written back on every save, so saving,
-        // applying or renaming ANOTHER slot (or the settings hook) never erases
-        // it; only saving into that slot replaces it.
-        // (audit DAT-preset-recovery-loss)
-        guard let decoded = SavedDataRecovery.decodeSlots(StreamPreset.self, from: data, count: presetSlotCount) else {
-            // Not even an array: the next save writes six slots over it, so
-            // keep the original aside first.
-            SavedDataRecovery.backUpOnce(data, to: "\(presetsKey).unreadable", in: .standard)
-            return (empty, [])
+        // First run of the list: adopt the six-slot store in slot order, ids
+        // kept (so the loaded marker carries over), empty slots dropped, an
+        // unreadable slot still kept as its bytes. The old keys stay put.
+        if let data = defaults.data(forKey: slotPresetsKey),
+           let decoded = SavedDataRecovery.decodeSlots(StreamPreset.self, from: data, count: 6) {
+            let slot = defaults.object(forKey: activeSlotKey) as? Int
+            let activeID = slot.flatMap { decoded.slots.indices.contains($0) ? decoded.slots[$0]?.id : nil }
+            return (decoded.slots.compactMap { $0 }, decoded.raw.compactMap { $0 }, activeID, true)
         }
-        return decoded
+        if let data = defaults.data(forKey: slotPresetsKey) {
+            SavedDataRecovery.backUpOnce(data, to: "\(slotPresetsKey).unreadable", in: .standard)
+        }
+        // Older still: the pre-0.1.7 list.
+        if let legacy = migrateLegacyPresets() { return (legacy, [], nil, true) }
+        return ([], [], nil, false)
     }
 
-    /// One-shot adoption of the pre-0.1.7 `vibelight.presets` blob into the six
-    /// fixed slots. Returns nil when there is nothing to migrate.
-    private static func migrateLegacyPresets() -> [StreamPreset?]? {
-        let legacyKey = "vibelight.presets"
-        guard let data = UserDefaults.standard.data(forKey: legacyKey),
+    /// The pre-0.1.7 `vibelight.presets` list, if one is still lying around.
+    private static func migrateLegacyPresets() -> [StreamPreset]? {
+        guard let data = UserDefaults.standard.data(forKey: "vibelight.presets"),
               let arr = try? JSONDecoder().decode([FailableDecodable<StreamPreset>].self, from: data)
         else { return nil }
-        let recovered = arr.compactMap(\.value)
-        guard !recovered.isEmpty else { return nil }
-        var slots = Array<StreamPreset?>(repeating: nil, count: presetSlotCount)
-        for (i, preset) in recovered.prefix(presetSlotCount).enumerated() { slots[i] = preset }
-        if let encoded = try? JSONEncoder().encode(slots) {
-            UserDefaults.standard.set(encoded, forKey: presetsKey)
-            // Leave the legacy key in place: if this migration is ever wrong,
-            // the original is still there to re-read. It is a few hundred bytes.
-        }
-        return slots
+        let recovered = Array(arr.compactMap(\.value).prefix(maxPresets))
+        return recovered.isEmpty ? nil : recovered
     }
 
     private func persistPresets() {
-        if let data = SavedDataRecovery.encodeSlots(presets, preserving: unreadablePresetSlots) {
+        if let data = SavedDataRecovery.encodeList(presets, preserving: unreadablePresets) {
             UserDefaults.standard.set(data, forKey: Self.presetsKey)
         }
-        UserDefaults.standard.set(activePresetSlot, forKey: Self.activePresetKey)
+        UserDefaults.standard.set(activePresetID, forKey: Self.activePresetKey)
     }
 
-    /// Settings-header click / select on slot `i`: snapshot the current settings
-    /// into that slot. If it's already taken, confirm the override first.
-    func requestSaveToSlot(_ i: Int) {
-        guard presets.indices.contains(i) else { return }
-        if presets[i] != nil {
-            presentOverlay(.confirmOverridePreset(i))
-        } else {
-            performSaveToSlot(i)
-        }
-    }
-
-    /// Actually writes the current settings into slot `i` (keeps the slot's
-    /// existing name on override).
-    func performSaveToSlot(_ i: Int) {
-        guard presets.indices.contains(i) else { return }
-        let name = presets[i]?.name ?? defaultPresetName(forSlot: i)
-        presets[i] = StreamPreset(id: UUID().uuidString, name: name, settings: settings)
-        // An explicit save into the slot is the one thing that replaces an
-        // unreadable original there (so a later Clear can't resurrect it).
-        if unreadablePresetSlots.indices.contains(i) { unreadablePresetSlots[i] = nil }
-        activePresetSlot = i
-        persistPresets()
-        controller.focusTick()
-    }
-
-    /// Home preset row: load slot `i`'s settings (no-op for an empty slot).
-    func applySlot(_ i: Int) {
-        guard presets.indices.contains(i), let preset = presets[i] else { return }
+    /// Load a preset (A on its chip).
+    func applyPreset(_ id: String) {
+        guard let preset = presets.first(where: { $0.id == id }) else { return }
         // Decoding already clamps; this keeps a preset that reached memory any
         // other way from carrying an out-of-range number into the live
         // settings. (audit DAT-stored-size-overflow)
         settings = preset.settings.clampedToLegalRanges()
-        activePresetSlot = i
+        activePresetID = id
+        persistPresets()
+        presetsChanged()
+        showPresetToast(verb: "Using", name: preset.name, detail: preset.summary)
+    }
+
+    /// Keep the change: write the live settings into the loaded preset (A on
+    /// an edited chip, Y in Settings). Its id and name stay; Undo puts the
+    /// old numbers back.
+    func updateActivePreset() {
+        guard let i = presets.firstIndex(where: { $0.id == activePresetID }) else { return }
+        let id = presets[i].id, before = presets[i].settings
+        presets[i].settings = settings
+        persistPresets()
+        presetsChanged()
+        controller.focusTick()
+        showPresetToast(verb: "Updated", name: presets[i].name, undo: { [weak self] in
+            guard let self, let j = presets.firstIndex(where: { $0.id == id }) else { return }
+            presets[j].settings = before
+            persistPresets()
+            presetsChanged()
+        })
+    }
+
+    /// Drop the change: back to the loaded preset's settings.
+    func revertActivePreset() {
+        guard let preset = activePreset else { return }
+        settings = preset.settings.clampedToLegalRanges()
+        presetsChanged()
+        showPresetToast(verb: "Reverted", name: preset.name, detail: preset.summary)
+    }
+
+    /// The live settings as a new preset, which becomes the loaded one.
+    @discardableResult
+    func saveCurrentAsNewPreset(named name: String, announce: Bool = true) -> String? {
+        guard canSaveNewPreset else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let preset = StreamPreset(id: UUID().uuidString,
+                                  name: trimmed.isEmpty ? suggestedPresetNames().first ?? "My Preset" : trimmed,
+                                  settings: settings)
+        presets.append(preset)
+        activePresetID = preset.id
+        persistPresets()
+        presetsChanged()
+        controller.focusTick()
+        if announce { showPresetToast(verb: "Saved", name: preset.name) }
+        return preset.id
+    }
+
+    func renamePreset(_ id: String, to name: String) {
+        guard let i = presets.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        presets[i].name = trimmed
         persistPresets()
     }
 
-    /// Ask before wiping a preset. Every entry point (controller slot menu and
-    /// the right-click context menu) routes through here; `clearSlot` is the
-    /// unguarded action the confirm calls.
-    func requestClearSlot(_ i: Int) {
-        guard presets.indices.contains(i), presets[i] != nil else { return }
-        presentOverlay(.confirmClearPreset(i))
+    /// Gone at once — no confirm card; the toast holds Undo for 8 s. Returns
+    /// the focus id of its neighbour, so focus doesn't fall off the row.
+    @discardableResult
+    func deletePreset(_ id: String) -> String? {
+        guard let i = presets.firstIndex(where: { $0.id == id }) else { return nil }
+        let removed = presets.remove(at: i)
+        let wasActive = activePresetID == id
+        if wasActive { activePresetID = nil }
+        persistPresets()
+        presetsChanged()
+        showPresetToast(verb: "Deleted", name: removed.name, undo: { [weak self] in
+            guard let self, canSaveNewPreset else { return }
+            presets.insert(removed, at: min(i, presets.count))
+            if wasActive { activePresetID = removed.id }
+            persistPresets()
+            presetsChanged()
+            focus.focus(itemID: "preset:\(removed.id)")
+        })
+        let neighbour = presets.indices.contains(i) ? presets[i] : presets.last
+        return neighbour.map { "preset:\($0.id)" } ?? (offersSaveCurrentPreset ? "preset:add" : nil)
+    }
+
+    /// Y while a toast offers Undo.
+    var canUndoPresetChange: Bool { presetUndo != nil }
+
+    func undoPresetChange() {
+        guard let undo = presetUndo else { return }
+        presetUndo = nil
+        presetToast = nil
+        undo()
+    }
+
+    private func showPresetToast(verb: String, name: String, detail: String? = nil,
+                                 undo: (@MainActor () -> Void)? = nil) {
+        presetToastSerial += 1
+        let serial = presetToastSerial
+        presetUndo = undo
+        presetToast = PresetToast(verb: verb, name: name, detail: detail, canUndo: undo != nil, serial: serial)
+        let shown: Duration = undo != nil ? .seconds(8) : .milliseconds(2500)
+        presetToastTask?.cancel()
+        presetToastTask = Task { [weak self] in
+            try? await Task.sleep(for: shown)
+            guard let self, !Task.isCancelled, presetToast?.serial == serial else { return }
+            presetToast = nil
+            presetUndo = nil
+        }
+    }
+
+    /// The preset row's chips are focus targets, and which exist ("+") moves
+    /// with the settings — rebuild on the home screen after every change.
+    private func presetsChanged() {
+        guard screen == .home, overlay == nil else { return }
+        rebuildFocus()
+        if focus.focusedItemID == nil { focus.focusFirst() }
+    }
+
+    /// "preset:<id>" → the id (nil for "preset:add" and anything else).
+    func presetID(fromFocusID id: String?) -> String? {
+        guard let id, id.hasPrefix("preset:"), id != "preset:add" else { return nil }
+        return String(id.dropFirst("preset:".count))
+    }
+
+    /// The focus id of every chip in the row, "+" last when it shows.
+    var presetRowFocusIDs: [String] {
+        presets.map { "preset:\($0.id)" } + (offersSaveCurrentPreset ? ["preset:add"] : [])
+    }
+
+    /// Names for the live settings (or, renaming, that preset's) — never "Preset 1".
+    func suggestedPresetNames(renaming id: String? = nil) -> [String] {
+        let target = id.flatMap { id in presets.first { $0.id == id } }
+        return StreamPreset.nameSuggestions(
+            for: target?.settings ?? settings, hostName: selectedHost?.name, current: target?.name,
+            taken: presets.filter { $0.id != id }.map(\.name))
+    }
+
+    /// The options card's buttons, top to bottom (the card draws this list).
+    func presetMenuItems(for id: String) -> [String] {
+        var ids: [String] = []
+        if id == activePresetID && isActivePresetEdited { ids.append("presetmenu:revert") }
+        ids += ["presetmenu:edit", "presetmenu:rename"]
+        if canSaveNewPreset { ids.append("presetmenu:saveas") }
+        ids.append("presetmenu:delete")
+        return ids
+    }
+
+    /// The options card for one preset (X on its chip).
+    func openPresetMenu(_ id: String) {
+        guard presets.contains(where: { $0.id == id }) else { return }
+        presetCardReturnID = focus.focusedItemID
+        presentOverlay(.presetMenu(id))
+    }
+
+    /// The name card: suggestions first, typing optional.
+    func openPresetNameCard(_ target: PresetNameTarget) {
+        if case .new = target, !canSaveNewPreset { return }
+        if case .presetMenu = overlay {} else { presetCardReturnID = focus.focusedItemID }
+        if case .rename(let id) = target {
+            presetNameSuggestions = suggestedPresetNames(renaming: id)
+        } else {
+            presetNameSuggestions = suggestedPresetNames()
+        }
+        presetNameDraft = presetNameSuggestions.first ?? ""
+        presentOverlay(.namePreset(target))
+    }
+
+    /// Save the name card's draft (new preset, or a rename) and close it.
+    func commitPresetName(_ target: PresetNameTarget) {
+        switch target {
+        case .new:
+            let id = saveCurrentAsNewPreset(named: presetNameDraft)
+            closePresetCard(returningTo: screen == .home ? id.map { "preset:\($0)" } : nil)
+        case .rename(let id):
+            renamePreset(id, to: presetNameDraft)
+            closePresetCard(returningTo: screen == .home ? "preset:\(id)" : nil)
+        }
+    }
+
+    private func closePresetCard(returningTo id: String? = nil) {
+        let back = id ?? presetCardReturnID
+        presetCardReturnID = nil
+        dismissOverlay(returningTo: back)
     }
 
     /// True when the focused settings row OPENS something (rather than cycling a
     /// value), so a pointer tap can route the same semantic event Select does.
     func settingsRowOpens(_ row: SettingsRow) -> Bool {
         row.isAction || row == .resolution
-    }
-
-    func clearSlot(_ i: Int) {
-        guard presets.indices.contains(i) else { return }
-        presets[i] = nil
-        if activePresetSlot == i { activePresetSlot = nil }
-        persistPresets()
-    }
-
-    func renameSlot(_ i: Int, to name: String) {
-        guard presets.indices.contains(i), presets[i] != nil else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        presets[i]?.name = trimmed.isEmpty ? defaultPresetName(forSlot: i) : trimmed
-        persistPresets()
-    }
-
-    /// Parses a "presetslot:N" focus id.
-    func presetSlotIndex(_ id: String?) -> Int? {
-        guard let id, id.hasPrefix("presetslot:") else { return nil }
-        return Int(id.dropFirst("presetslot:".count))
-    }
-
-    /// Bound to the rename overlay's text field.
-    var renameText: String = ""
-
-    /// Seeds + opens the rename overlay for slot `i`.
-    func openRename(_ i: Int) {
-        guard presets.indices.contains(i) else { return }
-        renameText = presets[i]?.name ?? defaultPresetName(forSlot: i)
-        presentOverlay(.renamePreset(i))
-    }
-
-    func applyRename(_ i: Int) {
-        renameSlot(i, to: renameText)
-        dismissOverlay(returningTo: "presetslot:\(i)")
     }
 
     private func wireCallbacks() {
@@ -2169,21 +2310,18 @@ final class AppState {
         case .customResolution:
             sections = [FocusSection(id: "customres", kind: .vList,
                                      itemIDs: ["customres:set", "customres:cancel"])]
-        case .confirmOverridePreset:
-            sections = [FocusSection(id: "override", kind: .vList,
-                                     itemIDs: ["override:yes", "override:cancel"])]
-        case .confirmClearPreset:
-            sections = [FocusSection(id: "clearpreset", kind: .vList,
-                                     itemIDs: ["clearpreset:cancel", "clearpreset:yes"])]
         case .confirmRemoveHost:
             sections = [FocusSection(id: "removehost", kind: .vList,
                                      itemIDs: ["removehost:cancel", "removehost:yes"])]
-        case .presetSlotMenu:
-            sections = [FocusSection(id: "slotmenu", kind: .vList,
-                                     itemIDs: ["slotmenu:rename", "slotmenu:clear", "slotmenu:cancel"])]
-        case .renamePreset:
-            sections = [FocusSection(id: "rename", kind: .vList,
-                                     itemIDs: ["rename:set", "rename:cancel"])]
+        case .presetMenu(let id):
+            sections = [FocusSection(id: "presetmenu", kind: .vList, itemIDs: presetMenuItems(for: id))]
+        case .namePreset:
+            // Suggestions in a row (◀ ▶), then Save / Cancel below.
+            sections = [
+                FocusSection(id: "namesugg", kind: .shelf,
+                             itemIDs: presetNameSuggestions.indices.map { "namesugg:\($0)" }),
+                FocusSection(id: "namecard", kind: .vList, itemIDs: ["name:save", "name:cancel"]),
+            ].filter { !$0.itemIDs.isEmpty }
         case .moonDeckSetup:
             // Locked while a restart is in flight, matching confirmRestartPC —
             // otherwise the card renders a ProgressView while the focus engine
@@ -2239,21 +2377,16 @@ final class AppState {
                     itemIDs: emptyShelf.map(Self.emptyShelfFocusIDs)
                         ?? apps.map { "app:\(appKey($0))" }
                 ))
-                // The six preset slots sit in a row UNDER the shelf — d-pad
-                // DOWN from a game reaches them, UP returns. Same section and
-                // item IDs as the settings strip, so the engine's per-section
-                // memory carries your slot position between the two screens.
-                sections.append(FocusSection(
-                    id: "presetslots", kind: .shelf,
-                    itemIDs: (0..<Self.presetSlotCount).map { "presetslot:\($0)" }
-                ))
+                // The preset row sits UNDER the shelf — d-pad DOWN from a game
+                // reaches it, UP returns: one chip per preset, "+" last when the
+                // settings aren't saved anywhere.
+                sections.append(FocusSection(id: "presets", kind: .shelf, itemIDs: presetRowFocusIDs))
             case .settings:
-                // The six preset slots sit above the rows (up from a row reaches
-                // them); L1/R1 still switch tabs. Default focus is the first row
+                // Just the rows (L1/R1 switch tabs). The slot strip that sat
+                // above them is gone: a pill names the loaded preset and Y
+                // saves into it. Default focus is the first row
                 // (openSettings/switchSettingsTab focus it explicitly).
                 sections = [
-                    FocusSection(id: "presetslots", kind: .shelf,
-                                 itemIDs: (0..<Self.presetSlotCount).map { "presetslot:\($0)" }),
                     FocusSection(id: "settings", kind: .vList,
                                  itemIDs: settingsTab.rows.map(\.focusID)),
                 ]
@@ -2288,8 +2421,7 @@ final class AppState {
     /// shelf behind the card).
     private func opensOnDeclaredFirstChoice(_ overlay: Overlay) -> Bool {
         switch overlay {
-        case .confirmRemoveHost, .confirmClearPreset, .confirmOverridePreset,
-             .confirmSwitchStream, .presetSlotMenu:
+        case .confirmRemoveHost, .confirmSwitchStream, .presetMenu, .namePreset:
             return true
         case .confirmRestartPC:
             // rebuildFocus installs no section while a restart is in flight.
@@ -2359,25 +2491,26 @@ final class AppState {
 
     // MARK: - Onboarding
 
-    /// True if any preset slot is filled — used to skip the presets tutorial for
+    /// True if any preset is saved — used to skip the presets tutorial for
     /// users who clearly already know how to use them.
-    var hasAnyPreset: Bool { presets.contains { $0 != nil } }
+    var hasAnyPreset: Bool { !presets.isEmpty }
 
-    /// Seed Preset 1 from the setup's chosen settings — only for a user with NO
-    /// presets (the sole case the presets step is shown). Called from the step.
+    /// Seed the first preset from the setup's chosen settings, named after
+    /// them ("4K · 120") — only for a user with NO presets (the sole case the
+    /// presets step is shown). Called from the step.
     func seedFirstPresetIfEmpty() {
         guard !hasAnyPreset else { return }
-        performSaveToSlot(0)
+        saveCurrentAsNewPreset(named: suggestedPresetNames().first ?? "", announce: false)
     }
 
     /// Whether the user already had presets when the wizard started. Captured
-    /// once (not live) so seeding Preset 1 mid-flow for a fresh user doesn't
+    /// once (not live) so seeding the first preset mid-flow for a fresh user doesn't
     /// retroactively change which steps are skipped or the progress pips.
     private(set) var onboardingHadPresets = false
 
     /// Call when the wizard opens (welcome appears) to snapshot preset state.
     /// Snapshot the preset state ONCE per wizard session. Documented as
-    /// "captured once (not live)" so seeding Preset 1 mid-flow doesn't
+    /// "captured once (not live)" so seeding the first preset mid-flow doesn't
     /// retroactively change which steps are skipped — but its only caller ran on
     /// every appearance of Welcome, which Back re-enters.
     func beginOnboardingSessionIfNeeded() {
@@ -2561,16 +2694,21 @@ final class AppState {
 
     private func routeHome(_ event: NavigationEvent) {
         // The preset row under the shelf is a normal focus-engine section, so
-        // movement needs no special casing — only select/contextMenu do.
-        let onSlot = presetSlotIndex(focus.focusedItemID)
+        // movement needs no special casing — only select/contextMenu/detail do.
+        let onPreset = presetID(fromFocusID: focus.focusedItemID)
+        let onRow = onPreset != nil || focus.focusedItemID == "preset:add"
         switch event {
         case .select:
             // (A `host:`-prefixed branch used to sit here. No view and no
             // rebuildFocus path has ever emitted that prefix — the home screen
             // emits `header:*`/`app:*` and the overlay emits `hostmenu:*`, which
             // does not match. Host switching goes through routeOverlay.)
-            if let i = onSlot {
-                applySlot(i)                    // no-op on an empty slot
+            if let id = onPreset {
+                // A on the loaded preset after a change keeps the change.
+                if id == activePresetID && isActivePresetEdited { updateActivePreset() }
+                else { applyPreset(id) }
+            } else if focus.focusedItemID == "preset:add" {
+                openPresetNameCard(.new)
             } else if focus.focusedItemID == "header:host" || focus.focusedItemID == "header:addhost" {
                 openHostMenu()
             } else if focus.focusedItemID == "header:power" || focus.focusedItemID == "shelf:wake" {
@@ -2590,12 +2728,16 @@ final class AppState {
         case .settings:
             openSettings()
         case .contextMenu:
-            // X on a filled slot manages it; anywhere else X (like Y) opens
+            // X on a preset opens its options; anywhere else X (like Y) opens
             // the cheat sheet, same as before the row moved.
-            if let i = onSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
+            if let id = onPreset { openPresetMenu(id) }
             else { presentOverlay(.cheatSheet) }
         case .detail:
-            presentOverlay(.cheatSheet)
+            // Y: Undo while a toast offers it; on the row, save the live
+            // settings as a new preset when they're not saved as they are.
+            if canUndoPresetChange { undoPresetChange() }
+            else if onRow, presetRowOffersSaveAsNew { openPresetNameCard(.new) }
+            else { presentOverlay(.cheatSheet) }
         case .back:
             break // home is the root — nowhere to go back to
         default:
@@ -2603,8 +2745,13 @@ final class AppState {
         }
     }
 
+    /// Y saves the live settings as a new preset: there's room, and they're
+    /// not already saved exactly as they are.
+    var presetRowOffersSaveAsNew: Bool {
+        canSaveNewPreset && (activePresetID == nil || isActivePresetEdited)
+    }
+
     private func routeSettings(_ event: NavigationEvent) {
-        let onSlot = presetSlotIndex(focus.focusedItemID)
         switch event {
         case .back, .settings:
             closeSettings()
@@ -2613,26 +2760,29 @@ final class AppState {
         case .nextSection:
             switchSettingsTab(forward: true)
         case .move(.left), .move(.right):
-            if onSlot != nil {
-                _ = focus.handle(event)  // shelf: move between the six slots
-            } else if let rowID = focus.focusedItemID,
-                      let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }) {
+            if let rowID = focus.focusedItemID,
+               let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }) {
                 adjust(row: row, forward: event == .move(.right))
             }
         case .select:
-            if let i = onSlot {
-                requestSaveToSlot(i)           // save current settings into the slot
-            } else if let rowID = focus.focusedItemID,
-                      let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }),
-                      row.isAction {
+            if let rowID = focus.focusedItemID,
+               let row = SettingsRow.allCases.first(where: { $0.focusID == rowID }),
+               row.isAction {
                 performSettingAction(row)      // Software Update / Restart Setup
             } else if focus.focusedItemID == SettingsRow.resolution.focusID {
                 openCustomResolution()         // type an arbitrary WxH
             }
+        case .detail:
+            // Y: Undo while offered; keep the change in the loaded preset;
+            // with nothing loaded, save these settings as one.
+            if canUndoPresetChange { undoPresetChange() }
+            else if isActivePresetEdited { updateActivePreset() }
+            else if activePresetID == nil, canSaveNewPreset { openPresetNameCard(.new) }
         case .contextMenu:
-            if let i = onSlot, presets[i] != nil { presentOverlay(.presetSlotMenu(i)) }
+            // X: drop the change and go back to the loaded preset.
+            if isActivePresetEdited { revertActivePreset() }
         default:
-            _ = focus.handle(event)            // up/down cross into / out of the slots
+            _ = focus.handle(event)
         }
     }
 
@@ -2774,14 +2924,6 @@ final class AppState {
             default:
                 _ = focus.handle(event)
             }
-        case .confirmClearPreset(let i):
-            switch event {
-            case .select:
-                if focus.focusedItemID == "clearpreset:yes" { dismissOverlay(returningTo: "presetslot:\(i)"); clearSlot(i) }
-                else { dismissOverlay(returningTo: "presetslot:\(i)") }
-            case .back: dismissOverlay(returningTo: "presetslot:\(i)")
-            default: _ = focus.handle(event)
-            }
         case .confirmRemoveHost(let hostID):
             switch event {
             case .select:
@@ -2792,44 +2934,57 @@ final class AppState {
             case .back: dismissOverlay()
             default: _ = focus.handle(event)
             }
-        case .confirmOverridePreset(let i):
-            switch event {
-            case .select:
-                if focus.focusedItemID == "override:yes" {
-                    dismissOverlay(returningTo: "presetslot:\(i)")
-                    performSaveToSlot(i)
-                } else { dismissOverlay(returningTo: "presetslot:\(i)") }
-            case .back:
-                dismissOverlay(returningTo: "presetslot:\(i)")
-            default:
-                _ = focus.handle(event)
-            }
-        case .presetSlotMenu(let i):
+        case .presetMenu(let id):
             switch event {
             case .select:
                 switch focus.focusedItemID {
-                case "slotmenu:rename": openRename(i)   // replaces this overlay
-                case "slotmenu:clear":
-                    // Clearing destroys the preset outright and persists
-                    // immediately, while merely OVERWRITING one (which loses
-                    // strictly less) already shows a confirm. Match them.
-                    presentOverlay(.confirmClearPreset(i))
-                default: dismissOverlay(returningTo: "presetslot:\(i)")
+                case "presetmenu:revert":
+                    closePresetCard()
+                    revertActivePreset()
+                case "presetmenu:edit":
+                    // Settings opens with this preset loaded; its pill names it.
+                    closePresetCard()
+                    if activePresetID != id { applyPreset(id) }
+                    openSettings()
+                case "presetmenu:rename":
+                    openPresetNameCard(.rename(id))   // replaces this card
+                case "presetmenu:saveas":
+                    openPresetNameCard(.new)
+                case "presetmenu:delete":
+                    // No confirm: the toast holds Undo, and focus lands on the
+                    // neighbour instead of falling off the row.
+                    let neighbour = deletePreset(id)
+                    closePresetCard(returningTo: neighbour)
+                default:
+                    closePresetCard()
                 }
             case .back:
-                dismissOverlay(returningTo: "presetslot:\(i)")
+                closePresetCard()
             default:
                 _ = focus.handle(event)
             }
-        case .renamePreset(let i):
+        case .namePreset(let target):
             switch event {
             case .select:
-                if focus.focusedItemID == "rename:set" { applyRename(i) }
-                else { dismissOverlay(returningTo: "presetslot:\(i)") }
+                let focused = focus.focusedItemID ?? ""
+                if focused.hasPrefix("namesugg:"), let i = Int(focused.dropFirst("namesugg:".count)),
+                   presetNameSuggestions.indices.contains(i) {
+                    presetNameDraft = presetNameSuggestions[i]   // A on a name takes it
+                    commitPresetName(target)
+                } else if focused == "name:save" {
+                    commitPresetName(target)
+                } else {
+                    closePresetCard()
+                }
             case .back:
-                dismissOverlay(returningTo: "presetslot:\(i)")
+                closePresetCard()
             default:
                 _ = focus.handle(event)
+                // ◀ ▶ over the suggestions fills the name in as you go.
+                if let focused = focus.focusedItemID, focused.hasPrefix("namesugg:"),
+                   let i = Int(focused.dropFirst("namesugg:".count)), presetNameSuggestions.indices.contains(i) {
+                    presetNameDraft = presetNameSuggestions[i]
+                }
             }
         case .moonDeckSetup(let hostID):
             if moonDeckRestarting { break }   // locked while a restart is in flight

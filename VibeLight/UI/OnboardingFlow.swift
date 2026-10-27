@@ -90,7 +90,7 @@ private struct WelcomeStep: View {
             started = true
             // Idempotent per session: Welcome is re-entered by pressing Back
             // from Theme, and re-snapshotting there flipped onboardingHadPresets
-            // AFTER the wizard seeded Preset 1 — silently skipping the Quality
+            // AFTER the wizard seeded the first preset — silently skipping the Quality
             // and Presets steps on the way forward.
             state.beginOnboardingSessionIfNeeded()
             Task { @MainActor in
@@ -269,29 +269,30 @@ private struct PresetsStep: View {
     var body: some View {
         OnboardingStepScaffold(
             title: "Your first preset",
-            subtitle: "We saved your setup as Preset 1 — presets keep quality profiles a button away.",
+            subtitle: "We saved your setup as \u{201C}\(presetName)\u{201D} — presets keep quality profiles a button away.",
             primary: "Continue"
         ) {
             VStack(spacing: 22) {
                 HStack(spacing: 14) {
-                    ForEach(0..<AppState.presetSlotCount, id: \.self) { i in
-                        MiniPresetChip(index: i, highlighted: i == 0,
-                                       label: i == 0 ? presetLabel : nil)
-                    }
+                    MiniPresetChip(title: presetName, label: presetLabel, highlighted: true)
+                    MiniPresetChip(title: "+", label: "Save more")
                 }
                 VStack(spacing: 6) {
                     Text("On the home screen, your presets sit right under your games — press ▼ to load one.")
-                    Text("Save more setups onto the other slots anytime in Settings.")
+                    Text("Change a setting and the preset shows what changed: A keeps it, or revert it.")
                 }
                 .font(.system(size: 16, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
             }
-            // Seed Preset 1 from the res/fps/bitrate they just chose (only when
-            // they have no presets — which is the only time this step shows).
+            // Seed the first preset from the res/fps/bitrate they just chose,
+            // named after them (only when they have no presets — which is the
+            // only time this step shows).
             .onAppear { state.seedFirstPresetIfEmpty() }
         }
     }
+
+    private var presetName: String { state.presets.first?.name ?? state.suggestedPresetNames().first ?? "" }
 
     private var presetLabel: String {
         "\(state.value(for: .resolution)) · \(state.settings.fps) fps"
@@ -299,28 +300,30 @@ private struct PresetsStep: View {
 }
 
 private struct MiniPresetChip: View {
-    let index: Int
+    let title: String
+    var label: String
     var highlighted = false
-    var label: String?
 
     var body: some View {
         VStack(spacing: 6) {
-            Text("\(index + 1)")
+            Text(title)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(highlighted ? Theme.onAccent : Theme.textSecondary)
-            Text(label ?? "Empty")
+                .lineLimit(1)
+            Text(label)
                 .font(.system(size: Theme.labelSize(11), weight: .medium, design: .rounded))
                 .foregroundStyle(highlighted ? Theme.onAccent.opacity(0.9) : Theme.textSecondary.opacity(0.6))
                 .lineLimit(1)
         }
-        .frame(width: Theme.perPlatform(iOS: 112, macOS: 96),
-               height: Theme.perPlatform(iOS: 64, macOS: 60))
+        .padding(.horizontal, 10)
+        .frame(minWidth: Theme.perPlatform(iOS: 112, macOS: 96),
+               minHeight: Theme.perPlatform(iOS: 64, macOS: 60))
         .background(highlighted ? Theme.accent.opacity(0.85) : Theme.surface.opacity(0.6),
                     in: RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(highlighted ? Theme.accent : .white.opacity(0.08),
-                              lineWidth: highlighted ? 2 : 1)
+                .strokeBorder(highlighted ? Theme.accent : .white.opacity(0.12),
+                              style: StrokeStyle(lineWidth: highlighted ? 2 : 1, dash: highlighted ? [] : [4, 3]))
         }
         .shadow(color: highlighted ? Theme.accentGlow : .clear, radius: 14)
     }

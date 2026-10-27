@@ -186,6 +186,11 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   bundled asset, `VibeLight/Resources/quack.mp3`) tick alongside haptics.
 - iOS is landscape-only (Info.plist + `UIApplicationDelegateAdaptor`); the
   hint bar becomes tappable label buttons when no controller is driving.
+- Presets are "Live Loadout": a named list (≤ 6, `vibelight.presets.v3`,
+  migrated once from the six-slot v2 store) + `activePresetID`, which a
+  settings change never clears — the chip reads "edited" with the diff; A
+  updates in place (same id), Revert drops it, Delete is undoable (no
+  confirm). Names are suggested from the numbers, never "Preset N".
 
 **Artwork:**
 - Cache: `~/Library/Caches/<bundle>/boxart/<hostUUID>/<appUUID|appID>.png`.

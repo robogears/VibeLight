@@ -344,14 +344,72 @@ struct StreamPreset: Codable, Equatable, Identifiable, Sendable {
     var shortSummary: String { "\(resolutionLabel) · \(settings.fps) fps" }
 
     /// "1080p", "4K": the narrowest form, so a chip never shows a cut-off line.
-    var resolutionLabel: String {
-        switch (settings.width, settings.height) {
+    var resolutionLabel: String { Self.resolutionLabel(width: settings.width, height: settings.height) }
+
+    static func resolutionLabel(width: Int, height: Int) -> String {
+        switch (width, height) {
         case (1280, 720): "720p"
         case (1920, 1080): "1080p"
         case (2560, 1440), (3440, 1440): "1440p"
         case (3840, 2160): "4K"
-        default: "\(settings.height)p"
+        default: "\(height)p"
         }
+    }
+
+    /// The same summary for settings that aren't saved as a preset yet (the
+    /// row's "+" chip).
+    static func summary(of settings: StreamSettings) -> String {
+        StreamPreset(id: "", name: "", settings: settings).summary
+    }
+
+    /// What changed from a preset's saved settings to the live ones, in the
+    /// chip's words: "80 → 60 Mbps", "1080p → 4K", "HDR off". The quality
+    /// numbers come first (they're what people tweak); anything else that
+    /// differs is one "other settings" entry. Empty when nothing changed.
+    static func changes(from old: StreamSettings, to new: StreamSettings) -> [String] {
+        var out: [String] = []
+        let oldRes = resolutionLabel(width: old.width, height: old.height)
+        let newRes = resolutionLabel(width: new.width, height: new.height)
+        if old.width != new.width || old.height != new.height {
+            out.append(oldRes == newRes ? "\(old.width)×\(old.height) → \(new.width)×\(new.height)"
+                                        : "\(oldRes) → \(newRes)")
+        }
+        if old.fps != new.fps { out.append("\(old.fps) → \(new.fps) fps") }
+        if old.bitrateKbps != new.bitrateKbps {
+            out.append("\(old.bitrateKbps / 1000) → \(new.bitrateKbps / 1000) Mbps")
+        }
+        if old.hdr != new.hdr { out.append(new.hdr ? "HDR on" : "HDR off") }
+        var rest = new
+        rest.width = old.width; rest.height = old.height
+        rest.fps = old.fps; rest.bitrateKbps = old.bitrateKbps; rest.hdr = old.hdr
+        if rest != old { out.append("other settings") }
+        return out
+    }
+
+    /// Names to offer before any keyboard, from the settings themselves:
+    /// "4K · 120", a word for what it's good for, the computer's name. Never
+    /// "Preset 1". `current` (renaming) goes first; names other presets
+    /// already use are skipped, so the first offer is always free to take.
+    static func nameSuggestions(for settings: StreamSettings, hostName: String?,
+                                current: String? = nil, taken: [String]) -> [String] {
+        let numbers = "\(resolutionLabel(width: settings.width, height: settings.height)) · \(settings.fps)"
+        let word: String
+        if settings.bitrateKbps <= 20_000 { word = "Remote" }
+        else if settings.height >= 2160 { word = "Big Screen" }
+        else if settings.fps >= 120 { word = "Smooth" }
+        else { word = "Balanced" }
+        var candidates = [numbers, word]
+        if let hostName, !hostName.isEmpty { candidates.append(hostName) }
+        let takenSet = Set(taken.map { $0.lowercased() })
+        var out: [String] = []
+        if let current, !current.isEmpty { out.append(current) }
+        for name in candidates {
+            var pick = name
+            var n = 2
+            while takenSet.contains(pick.lowercased()) { pick = "\(name) \(n)"; n += 1 }
+            if !out.contains(where: { $0.lowercased() == pick.lowercased() }) { out.append(pick) }
+        }
+        return Array(out.prefix(3))
     }
 }
 
