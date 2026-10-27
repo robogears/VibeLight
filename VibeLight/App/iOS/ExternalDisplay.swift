@@ -5,7 +5,7 @@ import Observation
 
 /// Drives a connected TV / external monitor as a proper second screen:
 ///   • idle  → the full VibeLight launcher UI (same `AppState`, so it mirrors)
-///   • stream → the game video at the display's NATIVE resolution, fullscreen
+///   • stream → the preset's video, aspect-fitted to the display fullscreen
 /// The iPad keeps the controls and doubles as a trackpad.
 ///
 /// iOS surfaces an external display as a non-interactive `UIWindowScene`.
@@ -24,8 +24,8 @@ final class ExternalDisplay {
     private(set) var isConnected = false
     /// Name for the iPad placeholder.
     private(set) var name = "the display"
-    /// Read output pixels when launching, after scene geometry has settled.
-    /// UI points and the launcher's supersampling scale are not the HDMI mode.
+    /// Current output pixels for display diagnostics. Encoded stream quality
+    /// comes from the selected preset, independently of the HDMI output mode.
     var pixelSize: CGSize? {
         guard let scene = window?.windowScene else { return nil }
         return Self.streamPixelSize(
@@ -211,7 +211,7 @@ final class ExternalDisplay {
     /// upscale to the panel → blur. Forcing ≥2× makes it rasterize at 2× and
     /// DOWNSAMPLE to the panel (super-sampling) → crisp. Never downgrades a
     /// genuine @2×/@3× panel. Only the launcher UI is affected; the stream video
-    /// path requests the panel's true pixel res and is untouched.
+    /// keeps its preset resolution and is aspect-fitted by the display layer.
     private var launcherRenderScale: CGFloat {
         max(2, window?.windowScene?.traitCollection.displayScale ?? 1)
     }

@@ -132,6 +132,15 @@ final class InProcessStreamEngine: StreamEngine {
         MenuSFX.useLauncherAudioSession()
     }
 
+    /// The selected preset owns encoded quality on every screen. TV output
+    /// chooses where the layer is presented, not the host's stream mode.
+    nonisolated static func settingsForStream(_ settings: StreamSettings) -> StreamSettings {
+        var requested = settings
+        // iOS currently negotiates H.264 SDR; do not promise HDR to the host.
+        requested.hdr = false
+        return requested
+    }
+
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {
         // Tear down any prior connection FIRST — moonlight-common-c is
         // single-connection, and a second LiStartConnection over a live one
@@ -172,21 +181,8 @@ final class InProcessStreamEngine: StreamEngine {
             let (info, address) = try await api.serverInfo(for: host)
             resolvedAddress = address
 
-            // User settings pass through untouched — resolution/fps/bitrate are
-            // theirs to choose (a too-hot profile over a relay shows up as FEC
-            // starvation in the log, and they can dial it down in Settings).
-            var effective = settings
-            // The stream is H.264 SDR until iOS HEVC/HDR ships — advertising
-            // hdrMode=1 in /launch while negotiating an SDR stream makes hosts
-            // engage HDR for a client that can't display it.
-            effective.hdr = false
-            // A TV / monitor is attached → stream at ITS native resolution and
-            // render there (fullscreen, sharp) instead of mirroring the iPad.
-            if settings.externalDisplay, let tv = ExternalDisplay.shared.pixelSize {
-                effective.width = (Int(tv.width) / 2) * 2      // H.264 needs even dims
-                effective.height = (Int(tv.height) / 2) * 2
-                NSLog("[VibeLight] external display: streaming at \(effective.width)×\(effective.height)")
-            }
+            let effective = Self.settingsForStream(settings)
+            NSLog("[VibeLight] requested stream: \(effective.width)×\(effective.height)@\(effective.fps) \(effective.bitrateKbps)kbps tv=\(effective.externalDisplay)")
 
             // Remote-input AES material: rikey = 16 random bytes (hex), rikeyid =
             // a positive 31-bit int whose big-endian bytes seed the IV.

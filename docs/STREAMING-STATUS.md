@@ -82,17 +82,18 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 - Frame pacing / A-V sync polish; stats HUD could add host fps + loss %
 
 Done since: **external display / TV output** (`App/iOS/ExternalDisplay.swift` —
-device-verified). When a TV/monitor is attached, the stream renders on it at the
-display's NATIVE resolution while the iPad keeps controls + acts as a trackpad.
+device-verified). When a TV/monitor is attached, the stream uses the selected
+preset's resolution, FPS and bitrate while the iPad keeps controls + acts as a
+trackpad. The video layer fits that stream to the TV's output surface.
 The idle LAUNCHER UI on the TV is super-sampled to ≥2× (`launcherRenderScale` +
 `ExternalLauncherHost`): old 1080p TVs report `displayScale` 1.0, so a fixed-canvas
 `scaleEffect` would rasterize at 1× and UPSCALE to the panel → blurry text. Forcing
 ≥2× (trait override + `\.displayScale` env + layer `contentsScale`, all at the same
-target) rasterizes at 2× and DOWNSAMPLES → crisp. Stream video is unaffected (native
-pixel res, separate root VC). KEY LESSON: needs a real `UIWindowScene` — the legacy `UIWindow.screen=` API no
-longer renders on external screens, and iOS only creates the external scene when
-`UIApplicationSupportsMultipleScenes: true` is in the Info.plist (with
-`UIRequiresFullScreen` still true so no Split View). Setting: Settings ▸ Video ▸
+target) rasterizes at 2× and DOWNSAMPLES → crisp. That UI scale does not alter
+encoded stream quality. KEY LESSON: needs a real `UIWindowScene` — the legacy
+`UIWindow.screen=` API no longer renders on external screens. Multiple scenes
+are enabled in the Info.plist; iPadOS 27 also requires the accessory registration
+described below. Setting: Settings ▸ Video ▸
 Use TV / Monitor (default on, auto-engages). Something stock moonlight-ios can't
 do (their issue #634, open since 2024).
 
@@ -125,9 +126,9 @@ The follow-up on `cantAffordTokens` keeps FPS and bitrate unchanged:
   while it is still their own sublayer. Four host-free iOS tests reproduced the
   stale-owner corruption before the fix, including 1920×1080 TV video being
   resized to the old iPad view's 1194×834 bounds.
-- The stream reads `UIScreen.currentMode.size` at launch, with valid native
-  pixel bounds as a fallback. It no longer caches scene points multiplied by a
-  UI scale. Output orientation and even H.264 dimensions are handled explicitly.
+- That iteration read `UIScreen.currentMode.size` for the stream's size instead
+  of cached scene points multiplied by a UI scale. The preset correction below
+  supersedes automatic display-sized streaming; pixel mode is now diagnostic.
 - Unexpected transport termination uses the existing error overlay with the
   actual connection error code. Normal host exits and explicit quits retain
   their previous end flow.
@@ -136,11 +137,28 @@ Verification: all 49 iOS tests and 261 Mac tests passed; no new compiler warning
 messages were found. The intentional failing iOS run executed all five layout
 tests (four failures and one control pass), then Xcode stalled collecting
 failure diagnostics and was stopped; the corrected full run completed normally.
-The precise cause of the physical three-second disconnect remains unconfirmed.
-Next live check: rebuild this branch, use the owner's normal 4K/120 setup,
-launch/leave/relaunch a game, and record any error code if the stream still ends.
+The owner subsequently reported that the stream "seems to be fixed now". The
+individual contribution of each change was not isolated on hardware.
 The owner could not run a 60 FPS comparison and reported that 4K/120 had worked
 previously; no frame-rate cap or automatic quality reduction was introduced.
+
+### Presets remain authoritative on the TV (27 October 2026)
+
+Owner report: "It seems to be ignoring presets and just jumping to tv resolution
+and fps". `AppState.applySlot` loaded the preset correctly, but the iOS engine
+then replaced its width/height with TV pixels before calling the host. That
+override is removed. `settingsForStream` preserves all preset values except the
+existing unsupported-HDR flag; both the host request and native connection use
+that same prepared value. FPS and bitrate are passed through unchanged.
+
+For example, a 1080p/60 preset on a 4K/120 TV requests a 1080p/60 stream. The TV's
+physical HDMI mode may remain 4K/120; it scales/repeats the stream for that output.
+Choose a 4K/120 preset to request 4K/120 video. Connecting a TV does not replace a
+preset's quality. The current pixel-mode helper remains for display diagnostics.
+
+Regression coverage includes a source check that fails on the old override and
+saved-preset round trips for 720p/60, 1080p/120, 4K/120, TV-on/off and HDR handling.
+The preset correction still needs the owner's physical TV check after rebuilding.
 
 Also done: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
 with double-tap deadzone; Settings ▸ Input ▸ Touch Control), keep-awake during
@@ -156,14 +174,15 @@ delivery in-stream (disable system gestures on the pad while streaming).
    Apollo/Vibepollo has the host side, reverse the wire format from Artemis.
 2. Client-driven virtual display (host makes a display matching the client) —
    Apollo's headline differentiator; VibeLight already sends res/fps in /launch.
-3. "Match current display" auto stream-mode (macOS side; iOS already native).
+3. Optional "Match current display" auto stream-mode; explicit presets remain
+   authoritative on both platforms.
 4. iOS keyboard — ✅ HARDWARE passthrough DONE (`Input/KeyboardMap.swift`,
    `ControllerManager.keyboardForwarder`, `MoonlightSession.sendKeyboardEvent`:
    GCKeyboard raw keys → Windows VK codes via LiSendKeyboardEvent while
    streaming; held keys released on leave). ✅ On-screen keyboard DONE too
    (`App/iOS/StreamKeyboard.swift`: the iPad's own system keyboard raised over
    the stream, each keystroke sent to the host; nothing is buffered).
-5. ✅ iPad → external display at native res — DONE (above).
+5. ✅ iPad → external display — available; preset quality correction above.
 6. In-stream touch-mode switcher (direct / trackpad / off, mid-session).
 7. Surface Apollo per-client tier (permissions, input-only, connect/disconnect
    commands like auto-pause).
