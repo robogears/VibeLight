@@ -34,6 +34,22 @@ struct RootView: View {
         streaming ? .all : []
     }
 
+    #if os(iOS)
+    /// A TV companion panel button: the 44 pt dark circle the panel's lone ✕
+    /// always used, now beside the keyboard button too.
+    private func companionButton(_ symbol: String, label: String,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.45), in: Circle())
+        }
+        .accessibilityLabel(label)
+    }
+    #endif
+
     #endif
 
     /// True when an opaque stream is covering the launcher on THIS screen — so
@@ -97,16 +113,27 @@ struct RootView: View {
         // Live stream covers the whole screen (unscaled) while it's up.
         .overlay {
             if case .streaming = state.session.phase {
-                // A TV is showing the video → the iPad keeps only the controls
-                // and acts as a trackpad (StreamView doesn't host the layer).
+                // A TV is showing the video → the iPad is a companion panel
+                // (StreamView doesn't host the TV's layer).
                 let onTV = state.settings.externalDisplay && ExternalDisplay.shared.isConnected
                 // When the iPad companion has blacked out for the dark room, hide
-                // its lit controls too so the blackout is complete — a touch wakes
-                // everything back (companionDimmed → false).
+                // its lit controls too so the blackout is complete — a touch
+                // brings the game onto the iPad.
                 let dimmedOnTV = onTV && state.session.companionDimmed
-                StreamView(layer: state.session.displayLayer, engine: state.session, hostsLayer: !onTV)
+                // A tap on the companion brings the game onto the iPad too (its
+                // own mirror layer — the TV keeps the main one) until 15 s
+                // without a touch; see InProcessStreamEngine.CompanionView.
+                let gameOnIPad = onTV && state.session.companionShowsStream
+                StreamView(layer: gameOnIPad ? state.session.mirrorLayer : state.session.displayLayer,
+                           engine: state.session, hostsLayer: !onTV || gameOnIPad)
                     .ignoresSafeArea()
-                    .overlay { if onTV { ExternalDisplayPlaceholder(dimmed: state.session.companionDimmed) } }
+                    .overlay {
+                        if onTV && !gameOnIPad {
+                            ExternalDisplayPlaceholder(dimmed: state.session.companionDimmed)
+                                .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.25), value: gameOnIPad)
                     .overlay(alignment: .topLeading) {
                         // Performance HUD (Settings ▸ Advanced ▸ Performance Stats).
                         // On the iPad it also mirrors to the TV; hidden while the
@@ -126,24 +153,26 @@ struct RootView: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         // Leave the stream, and raise the iPad's keyboard so the
-                        // host types as if one were plugged into it. Handheld
-                        // only: on a TV the iPad is already a companion panel
-                        // with its own controls, and nothing covers gameplay.
-                        if !dimmedOnTV && !onTV {
-                            StreamControls(
-                                onLeave: { state.session.disconnect() },
-                                keyboardUp: Binding(
-                                    get: { state.session.onScreenKeyboardUp },
-                                    set: { state.session.onScreenKeyboardUp = $0 }
-                                )
-                            )
+                        // host types as if one were plugged into it. Over the
+                        // game (handheld, or a TV's game shown on the iPad) they
+                        // retire after a few seconds; on the TV companion panel
+                        // nothing covers gameplay, so ✕ and the keyboard stay put
+                        // (owner: keyboard button on by default there).
+                        let keyboardUp = Binding(
+                            get: { state.session.onScreenKeyboardUp },
+                            set: { state.session.onScreenKeyboardUp = $0 }
+                        )
+                        if !onTV || gameOnIPad {
+                            StreamControls(onLeave: { state.session.disconnect() }, keyboardUp: keyboardUp)
                         } else if !dimmedOnTV {
-                            Button { state.session.disconnect() } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 44, height: 44)
-                                    .background(.black.opacity(0.45), in: Circle())
+                            HStack(spacing: 12) {
+                                companionButton(keyboardUp.wrappedValue ? "keyboard.chevron.compact.down" : "keyboard",
+                                                label: keyboardUp.wrappedValue ? "Hide the keyboard" : "Show the keyboard") {
+                                    keyboardUp.wrappedValue.toggle()
+                                }
+                                companionButton("xmark", label: "Leave the stream") {
+                                    state.session.disconnect()
+                                }
                             }
                             .padding(24)
                         }
@@ -373,17 +402,18 @@ private struct ExternalDisplayPlaceholder: View {
     @Environment(\.colorSchemeContrast) private var contrast
     var streaming = true
 
-    /// Whether companion touches actually reach the host: the phantom-cursor
-    /// gate suppresses touch while a gamepad is connected (unless the user
-    /// re-enabled it) — the on-screen copy must not promise a dead trackpad.
+    /// Whether touches on the game (once a tap brings it onto the iPad) reach
+    /// the host: the phantom-cursor gate suppresses touch while a gamepad is
+    /// connected (unless the user re-enabled it) — the copy must not promise
+    /// touch that won't work.
     private var trackpadLive: Bool {
         state.settings.touchWithController ||
             !state.controller.connectedControllers.contains { $0.extendedGamepad != nil }
     }
-    /// True after ~30 s idle while streaming: the companion fades to PURE black
-    /// (only the lit glow + text fade — the base black stays opaque so it still
-    /// hides the video underneath) so it isn't a glowing rectangle in a dark
-    /// room. Any touch wakes it (see `noteCompanionActivity`).
+    /// True 5 s after the panel appears untouched while streaming: the
+    /// companion fades to PURE black (only the lit glow + text fade — the base
+    /// black stays opaque) so it isn't a glowing rectangle in a dark room. Any
+    /// touch brings the game onto the iPad (see `noteCompanionActivity`).
     var dimmed = false
 
     var body: some View {
@@ -396,8 +426,9 @@ private struct ExternalDisplayPlaceholder: View {
         }
         .animation(.easeInOut(duration: 0.8), value: dimmed)
         .contentShape(Rectangle())
-        // Streaming → pass touches through to the trackpad (they also wake the
-        // companion); idle → consume them so the hidden launcher can't be poked.
+        // Streaming → pass touches through to the stream view, where a tap
+        // brings the game onto the iPad (it is not sent to the PC); idle →
+        // consume them so the hidden launcher can't be poked.
         .allowsHitTesting(!streaming)
         .ignoresSafeArea()
     }
@@ -427,8 +458,8 @@ private struct ExternalDisplayPlaceholder: View {
                         .foregroundStyle(Theme.textPrimary)
                     Text(streaming
                          ? (trackpadLive
-                            ? "This screen is a trackpad — drag to move the cursor."
-                            : "Touch is off while a controller is connected — Settings ▸ Input ▸ Touch With Controller.")
+                            ? "Tap to show the game here and play by touch."
+                            : "Tap to show the game here. Touch input is off while a controller is connected — Settings ▸ Input ▸ Touch With Controller.")
                          : "Use your controller to navigate on the big screen.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(contrast == .increased ? Theme.textPrimary.opacity(0.85)

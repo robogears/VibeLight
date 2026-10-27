@@ -83,8 +83,13 @@ shows up as FEC starvation (`X received < Y needed`) — lower the bitrate.
 
 Done since: **external display / TV output** (`App/iOS/ExternalDisplay.swift` —
 device-verified). When a TV/monitor is attached, the stream uses the selected
-preset's resolution, FPS and bitrate while the iPad keeps controls + acts as a
-trackpad. The video layer fits that stream to the TV's output surface.
+preset's resolution, FPS and bitrate while the iPad shows a companion panel
+(✕ + keyboard; black after 5 s untouched). A tap on the panel is not sent to the
+game — it mirrors the game onto the iPad via a second `AVSampleBufferDisplayLayer`
+fed the same sample buffers (`MoonlightSession attachMirrorLayer:`, which requests
+an IDR so the new decoder can start), and touch plays it; 15 s untouched returns to
+the panel and detaches the mirror (no second decode while hidden). The video layer
+fits that stream to the TV's output surface.
 The idle LAUNCHER UI on the TV is super-sampled to ≥2× (`launcherRenderScale` +
 `ExternalLauncherHost`): old 1080p TVs report `displayScale` 1.0, so a fixed-canvas
 `scaleEffect` would rasterize at 1× and UPSCALE to the panel → blurry text. Forcing

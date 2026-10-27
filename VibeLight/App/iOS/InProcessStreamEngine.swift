@@ -47,6 +47,7 @@ final class InProcessStreamEngine: StreamEngine {
     init(api: HostAPIClient) {
         self.api = api
         displayLayer.videoGravity = .resizeAspect
+        mirrorLayer.videoGravity = .resizeAspect
         // Without this, game audio is permanently silent after a phone call,
         // Siri, alarm, or timer: the interruption stops the audio unit and
         // nothing restarts it. Registered once for the engine's lifetime.
@@ -245,6 +246,7 @@ final class InProcessStreamEngine: StreamEngine {
             // Route the video to the TV if one is attached (else it stays on the
             // iPad's StreamView). Safe when no display is connected — no-op.
             if settings.externalDisplay { ExternalDisplay.shared.present(displayLayer) }
+            tvOutputRequested = settings.externalDisplay
             self.session = session
             self.launchingApp = app
             session.start()
@@ -881,35 +883,84 @@ final class InProcessStreamEngine: StreamEngine {
         }
     }
 
-    // MARK: - Companion (iPad) idle dimming
+    // MARK: - Companion (iPad) while a TV shows the game
 
-    /// While a TV owns the video, the iPad shows a "Playing on the display"
-    /// companion. It fades to black after 30 s with no touch so it isn't a
-    /// glowing rectangle in a dark room while you play on the TV with a
-    /// controller; any touch on the iPad wakes it. Only meaningful when a TV is
-    /// attached (the companion is the only thing that reads this).
-    private(set) var companionDimmed = false
+    /// What the iPad shows while a TV owns the video (owner's design):
+    /// - `.panel`  — "Playing on the display", with ✕ and the keyboard button.
+    ///   Fades to `.dimmed` after `panelDimAfter` untouched.
+    /// - `.dimmed` — pure black (the display itself stays on; keep-awake).
+    /// - `.stream` — the game itself, mirrored onto the iPad and touchable.
+    ///   Back to `.panel` after `streamHideAfter` untouched.
+    /// A touch on the panel or the black screen is NOT sent to the game; it
+    /// only brings the game onto the iPad. Only meaningful with a TV attached.
+    enum CompanionView: Equatable, Sendable { case panel, dimmed, stream }
+    private(set) var companionView: CompanionView = .panel
+    var companionDimmed: Bool { companionView == .dimmed }
+    var companionShowsStream: Bool { companionView == .stream }
+
+    nonisolated static let panelDimAfter: Duration = .seconds(5)
+    nonisolated static let streamHideAfter: Duration = .seconds(15)
+
+    /// The iPad's own copy of the picture for `.stream` (the TV keeps
+    /// `displayLayer`). Fed by the session only while it is showing.
+    @ObservationIgnored let mirrorLayer = AVSampleBufferDisplayLayer()
     @ObservationIgnored private var companionIdleTask: Task<Void, Never>?
     @ObservationIgnored private var lastCompanionActivity = ContinuousClock.now
+    /// Whether this stream was routed to a TV (the Use TV / Monitor setting at
+    /// launch); with a display actually connected, the companion is live.
+    @ObservationIgnored private var tvOutputRequested = false
+    private var companionLive: Bool { tvOutputRequested && ExternalDisplay.shared.isConnected }
 
-    /// Any iPad touch during a stream — wakes the companion and defers the dim.
-    func noteCompanionActivity() {
+    /// The timing rule, pure so it is tested: where the companion goes after
+    /// `idle` untouched, or nil to stay. The keyboard holds the panel up —
+    /// typing on it never touches the stream view, so it would read as idle.
+    nonisolated static func companionNext(_ view: CompanionView, idle: Duration,
+                                          keyboardUp: Bool) -> CompanionView? {
+        switch view {
+        case .panel: return (!keyboardUp && idle >= panelDimAfter) ? .dimmed : nil
+        case .stream: return idle >= streamHideAfter ? .panel : nil
+        case .dimmed: return nil
+        }
+    }
+
+    /// Any iPad touch during a stream. Returns whether a touch BEGINNING now
+    /// may reach the game: false while the panel (lit or black) is up — that
+    /// touch only brings the game onto the iPad.
+    func noteCompanionActivity() -> Bool {
         lastCompanionActivity = .now
-        if companionDimmed { companionDimmed = false }
+        guard companionLive, companionView != .stream else { return true }
+        setCompanionView(.stream)
+        return false
+    }
+
+    private func setCompanionView(_ view: CompanionView) {
+        guard view != companionView else { return }
+        if view == .stream {
+            mirrorLayer.flush()
+            session?.attachMirror(mirrorLayer)
+        } else if companionView == .stream {
+            session?.attachMirror(nil)          // stop decoding a second copy
+            mirrorLayer.flushAndRemoveImage()
+        }
+        companionView = view
+        lastCompanionActivity = .now            // each view gets its full time
     }
 
     private func armCompanionIdle() {
         companionIdleTask?.cancel()
-        companionDimmed = false
-        lastCompanionActivity = .now
+        setCompanionView(.panel)
         companionIdleTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .milliseconds(500))
                 guard let self, !Task.isCancelled else { return }
-                let idle = self.lastCompanionActivity.duration(to: .now)
-                let secs = Double(idle.components.seconds)
-                    + Double(idle.components.attoseconds) / 1e18
-                if secs >= 30, !self.companionDimmed { self.companionDimmed = true }
+                // TV unplugged while the game was on the iPad: the main layer
+                // comes back here, so stop the mirror.
+                if !companionLive, companionView == .stream { setCompanionView(.panel); continue }
+                let idle = lastCompanionActivity.duration(to: .now)
+                if let next = Self.companionNext(companionView, idle: idle,
+                                                 keyboardUp: onScreenKeyboardUp) {
+                    setCompanionView(next)
+                }
             }
         }
     }
@@ -917,7 +968,7 @@ final class InProcessStreamEngine: StreamEngine {
     private func cancelCompanionIdle() {
         companionIdleTask?.cancel()
         companionIdleTask = nil
-        companionDimmed = false
+        setCompanionView(.panel)
     }
 
     func quitCompletely(host: StreamHost) async {
@@ -958,7 +1009,7 @@ final class InProcessStreamEngine: StreamEngine {
             phase = .streaming(app)
             setStreamInput(active: true)
             setStatsHUD(active: true)
-            armCompanionIdle()   // start the iPad companion's 30 s dim timer
+            armCompanionIdle()   // the iPad companion's panel / dim / show-the-game timers
             onStreamDidStart?(nil)
         }
         // Announce every attached pad — with its REAL family — so the host

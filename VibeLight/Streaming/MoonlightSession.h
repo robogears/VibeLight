@@ -63,6 +63,11 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// first (IDR) frame has somewhere to go.
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer;
 
+/// A second layer that gets every decoded frame too (nil detaches): the iPad
+/// shows the game while a TV owns the main layer. Attaching asks the host for
+/// a keyframe, since a decoder can't start mid-GOP. Safe from any thread.
+- (void)attachMirrorLayer:(nullable AVSampleBufferDisplayLayer *)layer NS_SWIFT_NAME(attachMirror(_:));
+
 /// Starts the connection on a background thread. Stage callbacks arrive on the
 /// main queue. Non-blocking.
 - (void)start;

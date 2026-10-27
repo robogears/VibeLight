@@ -4,6 +4,7 @@
 #import <Limelight.h>
 #import <opus_multistream.h>
 #import <string.h>
+#import <os/lock.h>
 #include <atomic>
 
 /// True when an active VPN/tunnel interface is up (Tailscale, WireGuard, …).
@@ -77,6 +78,11 @@ static void ArCleanup(void);
     char _addressC[256], _appVersionC[64], _gfeVersionC[128], _rtspUrlC[512];
     // Video decode state.
     AVSampleBufferDisplayLayer *_displayLayer;
+    // The iPad's copy of the picture while a TV shows the game. Set from the
+    // main thread mid-stream, read per frame on the decode thread — hence
+    // the lock (zero-initialised ivar == OS_UNFAIR_LOCK_INIT).
+    AVSampleBufferDisplayLayer *_mirrorLayer;
+    os_unfair_lock _mirrorLock;
     CMVideoFormatDescriptionRef _formatDesc;
     NSData *_sps, *_pps, *_vps;
     int _videoFormat;
@@ -103,6 +109,16 @@ static void ArCleanup(void);
 
 - (void)attachDisplayLayer:(AVSampleBufferDisplayLayer *)layer {
     _displayLayer = layer;
+}
+
+- (void)attachMirrorLayer:(AVSampleBufferDisplayLayer *)layer {
+    os_unfair_lock_lock(&_mirrorLock);
+    _mirrorLayer = layer;
+    os_unfair_lock_unlock(&_mirrorLock);
+    // Without a keyframe the new decoder shows nothing until the host happens
+    // to send one — and Sunshine-family hosts only send them on request.
+    // Only while this session is the live connection.
+    if (layer && sActive == self) LiRequestIdrFrame();
 }
 
 + (NSString *)launchUrlQueryParameters {
@@ -605,6 +621,20 @@ static int startCodeLen(const uint8_t *p, int len) {
         CFDictionarySetValue(d, kCMSampleAttachmentKey_DisplayImmediately, kCFBooleanTrue);
     }
     [_displayLayer enqueueSampleBuffer:sb];
+    // The iPad mirror (attachMirrorLayer) gets the same frame. Its failures
+    // never touch this function's return code — the main picture is fine —
+    // so it resets itself and asks for a keyframe out of band instead.
+    os_unfair_lock_lock(&_mirrorLock);
+    AVSampleBufferDisplayLayer *mirror = _mirrorLayer;
+    os_unfair_lock_unlock(&_mirrorLock);
+    if (mirror) {
+        if (mirror.status == AVQueuedSampleBufferRenderingStatusFailed) {
+            [mirror flush];
+            LiRequestIdrFrame();
+        } else {
+            [mirror enqueueSampleBuffer:sb];
+        }
+    }
     CFRelease(sb);
     if (_framesEnqueued++ == 0) {
         CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(_formatDesc);

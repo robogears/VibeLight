@@ -216,8 +216,11 @@ with native passthrough + mouse fallback, Moonlight-parity perf HUD, keep-awake,
 quit-on-exit). **External display / TV output (SHIPPED, device-verified & loved):**
 when a TV/monitor is attached (`App/iOS/ExternalDisplay.swift`, a real
 `UIWindowScene`) the game streams to it at the display's NATIVE resolution while
-the iPad becomes a companion — an OLED-safe "Playing on X" panel that doubles as a
-trackpad and fades to black after 30 s idle (any touch wakes it). The idle launcher
+the iPad becomes a companion — an OLED-safe "Playing on X" panel (✕ + keyboard
+buttons) that fades to black after 5 s untouched (display stays on). A tap on it is
+NOT sent to the game: it mirrors the game onto the iPad (second display layer fed
+the same frames, `attachMirror`) and touch plays it; 15 s untouched returns to the
+panel. The leave-hold fade + ring shows on the TV too. The idle launcher
 also renders ON the TV, super-sampled to ≥2× so it's crisp even on 1× 1080p panels
 (see `docs/STREAMING-STATUS.md`). Perf HUD mirrors to both iPad and TV. Setting:
 Video ▸ Use TV / Monitor (default on, auto-engages). Remaining

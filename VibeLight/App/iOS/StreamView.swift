@@ -100,9 +100,14 @@ struct StreamView: UIViewRepresentable {
 
         private func forward(_ touches: Set<UITouch>, phase: MoonlightTouchPhase) {
             guard let engine else { return }
-            engine.noteCompanionActivity()   // any touch wakes the iPad companion
+            // Any touch keeps the iPad companion awake. With a TV showing the
+            // game, a touch on the panel (lit or black) only brings the game
+            // onto the iPad: it gets no pointer id here, so neither it nor its
+            // moves and release ever reach the PC.
+            let newTouchesReachGame = engine.noteCompanionActivity()
             for touch in touches {
                 let allocate = (phase == .down)
+                if allocate, !newTouchesReachGame { continue }
                 // Only a touch that BEGINS on the keyboard is dropped. Gating
                 // here rather than per-event is what keeps a drag that started
                 // on the stream working when it crosses the keyboard — and
