@@ -696,7 +696,15 @@ final class InProcessStreamEngine: StreamEngine {
                                                       leftStickX: 0, leftStickY: 0,
                                                       rightStickX: 0, rightStickY: 0)
                     }
-                    disconnect()
+                    // Input stops NOW (nothing more reaches the game, and the
+                    // still-held chord can't start a second hold), but teardown
+                    // waits for the exit overlay's finish — the frame swelling
+                    // to black (StreamExitOverlay.fireDuration). Disconnecting
+                    // in the same turn removed the stream view mid-swell, so the
+                    // game faded straight into the launcher instead of to black.
+                    setStreamInput(active: false)
+                    try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(60))
+                    if case .streaming = phase { disconnect() }   // unless it already ended on its own
                     return
                 }
                 if elapsed >= grace {
@@ -851,7 +859,11 @@ final class InProcessStreamEngine: StreamEngine {
             var lastTime = ContinuousClock.now
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                guard let self, let session else { return }
+                // `try?` swallows the cancellation, so a task stopped mid-sleep
+                // (the stats button turned off, or the stream ending) used to
+                // run once more and write a reading back: the HUD vanished,
+                // then reappeared frozen. Stop here instead.
+                guard !Task.isCancelled, let self, let session else { return }
                 var s = VLStreamStats()
                 session.getStats(&s)
                 let now = ContinuousClock.now

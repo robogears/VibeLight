@@ -346,24 +346,102 @@ struct LauncherContent: View {
 /// were actually watching.
 struct StreamExitOverlay: View {
     @Environment(AppState.self) private var state
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// "Frame Trace" (owner's pick of four, Oct 2026): an accent line traces
+    /// the screen's edge from the top centre both ways and meets at the
+    /// bottom; gameplay stays visible. At fire the border swells inward and
+    /// swallows the picture. The engine waits this long after fire before
+    /// tearing the stream view down, so the swell always lands on black.
+    static let fireDuration: Duration = .milliseconds(200)
+
+    /// Set one transaction after progress pins at 1, so the p = 1 frame (the
+    /// thick, complete border) is drawn once before the swell runs.
+    @State private var fired = false
 
     var body: some View {
-        ZStack {
-            // While the chord is held the stream sinks toward black (scrim =
-            // ring progress), and it STAYS black at fire (the engine pins
-            // progress to 1 through teardown) so leaving is a fade — not a jump
-            // cut to the launcher.
-            if let p = state.session.streamQuitProgress {
-                Color.black.opacity(p)
-                    .ignoresSafeArea()
+        GeometryReader { geo in
+            let p = state.session.streamQuitProgress
+            // TV points sit ~1.6× further from the eye than the iPad's at the
+            // same visual size; this overlay is also hosted over the TV video.
+            let tv = max(1, min(geo.size.width / 1194, 1.6))
+            ZStack {
+                if let p {
+                    ZStack { frameTrace(p: p, tv: tv, size: geo.size) }
+                        .transition(.opacity.animation(.easeOut(duration: 0.15)))   // cancel: fades away
+                }
             }
-            // The ring, hidden once the hold completes and the fade takes over.
-            if let p = state.session.streamQuitProgress, p < 1 {
-                HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
-                    .transition(.opacity)
+            .onChange(of: p == 1) { _, isFired in
+                withAnimation(reduceMotion ? nil : .easeIn(duration: 0.2)) { fired = isFired }
             }
         }
+        .ignoresSafeArea()
+        // 40 ms progress steps read as one continuous line.
+        .animation(.linear(duration: 0.05), value: state.session.streamQuitProgress)
         .allowsHitTesting(false)   // touches still reach the stream underneath
+    }
+
+    @ViewBuilder
+    private func frameTrace(p: Double, tv: CGFloat, size: CGSize) -> some View {
+        let frame = ScreenPerimeter(inset: 10 * tv, radius: 28 * tv)
+        Color.black.opacity(0.25 * p)
+        frame.stroke(.white.opacity(0.12), lineWidth: 6 * tv)
+            .opacity(min(p * 4, 1))
+        if reduceMotion {
+            // No tracing: the whole border fades in; fire cuts to black.
+            frame.stroke(Theme.accent, lineWidth: 6 * tv).opacity(p)
+            Color.black.opacity(fired ? 1 : 0)
+        } else {
+            // The swell: a black stroke on the same path, wide enough to
+            // cover the screen from its edge inward.
+            frame.stroke(.black, lineWidth: fired ? 2 * hypot(size.width, size.height) : 0)
+            ForEach([1.0, -1.0], id: \.self) { direction in
+                frame.trim(from: 0, to: p / 2)
+                    .stroke(Theme.accent,
+                            style: StrokeStyle(lineWidth: (p >= 1 ? 14 : 6) * tv, lineCap: .round))
+                    .scaleEffect(x: direction)      // the second line runs anticlockwise
+                    .shadow(color: Theme.accentGlow, radius: 10)
+                    .opacity(fired ? 0 : 1)
+            }
+        }
+        (Text("Leaving the stream ").bold()
+            + Text("· game keeps running on the PC").foregroundStyle(Theme.textSecondary))
+            .font(.system(size: 15 * tv, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 14 * tv)
+            .padding(.vertical, 7 * tv)
+            .background(Theme.surface.opacity(0.85), in: Capsule())
+            .opacity(min(p * 3, 1) * (fired ? 0 : 1))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .padding(.bottom, 36 * tv)
+    }
+}
+
+/// The screen's edge as a rounded rectangle whose path STARTS at the top
+/// centre and runs clockwise, so `trim(0, p/2)` grows from there, and its
+/// horizontal mirror runs the other way: the two meet at the bottom centre.
+private struct ScreenPerimeter: Shape {
+    var inset: CGFloat
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let b = rect.insetBy(dx: inset, dy: inset)
+        var p = Path()
+        p.move(to: CGPoint(x: b.midX, y: b.minY))
+        p.addLine(to: CGPoint(x: b.maxX - radius, y: b.minY))
+        p.addArc(tangent1End: CGPoint(x: b.maxX, y: b.minY),
+                 tangent2End: CGPoint(x: b.maxX, y: b.minY + radius), radius: radius)
+        p.addLine(to: CGPoint(x: b.maxX, y: b.maxY - radius))
+        p.addArc(tangent1End: CGPoint(x: b.maxX, y: b.maxY),
+                 tangent2End: CGPoint(x: b.maxX - radius, y: b.maxY), radius: radius)
+        p.addLine(to: CGPoint(x: b.minX + radius, y: b.maxY))
+        p.addArc(tangent1End: CGPoint(x: b.minX, y: b.maxY),
+                 tangent2End: CGPoint(x: b.minX, y: b.maxY - radius), radius: radius)
+        p.addLine(to: CGPoint(x: b.minX, y: b.minY + radius))
+        p.addArc(tangent1End: CGPoint(x: b.minX, y: b.minY),
+                 tangent2End: CGPoint(x: b.minX + radius, y: b.minY), radius: radius)
+        p.closeSubpath()
+        return p
     }
 }
 
