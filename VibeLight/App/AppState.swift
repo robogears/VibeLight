@@ -1107,6 +1107,7 @@ final class AppState {
     func beginPairing(_ host: StreamHost) {
         guard let ip = host.manualAddress ?? host.localAddress ?? host.candidateAddresses.first?.host else { return }
         pairingTask?.cancel()
+        pairingLeftApp = false
         let pin = HostPairing.generatePIN()
         pairing = PairingState(hostID: host.id, hostName: host.name, pin: pin,
                                status: .waiting, webUIURL: "https://\(ip):47990")
@@ -1127,7 +1128,7 @@ final class AppState {
                 savePairedHost(ip: ip, serverCertPEM: certPEM)
                 pairing?.status = .success
             case .wrongPIN: pairing?.status = .wrongPIN
-            case .unreachable: pairing?.status = .unreachable
+            case .unreachable: pairing?.status = Self.unreachablePairingStatus(leftAppWhileWaiting: pairingLeftApp)
             case .alreadyInProgress:
                 pairing?.status = .failed("The host is already handling a pairing request — wait a moment and retry.")
             case .failed(let m): pairing?.status = .failed(m)
@@ -1158,12 +1159,49 @@ final class AppState {
     /// Hold the display awake for the duration of pairing so an iOS auto-lock
     /// can't suspend the app while phase 1 waits for the PIN. iOS only — macOS
     /// already keeps the big-picture display awake.
+    /// Off also ends any background-time assertion pairing took on its way out
+    /// of the foreground (every path that ends a pairing comes through here).
     private func setPairingKeepAwake(_ on: Bool) {
         pairingWantsKeepAwake = on
         refreshKeepAwake()
+        #if os(iOS)
+        if !on { endBGPairTask() }
+        #endif
     }
 
     @ObservationIgnored private var pairingWantsKeepAwake = false
+
+    /// The app went to the background while phase 1 was still waiting for the
+    /// PIN. iOS suspends a backgrounded app within seconds and tears down its
+    /// sockets, so the PC's answer then lands on a dead connection — which
+    /// HostPairing can only report as "unreachable". The classic way in is
+    /// switching to Safari on the iPad to type the PIN into the host's web UI.
+    @ObservationIgnored private var pairingLeftApp = false
+
+    nonisolated static let pairingInterruptedMessage =
+        "Pairing stopped because VibeLight left the screen — iPadOS pauses it while another app is open. "
+        + "Keep VibeLight open here and type the PIN on the PC itself, or on another device "
+        + "(phone or laptop), then choose Try Again."
+
+    /// The PIN panel's how-to. On iPad it steers away from typing the PIN in
+    /// Safari on the same device — the one way pairing reliably dies there.
+    nonisolated static func pairingInstructions(webUIURL: String,
+                                                on platform: RootView.Platform = .current) -> String {
+        switch platform {
+        case .macOS:
+            "Open your host's web UI at \(webUIURL) and type the PIN."
+        case .iOS:
+            "On the PC or another device (not this one), open \(webUIURL) and type the PIN. "
+            + "Keep VibeLight open here until it finishes."
+        }
+    }
+
+    /// What an unreachable pairing result means. After leaving the app it is
+    /// almost always the suspension above, not the network, and "Couldn't
+    /// reach the computer" sent people chasing a network problem they didn't have.
+    nonisolated static func unreachablePairingStatus(leftAppWhileWaiting: Bool) -> PairingState.Status {
+        leftAppWhileWaiting ? .failed(pairingInterruptedMessage) : .unreachable
+    }
 
     /// iOS idle-timer ownership, in one place: the screen must not sleep while
     /// pairing (PIN is on screen, hands are on the other computer) or during a
@@ -1184,6 +1222,30 @@ final class AppState {
 
     #if os(iOS)
     private var bgQuitTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var bgPairTaskID: UIBackgroundTaskIdentifier = .invalid
+
+    /// Pairing is waiting on the PIN and the app is leaving the foreground.
+    /// Ask iOS for its short background window (~30 s): enough for a quick
+    /// switch to the host's web UI and back, so the pending phase-1 request
+    /// can still land. Longer than that, the request dies, and the flag makes
+    /// the failure say why instead of "Couldn't reach the computer".
+    private func holdPairingInBackground() {
+        guard pairing?.status == .waiting else { return }
+        pairingLeftApp = true
+        guard bgPairTaskID == .invalid else { return }
+        bgPairTaskID = UIApplication.shared.beginBackgroundTask(withName: "vibelight.pairing") { [weak self] in
+            self?.endBGPairTask()
+        }
+    }
+
+    /// Idempotent, like endBGQuitTask: safe from the expiration handler and
+    /// from every path that ends a pairing.
+    private func endBGPairTask() {
+        if bgPairTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(bgPairTaskID)
+            bgPairTaskID = .invalid
+        }
+    }
 
     /// Ends the quit-on-background assertion exactly once. Safe to call from both
     /// the completion path and the expiration handler (idempotent via `.invalid`).
@@ -1199,6 +1261,7 @@ final class AppState {
     /// on also /cancel the remote game. Runs inside a UIKit background task so
     /// the HTTPS round-trip has time to land before suspension.
     func handleAppDidEnterBackground() {
+        holdPairingInBackground()
         // DELIBERATELY narrow: only a stream THIS device is running right now.
         // Backgrounding is app-switching, not quitting — a broader predicate
         // (hasActiveRemoteSession) would /cancel games this device merely

@@ -268,7 +268,7 @@ private struct PairingPanel: View {
                                 .background(Theme.accent.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
                         }
                     }
-                    Text("Open your host's web UI at \(pairing.webUIURL) and type the PIN.")
+                    Text(AppState.pairingInstructions(webUIURL: pairing.webUIURL))
                         .font(.system(size: Theme.labelSize(12), weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
