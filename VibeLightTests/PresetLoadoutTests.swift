@@ -78,6 +78,16 @@ final class PresetLoadoutTests: XCTestCase {
         XCTAssertTrue(app.contains("private static let presetsKey = \"vibelight.presets.v3\""))
     }
 
+    /// Owner: the "Using …" toast needs a fade when it goes. It stays mounted
+    /// and fades its opacity out, rather than being removed mid-frame.
+    func testToastFadesOut() throws {
+        let overlays = try source("VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(overlays.contains("withAnimation(.easeInOut(duration: 0.6)) { visible = false }"))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertTrue(root.contains("PresetToastHost()"))
+        XCTAssertFalse(root.contains("if let toast = state.presetToast"))
+    }
+
     /// The row has no empty slots: chips, then "+" only when the settings
     /// aren't saved anywhere; Settings lost its slot strip for a pill.
     func testRowAndSettings() throws {

@@ -334,13 +334,9 @@ struct LauncherContent: View {
 
             // Preset confirmations ("Using X", "Deleted X · Undo"), just above
             // the hint bar, under the cards so a card never hides behind one.
-            if let toast = state.presetToast, state.overlay == nil {
-                PresetToastView(toast: toast)
-                    .id(toast.serial)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 96)
-                    .transition(.opacity.combined(with: .offset(y: 8)))
-            }
+            PresetToastHost()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 96)
 
             // A held button (the still-running card's Quit) fills itself.
             if let hold = state.controller.holdProgress, hold.kind != .quitGameButton {
@@ -354,7 +350,6 @@ struct LauncherContent: View {
         .environment(\.liftGeometry, lift)
         .animation(Theme.focusSpring, value: state.screen)
         .animation(.easeOut(duration: 0.18), value: state.overlay)
-        .animation(.easeOut(duration: 0.2), value: state.presetToast?.serial)
         .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)
     }
 }

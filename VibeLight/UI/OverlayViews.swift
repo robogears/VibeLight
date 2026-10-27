@@ -813,6 +813,46 @@ private struct SuggestionPill: View {
     }
 }
 
+/// Where the preset toast lives. It eases in, and when its time is up (or a
+/// card opens over it) it FADES out — the last message stays on screen while
+/// it fades, instead of blinking away the moment AppState clears it (owner:
+/// "needs a fade animation when it disappears").
+struct PresetToastHost: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The message on screen — kept after AppState clears it, for the fade.
+    @State private var shown: AppState.PresetToast?
+    @State private var visible = false
+
+    private var wanted: AppState.PresetToast? { state.overlay == nil ? state.presetToast : nil }
+
+    var body: some View {
+        ZStack {
+            if let shown {
+                PresetToastView(toast: shown)
+                    .opacity(visible ? 1 : 0)
+                    .offset(y: visible || reduceMotion ? 0 : 10)
+                    .scaleEffect(visible || reduceMotion ? 1 : 0.97)
+                    .allowsHitTesting(visible)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear { show(wanted) }
+        .onChange(of: wanted) { _, new in show(new) }
+    }
+
+    private func show(_ toast: AppState.PresetToast?) {
+        if let toast {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                shown = toast
+                visible = true
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.6)) { visible = false }
+        }
+    }
+}
+
 /// The preset confirmation under the header: "Using Tailscale · 1080p · 60
 /// fps · 20 Mbps", or "Deleted Handheld · Undo" (Y, or tap it).
 struct PresetToastView: View {
