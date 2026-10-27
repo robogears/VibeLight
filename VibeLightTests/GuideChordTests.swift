@@ -79,3 +79,45 @@ final class GuideChordTests: XCTestCase {
         XCTAssertEqual(c.process(a | start, now: at(0)), .init(flags: a | start))
     }
 }
+
+/// The leave chord (Start + Select + L1 + R1) never reaches the game while it
+/// forms or as it's released (owner: the game sometimes played the inputs).
+final class LeaveChordGuardTests: XCTestCase {
+    private let start = LeaveChordGuard.start, back = LeaveChordGuard.back
+    private let lb = LeaveChordGuard.lb, rb = LeaveChordGuard.rb, a: Int32 = 0x1000
+
+    func testFormingChordIsHidden() {
+        var g = LeaveChordGuard()
+        XCTAssertEqual(g.filter(lb), lb)                          // one bumper: play
+        XCTAssertEqual(g.filter(lb | start), 0)                    // Start joins: hidden
+        XCTAssertEqual(g.filter(lb | start | rb), 0)
+        XCTAssertEqual(g.filter(lb | start | rb | back), 0)
+    }
+
+    func testReleasingOneByOneStaysHiddenUntilAllAreUp() {
+        var g = LeaveChordGuard()
+        _ = g.filter(start | back | lb | rb)
+        XCTAssertEqual(g.filter(back | lb | rb), 0)
+        XCTAssertEqual(g.filter(lb), 0)
+        XCTAssertEqual(g.filter(0), 0)
+        XCTAssertFalse(g.engaged)
+        XCTAssertEqual(g.filter(lb), lb)                          // normal again
+    }
+
+    func testBumpersAloneAreOrdinaryPlay() {
+        var g = LeaveChordGuard()
+        XCTAssertEqual(g.filter(lb | rb), lb | rb)
+        XCTAssertFalse(g.engaged)
+    }
+
+    func testOtherButtonsStillPass() {
+        var g = LeaveChordGuard()
+        XCTAssertEqual(g.filter(start | lb | a), a)
+    }
+
+    func testLoneStartIsUntouched() {
+        var g = LeaveChordGuard()
+        XCTAssertEqual(g.filter(start), start)
+        XCTAssertEqual(g.filter(0), 0)
+    }
+}

@@ -384,6 +384,9 @@ final class InProcessStreamEngine: StreamEngine {
     /// Select + Start → one Guide press, per pad (keyed like `padSlots`). See
     /// GuideChord for why, and the rules.
     @ObservationIgnored private var guideChords: [ObjectIdentifier: GuideChord] = [:]
+    /// Keeps the leave chord's buttons out of the game while it's pressed and
+    /// released, per pad (LeaveChordGuard).
+    @ObservationIgnored private var leaveGuards: [ObjectIdentifier: LeaveChordGuard] = [:]
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -526,6 +529,7 @@ final class InProcessStreamEngine: StreamEngine {
         if active {
             resetPadSlots()
             guideChords.removeAll()
+            leaveGuards.removeAll()
             keyboardModifiers = 0
             heldKeys.removeAll()
             setSystemGestures(disabled: true)
@@ -817,6 +821,12 @@ final class InProcessStreamEngine: StreamEngine {
         // gives feedback. While held, the buttons are suppressed (not forwarded
         // to the game). The game keeps running on the PC.
         let quitCombo: Int32 = 0x0010 | 0x0020 | 0x0100 | 0x0200   // START|BACK|LB|RB
+        // What the game may see: the chord's own buttons are held back from
+        // the moment it starts forming until all four are released. Updated
+        // BEFORE the hold check so the full combo engages it too.
+        var leaveGuard = leaveGuards[chordKey] ?? LeaveChordGuard()
+        let gameFlags = leaveGuard.filter(flags)
+        leaveGuards[chordKey] = leaveGuard
         if flags == quitCombo {
             quitHoldPad = pad
             startQuitHold()
@@ -840,7 +850,9 @@ final class InProcessStreamEngine: StreamEngine {
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
         session.sendControllerNumber(
             slot, activeMask: slotMask,
-            buttonFlags: flags | chordOut.pulse,
+            // A held-back Start/Select tap from GuideChord can't slip out while
+            // the leave chord is forming either.
+            buttonFlags: gameFlags | (leaveGuard.engaged ? chordOut.pulse & ~LeaveChordGuard.chord : chordOut.pulse),
             leftTrigger: UInt8(min(max(pad.leftTrigger.value, 0), 1) * 255),
             rightTrigger: UInt8(min(max(pad.rightTrigger.value, 0), 1) * 255),
             leftStickX: axis(pad.leftThumbstick.xAxis.value),

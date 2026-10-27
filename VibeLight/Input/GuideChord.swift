@@ -102,3 +102,35 @@ struct GuideChord {
         }
     }
 }
+
+/// Keeps the leave-stream chord (Start + Select + L1 + R1) out of the game
+/// while it is pressed and released (owner: "sometimes the game plays the
+/// inputs"). Four buttons never land together, so the game used to get the
+/// first ones — Start opening a pause menu — before the full chord existed,
+/// and the rest again as they were let go one by one.
+///
+/// Per pad. Engages once Start or Select is down together with another chord
+/// button (L1 + R1 alone is ordinary play), then hides all four chord buttons
+/// from the game until every one of them is released. Sticks, triggers and
+/// other buttons still pass. Pure, tested.
+struct LeaveChordGuard {
+    static let start: Int32 = 0x0010
+    static let back: Int32 = 0x0020
+    static let lb: Int32 = 0x0100
+    static let rb: Int32 = 0x0200
+    static let chord: Int32 = start | back | lb | rb
+
+    private(set) var engaged = false
+
+    /// The flags the game may see for this pad state.
+    mutating func filter(_ flags: Int32) -> Int32 {
+        let held = flags & Self.chord
+        if !engaged {
+            let menu = held & (Self.start | Self.back)
+            engaged = menu != 0 && held.nonzeroBitCount >= 2
+        }
+        guard engaged else { return flags }
+        if held == 0 { engaged = false; return flags }   // all released: normal again
+        return flags & ~Self.chord
+    }
+}
