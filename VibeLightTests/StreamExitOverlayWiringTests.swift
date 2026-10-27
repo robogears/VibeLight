@@ -87,3 +87,15 @@ final class TVHandOffTests: XCTestCase {
         XCTAssertFalse(engine.contains("pixelSize"))
     }
 }
+
+/// Frame Trace follows the clock between the engine's 40 ms steps (owner:
+/// smoother). iOS-only types, so pinned by source.
+final class ExitOverlaySmoothnessTests: XCTestCase {
+    func testOverlayRedrawsEveryFrameFromTheHoldStart() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appendingPathComponent("VibeLight/UI/RootView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("TimelineView(.animation(paused: !(p.map { $0 < 1 } ?? false)))"))
+        XCTAssertTrue(view.contains("startedAt: state.session.quitHoldStartedAt"))
+        XCTAssertFalse(view.contains(".animation(.linear(duration: 0.05), value: state.session.streamQuitProgress)"))
+    }
+}

@@ -371,10 +371,16 @@ struct StreamExitOverlay: View {
             // TV points sit ~1.6× further from the eye than the iPad's at the
             // same visual size; this overlay is also hosted over the TV video.
             let tv = max(1, min(geo.size.width / 1194, 1.6))
-            ZStack {
-                if let p {
-                    ZStack { frameTrace(p: p, tv: tv, size: geo.size) }
-                        .transition(.opacity.animation(.easeOut(duration: 0.15)))   // cancel: fades away
+            // Redrawn every display refresh while the line is moving (120 Hz on
+            // the iPad), from the hold's start time — the engine's 40 ms steps
+            // only decide nil / running / fired. Paused otherwise.
+            TimelineView(.animation(paused: !(p.map { $0 < 1 } ?? false))) { context in
+                ZStack {
+                    if let shown = Self.displayProgress(engine: p, startedAt: state.session.quitHoldStartedAt,
+                                                        now: context.date) {
+                        ZStack { frameTrace(p: shown, tv: tv, size: geo.size) }
+                            .transition(.opacity.animation(.easeOut(duration: 0.15)))   // cancel: fades away
+                    }
                 }
             }
             .onChange(of: p == 1) { _, isFired in
@@ -382,9 +388,18 @@ struct StreamExitOverlay: View {
             }
         }
         .ignoresSafeArea()
-        // 40 ms progress steps read as one continuous line.
-        .animation(.linear(duration: 0.05), value: state.session.streamQuitProgress)
         .allowsHitTesting(false)   // touches still reach the stream underneath
+    }
+
+    /// The progress to draw at `now`. The engine owns the states (nil = not
+    /// holding, 1 = fired); between them the line follows the clock, not the
+    /// engine's 40 ms steps, so it moves every frame.
+    nonisolated static func displayProgress(engine: Double?, startedAt: Date?, now: Date) -> Double? {
+        guard let engine else { return nil }
+        guard engine < 1, let startedAt else { return engine }
+        let span = InProcessStreamEngine.leaveHoldSeconds - InProcessStreamEngine.leaveHoldGrace
+        let t = now.timeIntervalSince(startedAt) - InProcessStreamEngine.leaveHoldGrace
+        return min(max(t / span, 0), 0.999)   // 1 is the engine's to declare (fire)
     }
 
     @ViewBuilder

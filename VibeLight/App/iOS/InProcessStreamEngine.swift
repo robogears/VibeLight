@@ -155,6 +155,7 @@ final class InProcessStreamEngine: StreamEngine {
         connectedOnce = false
         remoteQuitRequested = false
         streamQuitProgress = nil   // never start a new stream pre-blacked (ON-7 pin)
+        quitHoldStartedAt = nil
         exitCurtain = 0
         activeTouchIDs.removeAll()
         showPerfOverlay = settings.performanceOverlay
@@ -674,6 +675,14 @@ final class InProcessStreamEngine: StreamEngine {
     /// How long Start + Select + L1 + R1 must be held to leave (owner: 0.7 s
     /// longer than the original 1.0 s, so it can't fire by accident).
     nonisolated static let leaveHoldSeconds = 1.7
+    /// Nothing is drawn for this long, so a brushed chord never flashes.
+    nonisolated static let leaveHoldGrace = 0.15
+
+    /// When the current hold began (nil = not holding). `StreamExitOverlay`
+    /// computes its progress from this on every display refresh, so Frame
+    /// Trace draws at 120 Hz instead of jumping between the 40 ms steps of
+    /// `streamQuitProgress` (owner: "cool but kind of choppy").
+    private(set) var quitHoldStartedAt: Date?
 
     /// Black over EVERYTHING — iPad and the TV launcher — from the end of the
     /// hold until the stream has fully closed (owner: "fade to black for a
@@ -695,8 +704,9 @@ final class InProcessStreamEngine: StreamEngine {
     private func startQuitHold() {
         guard quitHoldTask == nil else { return }
         let start = ContinuousClock.now
+        quitHoldStartedAt = Date()
         quitHoldTask = Task { @MainActor [weak self] in
-            let grace = 0.15, total = Self.leaveHoldSeconds
+            let grace = Self.leaveHoldGrace, total = Self.leaveHoldSeconds
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(40))
                 guard let self, !Task.isCancelled else { return }
@@ -750,6 +760,7 @@ final class InProcessStreamEngine: StreamEngine {
         quitHoldTask?.cancel()
         quitHoldTask = nil
         quitHoldPad = nil
+        quitHoldStartedAt = nil
         if streamQuitProgress != nil { streamQuitProgress = nil }
     }
 
