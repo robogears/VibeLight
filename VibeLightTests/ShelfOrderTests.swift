@@ -35,3 +35,43 @@ final class ShelfOrderTests: XCTestCase {
         XCTAssertEqual(order(apps, running: 99), ["Desktop", "Steam Big Picture"])
     }
 }
+
+/// Owner: the games row holds still for the first few tiles, keeps the
+/// selected tile in the middle after that, and holds still at the end.
+final class ShelfScrollTests: XCTestCase {
+    private let viewport: CGFloat = 1440   // iPad / TV design canvas width
+
+    func testFirstTilesNeverMoveTheRow() {
+        for i in 0..<3 {
+            XCTAssertEqual(ShelfScroll.offset(index: i, count: 12, viewport: viewport), 0, "tile \(i)")
+        }
+    }
+
+    func testMiddleTilesSitInTheMiddle() {
+        let i = 6
+        let offset = ShelfScroll.offset(index: i, count: 12, viewport: viewport)
+        let centre = ShelfScroll.leading + CGFloat(i) * (ShelfScroll.tile + ShelfScroll.spacing) + ShelfScroll.tile / 2
+        XCTAssertEqual(centre - offset, viewport / 2, accuracy: 0.01)
+    }
+
+    func testLastTilesNeverScrollPastTheEnd() {
+        let count = 12
+        let content = ShelfScroll.leading + CGFloat(count) * ShelfScroll.tile
+            + CGFloat(count - 1) * ShelfScroll.spacing + ShelfScroll.trailing
+        let end = content - viewport
+        XCTAssertEqual(ShelfScroll.offset(index: count - 1, count: count, viewport: viewport), end, accuracy: 0.01)
+        XCTAssertEqual(ShelfScroll.offset(index: count - 2, count: count, viewport: viewport), end, accuracy: 0.01)
+    }
+
+    func testShortRowNeverMoves() {
+        for i in 0..<4 { XCTAssertEqual(ShelfScroll.offset(index: i, count: 4, viewport: viewport), 0) }
+    }
+
+    /// The anchor asks for exactly the computed spot: at the start a tile
+    /// stays where it already is.
+    func testAnchorLandsTheTileWhereTheOffsetSays() {
+        let a = ShelfScroll.anchor(index: 1, offset: 0, viewport: viewport)
+        let left = a.x * (viewport - ShelfScroll.tile)
+        XCTAssertEqual(left, ShelfScroll.leading + ShelfScroll.tile + ShelfScroll.spacing, accuracy: 0.01)
+    }
+}

@@ -273,6 +273,8 @@ private struct Badge: View {
 
 private struct AppShelf: View {
     @Environment(AppState.self) private var state
+    /// The shelf's visible width, for `ShelfScroll` (0 until first measured).
+    @State private var viewport: CGFloat = 0
 
     var body: some View {
         if let empty = state.emptyShelf {
@@ -311,13 +313,58 @@ private struct AppShelf: View {
             // ScrollView claims all the vertical space on offer, which pushed
             // everything below it to the bottom of the screen.
             .frame(height: AppTileView.Metrics.shelf)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { viewport = $0 }
             .onChange(of: state.focus.focusedItemID) { _, new in
                 guard let new, new.hasPrefix("app:") else { return }
+                // Exactly where ShelfScroll says, never "centre it and let the
+                // scroll view correct": near either end that asked for a spot
+                // past the edge, and the springy correction made the whole
+                // row lurch on the very first move.
+                guard viewport > 0,
+                      let index = state.apps.firstIndex(where: { "app:\(state.appKey($0))" == new })
+                else {
+                    withAnimation(Theme.focusSpring) { proxy.scrollTo(new, anchor: .center) }
+                    return
+                }
+                let offset = ShelfScroll.offset(index: index, count: state.apps.count, viewport: viewport)
                 withAnimation(Theme.focusSpring) {
-                    proxy.scrollTo(new, anchor: .center)
+                    proxy.scrollTo(new, anchor: ShelfScroll.anchor(index: index, offset: offset, viewport: viewport))
                 }
             }
         }
+    }
+}
+
+/// Where the games row scrolls when focus lands on a tile (owner): it holds
+/// still while the first few tiles are selected, then keeps the selected tile
+/// in the middle, then holds still again for the last few — like a console
+/// shelf. Pure, so the rule is tested; sizes mirror `AppShelf`'s layout.
+enum ShelfScroll {
+    static let leading: CGFloat = 72
+    static let trailing: CGFloat = 72
+    static let spacing: CGFloat = 28
+    static var tile: CGFloat { AppTileView.Metrics.art.width }
+
+    /// The scroll offset for focus on tile `index`: its centre in the middle
+    /// of the viewport, clamped to the row's real range. So nothing moves
+    /// until a tile is past the middle, and nothing moves past the end.
+    static func offset(index: Int, count: Int, viewport: CGFloat) -> CGFloat {
+        guard count > 0, viewport > 0 else { return 0 }
+        let content = leading + CGFloat(count) * tile + CGFloat(count - 1) * spacing + trailing
+        let maxOffset = max(0, content - viewport)
+        let centre = leading + CGFloat(index) * (tile + spacing) + tile / 2
+        return min(max(centre - viewport / 2, 0), maxOffset)
+    }
+
+    /// The `scrollTo` anchor that puts tile `index` exactly where `offset`
+    /// leaves it. `scrollTo(id, anchor: a)` lines up the point at fraction
+    /// `a.x` of the tile with the same fraction of the viewport, so the
+    /// tile's left edge lands at `a.x × (viewport − tile)`.
+    static func anchor(index: Int, offset: CGFloat, viewport: CGFloat) -> UnitPoint {
+        let left = leading + CGFloat(index) * (tile + spacing) - offset
+        let room = viewport - tile
+        guard room > 0 else { return .center }
+        return UnitPoint(x: min(max(left / room, 0), 1), y: 0.5)
     }
 }
 
