@@ -1911,17 +1911,29 @@ final class AppState {
     /// the shelf), then the host's own idx/name order for everything untouched.
     private func displayApps(from raw: [StreamApp]) -> [StreamApp] {
         let hostID = selectedHostID ?? ""
+        let running = serverInfo?.runningAppID
         return raw.filter { app in
             guard app.id != 114514, !app.isHidden else { return false }
             let name = app.name.lowercased()
             return !name.isEmpty && name != "terminate" && !name.hasPrefix("terminate ")
         }
         .sorted { a, b in
-            let la = recentLaunches["\(hostID)|\(appKey(a))"] ?? .distantPast
-            let lb = recentLaunches["\(hostID)|\(appKey(b))"] ?? .distantPast
-            if la != lb { return la > lb }
-            return (a.idx ?? Int.max, a.name) < (b.idx ?? Int.max, b.name)
+            Self.shelfPrecedes(a, b, runningID: running,
+                               lastA: recentLaunches["\(hostID)|\(appKey(a))"] ?? .distantPast,
+                               lastB: recentLaunches["\(hostID)|\(appKey(b))"] ?? .distantPast)
         }
+    }
+
+    /// Shelf order: whatever is running on the PC right now first — always
+    /// the far-left tile (owner) — then most recently launched, then the
+    /// host's own order. Every caller sets `serverInfo` before rebuilding the
+    /// list, so the running app is known when this runs; with the PC offline
+    /// nothing is known to be running and the order is plain recency.
+    nonisolated static func shelfPrecedes(_ a: StreamApp, _ b: StreamApp, runningID: Int?,
+                                          lastA: Date, lastB: Date) -> Bool {
+        if let runningID, (a.id == runningID) != (b.id == runningID) { return a.id == runningID }
+        if lastA != lastB { return lastA > lastB }
+        return (a.idx ?? Int.max, a.name) < (b.idx ?? Int.max, b.name)
     }
 
     // MARK: - Launch recency (shelf order)
