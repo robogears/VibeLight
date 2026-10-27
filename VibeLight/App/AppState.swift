@@ -865,6 +865,9 @@ final class AppState {
                 Task { await self.refreshSelectedHost() }
             }
         }
+        // Keep-awake covers the launcher too, so arm it from the start rather
+        // than waiting for a scene-phase change that may not fire on launch.
+        refreshKeepAwake()
     }
 
     // MARK: - Host refresh
@@ -1207,22 +1210,47 @@ final class AppState {
         leftAppWhileWaiting ? .failed(pairingInterruptedMessage) : .unreachable
     }
 
-    /// iOS idle-timer ownership, in one place: the screen must not sleep while
-    /// pairing (PIN is on screen, hands are on the other computer) or during a
-    /// stream (controller input never resets the idle timer — the display
-    /// would sleep mid-game). Streaming keep-awake honors the user's
-    /// "Keep Display Awake" setting; pairing always holds it.
-    private func refreshKeepAwake() {
+    /// iOS idle-timer ownership, in one place. Controller input never resets
+    /// the idle timer, so a big-picture app driven by a pad sleeps mid-game AND
+    /// mid-browse; "Keep Display Awake" (default on) therefore covers the whole
+    /// app in the foreground, not just a stream. Pairing always holds it (the
+    /// PIN is on screen, hands are on the other computer).
+    ///
+    /// Called on every session phase change, on returning to the foreground
+    /// (VibeLightApp), and by the heartbeat below.
+    func refreshKeepAwake() {
         #if os(iOS)
-        let streamActive: Bool
-        switch session.phase {
-        case .streaming, .launching: streamActive = true
-        default: streamActive = false
-        }
-        UIApplication.shared.isIdleTimerDisabled =
-            pairingWantsKeepAwake || (settings.keepAwake && streamActive)
+        let wanted = pairingWantsKeepAwake || settings.keepAwake
+        // Re-arm, don't just assign. iOS can drop the flag on its own (an app
+        // that went to the background and back, a scene connecting for the
+        // TV) while the property still reads true — and assigning the value it
+        // already "has" changes nothing, so the iPad slept mid-stream with
+        // keep-awake on. Flipping it off then on re-applies it for real.
+        if wanted { UIApplication.shared.isIdleTimerDisabled = false }
+        UIApplication.shared.isIdleTimerDisabled = wanted
+        setKeepAwakeHeartbeat(wanted)
         #endif
     }
+
+    #if os(iOS)
+    /// Re-asserts keep-awake every 20 s while it is wanted — under iPadOS's
+    /// shortest auto-lock (30 s), so a silent reset can never outlast it.
+    @ObservationIgnored private var keepAwakeHeartbeat: Task<Void, Never>?
+
+    private func setKeepAwakeHeartbeat(_ on: Bool) {
+        guard on else { keepAwakeHeartbeat?.cancel(); keepAwakeHeartbeat = nil; return }
+        guard keepAwakeHeartbeat == nil else { return }
+        keepAwakeHeartbeat = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled, let self else { return }
+                guard pairingWantsKeepAwake || settings.keepAwake else { continue }
+                UIApplication.shared.isIdleTimerDisabled = false
+                UIApplication.shared.isIdleTimerDisabled = true
+            }
+        }
+    }
+    #endif
 
     #if os(iOS)
     private var bgQuitTaskID: UIBackgroundTaskIdentifier = .invalid

@@ -108,6 +108,7 @@ struct VibeLightApp: App {
                     // didBecomeActive reset in ControllerManager.
                     if phase == .active {
                         state.controller.handleAppBecameActive()
+                        state.refreshKeepAwake()   // iOS can drop keep-awake while we're away
                         VibeLightAppDelegate.forceLandscape()   // re-lock after any rotation while away
                     }
                     // "Quit Game on App Exit" (and general stream teardown):
