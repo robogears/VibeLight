@@ -78,6 +78,13 @@ struct VibeLightApp: App {
                 .preferredColorScheme(.dark)
                 .statusBarHidden(true)
                 .persistentSystemOverlays(.hidden)
+                .background {
+                    if #available(iOS 27.0, *) {
+                        ExternalDisplayAccessoryView()
+                            .frame(width: 0, height: 0)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .task {
                     state.chrome = chrome
                     // A connected TV renders the launcher UI (bound to this same

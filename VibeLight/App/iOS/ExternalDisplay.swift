@@ -8,10 +8,11 @@ import Observation
 ///   • stream → the game video at the display's NATIVE resolution, fullscreen
 /// The iPad keeps the controls and doubles as a trackpad.
 ///
-/// iOS surfaces an external display as a non-interactive `UIWindowScene` (only
-/// when the app opts into multiple scenes — `UIApplicationSceneManifest` in the
-/// Info.plist). We host one window there and swap its root view controller
-/// between the launcher and the raw stream layer. A plain `UIWindow` via the
+/// iOS surfaces an external display as a non-interactive `UIWindowScene`.
+/// iPadOS 27 requires `ExternalDisplayAccessoryView` to request this scene;
+/// earlier releases deliver it automatically. We host one window there and
+/// swap its root view controller between the launcher and the raw stream layer.
+/// A plain `UIWindow` via the
 /// legacy `window.screen=` API no longer renders on modern iOS — it must come
 /// from the scene.
 @MainActor
@@ -77,7 +78,7 @@ final class ExternalDisplay {
 
     // MARK: - External scene lifecycle
 
-    private func sceneConnected(_ ws: UIWindowScene) {
+    func sceneConnected(_ ws: UIWindowScene) {
         guard ws.session.role == .windowExternalDisplayNonInteractive, window == nil else { return }
 
         let bounds = ws.coordinateSpace.bounds
@@ -119,7 +120,7 @@ final class ExternalDisplay {
         window.isHidden = false
     }
 
-    private func sceneDisconnected(_ ws: UIWindowScene) {
+    func sceneDisconnected(_ ws: UIWindowScene) {
         guard ws === window?.windowScene else { return }
         streamLayer?.removeFromSuperlayer()
         window?.isHidden = true

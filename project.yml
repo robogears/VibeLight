@@ -52,7 +52,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.app
         PRODUCT_NAME: VibeLight
-        MARKETING_VERSION: 0.2.2
+        MARKETING_VERSION: 0.2.3
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
@@ -114,11 +114,9 @@ targets:
         LSSupportsGameMode: true
         UILaunchScreen: {}
         UIRequiresFullScreen: true
-        # Opt into multiple scenes so iOS creates an EXTERNAL-DISPLAY scene when a
-        # TV/monitor is attached (ExternalDisplay renders the stream there at the
-        # display's native resolution). No UISceneConfigurations key — SwiftUI's
-        # WindowGroup still provides the primary scene; UIRequiresFullScreen keeps
-        # the iPad from opening Split-View second windows.
+        # Keep primary and external-display scenes. SwiftUI owns the primary;
+        # iPadOS 27 also requires ExternalDisplayAccessoryView to register the TV
+        # scene and its delegate. Earlier systems deliver that scene automatically.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
         UIStatusBarHidden: true
@@ -153,7 +151,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.ios
         PRODUCT_NAME: VibeLight
-        MARKETING_VERSION: 0.2.2
+        MARKETING_VERSION: 0.2.3
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: VibeLightiOS.entitlements

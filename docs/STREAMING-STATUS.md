@@ -96,6 +96,22 @@ longer renders on external screens, and iOS only creates the external scene when
 Use TV / Monitor (default on, auto-engages). Something stock moonlight-ios can't
 do (their issue #634, open since 2024).
 
+### iPadOS 27 external-display compatibility (27 October 2026)
+
+Starting with iPadOS 27, the system supplies the noninteractive TV scene only
+after the app registers a scene accessory. `ExternalDisplayAccessoryView`,
+mounted on the main iPad interface outside launcher/stream transitions, owns
+the registration and unregisters it when dismantled. Its scene delegate feeds
+the existing `ExternalDisplay` renderer. iPadOS 17–26 keep the automatic scene
+path. See [Apple's registration guidance](https://developer.apple.com/documentation/UIKit/presenting-content-on-a-connected-display?changes=_3).
+
+Verification: 261 Mac tests and 34 iOS tests passed, including registration
+lifetime/cleanup and a main-interface wiring regression that fails when the
+registration is removed. On 27 October 2026 the owner confirmed the wired TV
+mode was "working great" on iPadOS 27 with version 0.2.3 installed. Separate
+results were not reported for every stream start/leave/relaunch and
+unplug/reconnect scenario; those remain useful checks after future changes.
+
 Also done: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
 with double-tap deadzone; Settings ▸ Input ▸ Touch Control), keep-awake during
 stream (`refreshKeepAwake` — Auto-Lock killed an 8-minute session; gamepad
