@@ -222,8 +222,8 @@ NOT sent to the game: it mirrors the game onto the iPad (second display layer fe
 the same frames, `attachMirror`) and touch plays it; 15 s untouched returns to the
 panel. The leave-hold fade + ring shows on the TV too. The idle launcher
 also renders ON the TV, super-sampled to ≥2× so it's crisp even on 1× 1080p panels
-(see `docs/STREAMING-STATUS.md`). Perf HUD mirrors to both iPad and TV. Setting:
-Video ▸ Use TV / Monitor (default on, auto-engages). Remaining
+(see `docs/STREAMING-STATUS.md`). Perf HUD mirrors to both iPad and TV. Always on
+and auto-engages (the Use TV / Monitor option was removed by the owner). Remaining
 roadmap lives in `docs/STREAMING-STATUS.md` (HEVC/HDR, rumble, frame pacing).
 `DisabledStreamEngine` remains only as the contracts stub for platforms without
 an engine. GPLv3 = no App Store; sideload via Xcode/AltStore.

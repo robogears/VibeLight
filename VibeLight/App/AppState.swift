@@ -2904,7 +2904,7 @@ final class AppState {
     enum SettingsRow: String, CaseIterable {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
-        case touchControls, touchWithController, externalDisplay, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
+        case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
         case background, interfaceSize
         case appVersion, checkUpdates, restartSetup
@@ -2931,7 +2931,6 @@ final class AppState {
             case .menuSounds: "Menu Sounds"
             case .touchControls: "Touch Control"
             case .touchWithController: "Touch With Controller"
-            case .externalDisplay: "Use TV / Monitor"
             case .absoluteMouse: "Remote Desktop Mouse"
             case .swapMouseButtons: "Swap Mouse Buttons"
             case .reverseScrolling: "Reverse Scrolling"
@@ -2972,7 +2971,7 @@ final class AppState {
                 // value that never took effect (audit QUA-ios-inert-settings).
                 // Re-add each when its decode path ships — HEVC/HDR/frame-pacing
                 // are on the roadmap (see InProcessStreamEngine + STREAMING-STATUS).
-                [.resolution, .fps, .bitrate, .externalDisplay]
+                [.resolution, .fps, .bitrate]
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
@@ -3105,7 +3104,6 @@ final class AppState {
         case .menuSounds: menuSounds ? "On" : "Off"
         case .touchControls: settings.touchControls ? "On" : "Off"
         case .touchWithController: settings.touchWithController ? "On" : "Off"
-        case .externalDisplay: settings.externalDisplay ? "On" : "Off"
         case .absoluteMouse: settings.absoluteMouse ? "On" : "Off"
         case .swapMouseButtons: settings.swapMouseButtons ? "On" : "Off"
         case .reverseScrolling: settings.reverseScrolling ? "On" : "Off"
@@ -3187,7 +3185,6 @@ final class AppState {
         case .menuSounds: menuSounds.toggle(); if menuSounds { sfx.play(.move) }
         case .touchControls: settings.touchControls.toggle()
         case .touchWithController: settings.touchWithController.toggle()
-        case .externalDisplay: settings.externalDisplay.toggle()
         case .absoluteMouse: settings.absoluteMouse.toggle()
         case .swapMouseButtons: settings.swapMouseButtons.toggle()
         case .reverseScrolling: settings.reverseScrolling.toggle()

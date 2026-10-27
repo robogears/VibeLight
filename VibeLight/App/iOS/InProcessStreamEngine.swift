@@ -906,7 +906,7 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored let mirrorLayer = AVSampleBufferDisplayLayer()
     @ObservationIgnored private var companionIdleTask: Task<Void, Never>?
     @ObservationIgnored private var lastCompanionActivity = ContinuousClock.now
-    /// Whether this stream was routed to a TV (the Use TV / Monitor setting at
+    /// Whether this stream was routed to a TV (`externalDisplay`, always on, at
     /// launch); with a display actually connected, the companion is live.
     @ObservationIgnored private var tvOutputRequested = false
     private var companionLive: Bool { tvOutputRequested && ExternalDisplay.shared.isConnected }

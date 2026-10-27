@@ -98,8 +98,8 @@ target) rasterizes at 2× and DOWNSAMPLES → crisp. That UI scale does not alte
 encoded stream quality. KEY LESSON: needs a real `UIWindowScene` — the legacy
 `UIWindow.screen=` API no longer renders on external screens. Multiple scenes
 are enabled in the Info.plist; iPadOS 27 also requires the accessory registration
-described below. Setting: Settings ▸ Video ▸
-Use TV / Monitor (default on, auto-engages). Something stock moonlight-ios can't
+described below. Always on and auto-engages (the Use TV / Monitor option was
+removed). Something stock moonlight-ios can't
 do (their issue #634, open since 2024).
 
 ### iPadOS 27 external-display compatibility (27 October 2026)

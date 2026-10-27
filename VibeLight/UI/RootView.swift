@@ -396,7 +396,8 @@ struct ExternalDisplayContent: View {
 /// while idle it says "use your controller". (It once offered a "Use the iPad
 /// Instead" button; the owner removed it. The panel only takes the iPad while a
 /// gamepad can drive the TV — see `companionPanelOwnsIPad` — so there is no
-/// dead end without it; Settings ▸ Video ▸ Use TV / Monitor turns it off.)
+/// dead end without it. TV output itself is always on — the owner removed the
+/// Use TV / Monitor option.)
 private struct ExternalDisplayPlaceholder: View {
     @Environment(AppState.self) private var state
     @Environment(\.colorSchemeContrast) private var contrast

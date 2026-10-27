@@ -201,7 +201,10 @@ struct StreamSettings: Sendable, Codable, Equatable {
     var backgroundGamepad: Bool
     var touchControls: Bool        // iOS: direct touch drives the remote screen
     var touchWithController: Bool  // iOS: keep touch live while a gamepad is connected
-    var externalDisplay: Bool      // iOS: stream to a connected TV at its native res
+    /// iOS: stream to a connected TV. ALWAYS on (owner removed the Use TV /
+    /// Monitor option); kept as a field because the engine and its tests still
+    /// describe the no-TV path with it.
+    var externalDisplay: Bool
     // Advanced
     var vsync: Bool
     var framePacing: Bool
@@ -300,7 +303,9 @@ struct StreamSettings: Sendable, Codable, Equatable {
         backgroundGamepad = try c.decodeIfPresent(Bool.self, forKey: .backgroundGamepad) ?? f.backgroundGamepad
         touchControls = try c.decodeIfPresent(Bool.self, forKey: .touchControls) ?? f.touchControls
         touchWithController = try c.decodeIfPresent(Bool.self, forKey: .touchWithController) ?? f.touchWithController
-        externalDisplay = try c.decodeIfPresent(Bool.self, forKey: .externalDisplay) ?? f.externalDisplay
+        // Always on: a saved Off (setting or preset) from before the option was
+        // removed must not leave the TV unusable with no switch to fix it.
+        externalDisplay = true
         vsync = try c.decodeIfPresent(Bool.self, forKey: .vsync) ?? f.vsync
         framePacing = try c.decodeIfPresent(Bool.self, forKey: .framePacing) ?? f.framePacing
         gameOptimizations = try c.decodeIfPresent(Bool.self, forKey: .gameOptimizations) ?? f.gameOptimizations
