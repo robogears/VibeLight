@@ -193,8 +193,9 @@ struct HintBarView: View {
                                                          hasApps: !state.apps.isEmpty)),
                 ("menu", .settings, "Settings"),
                 ("sheet", .contextMenu, "Shortcuts"),
-                ("quitgame", .quitChord, "Hold to Quit Game"),
             ]
+            // Only when there's a game to quit (the hold is off otherwise).
+            if state.canQuitRemoteGame { home.append(("quitgame", .quitChord, "Hold to Quit Game")) }
             #if os(macOS)
             home.append(("quitapp", .quitApp, "Quit VibeLight"))
             #endif

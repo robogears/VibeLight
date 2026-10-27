@@ -59,3 +59,26 @@ final class ChipBannerTextTests: XCTestCase {
         XCTAssertFalse(home.contains(".frame(maxWidth: 420, alignment: .leading)"))
     }
 }
+
+/// "Keep holding to quit the game" filled even with nothing running. The
+/// quit-game hold (and its hint) now needs a game to quit.
+final class QuitGameGateTests: XCTestCase {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    func testEveryQuitGameHoldIsGated() throws {
+        let cm = try source("VibeLight/Input/ControllerManager.swift")
+        // Pad Menu-hold, the hint button and ⌘⇧Q.
+        XCTAssertEqual(cm.components(separatedBy: "guard quitGameChordEnabled?() ?? true else { return }").count - 1, 3)
+        let app = try source("VibeLight/App/AppState.swift")
+        XCTAssertTrue(app.contains("controller.quitGameChordEnabled = { [weak self] in self?.canQuitRemoteGame ?? false }"))
+        XCTAssertTrue(app.contains("serverInfo?.runningAppID != nil || isLocalStreamActive"))
+    }
+
+    func testHintOnlyWithAGameToQuit() throws {
+        let hints = try source("VibeLight/UI/HintBarView.swift")
+        XCTAssertTrue(hints.contains("if state.canQuitRemoteGame { home.append((\"quitgame\", .quitChord, \"Hold to Quit Game\")) }"))
+    }
+}

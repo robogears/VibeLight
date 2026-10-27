@@ -853,6 +853,7 @@ final class AppState {
             guard let self else { return false }
             return screen == .home && overlay == nil
         }
+        controller.quitGameChordEnabled = { [weak self] in self?.canQuitRemoteGame ?? false }
         focus.onFocusChange = { [weak self] _, new in
             guard let self, let new else { return }
             self.controller.focusTick()   // haptic on every move (unchanged)
@@ -2903,6 +2904,14 @@ final class AppState {
     /// state, NOT for the quit-cleanup decision — see `isLocalStreamActive`.
     var hasActiveRemoteSession: Bool {
         session.phase != .idle || (serverInfo?.currentGameID ?? 0) != 0
+    }
+
+    /// There is a game to quit: the PC reports one running (`runningAppID`
+    /// requires state == busy — `currentgame` alone lingers after a game
+    /// closes), or this device is streaming one. Gates the quit-game hold and
+    /// its hint; they used to appear with nothing running at all.
+    var canQuitRemoteGame: Bool {
+        serverInfo?.runningAppID != nil || isLocalStreamActive
     }
 
     /// THIS device owns a live (or in-progress) stream. Deliberately narrower

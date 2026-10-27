@@ -96,6 +96,10 @@ final class ControllerManager {
     /// hold that visibly fills a ring and then does nothing is worse than
     /// no ring at all.
     @ObservationIgnored var quitAppChordEnabled: (@MainActor () -> Bool)?
+    /// Whether there is a game to quit, so the quit-game hold may start at all
+    /// (pad Menu-hold, ⌘⇧Q, the hint button). Its ring used to fill — "Keep
+    /// holding to quit the game" — with nothing running. nil = allowed.
+    @ObservationIgnored var quitGameChordEnabled: (@MainActor () -> Bool)?
 
     /// Fired on every input event with the modality that produced it, so the
     /// UI can hide the cursor on controller/keyboard use and swap to pointer
@@ -491,7 +495,9 @@ final class ControllerManager {
         let kind: HoldProgress.Kind
         let duration: Duration
         switch event {
-        case .quitChord: kind = .quitGame; duration = Tuning.quitChordHold
+        case .quitChord:
+            guard quitGameChordEnabled?() ?? true else { return }   // nothing running: no ring
+            kind = .quitGame; duration = Tuning.quitChordHold
         case .quitApp:
             guard quitAppChordEnabled?() ?? false else { return }   // home only, like the pad's B-hold
             kind = .quitApp; duration = Tuning.quitAppHold
@@ -524,6 +530,9 @@ final class ControllerManager {
             menuLongPressFired = false
             lastDirectedSource = .pad   // pad hints while the ring fills, like armKeyboardHold
             menuHoldTask?.cancel()
+            // No game to quit → no quit ring; the press stays a plain Menu
+            // press (Settings on release, as below).
+            guard quitGameChordEnabled?() ?? true else { return }
             menuHoldTask = Task { [weak self] in
                 guard let self else { return }
                 await self.runHoldChord(
@@ -706,7 +715,9 @@ final class ControllerManager {
         let kind: HoldProgress.Kind
         let duration: Duration
         switch event {
-        case .quitChord: kind = .quitGame; duration = Tuning.quitChordHold; kbHoldRequiredMods = [.command, .shift]
+        case .quitChord:
+            guard quitGameChordEnabled?() ?? true else { return }   // nothing running: no ring
+            kind = .quitGame; duration = Tuning.quitChordHold; kbHoldRequiredMods = [.command, .shift]
         case .quitApp:   kind = .quitApp;  duration = Tuning.quitAppHold;   kbHoldRequiredMods = [.command]
         default: return
         }
