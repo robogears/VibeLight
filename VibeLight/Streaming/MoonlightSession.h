@@ -68,6 +68,11 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// a keyframe, since a decoder can't start mid-GOP. Safe from any thread.
 - (void)attachMirrorLayer:(nullable AVSampleBufferDisplayLayer *)layer NS_SWIFT_NAME(attachMirror(_:));
 
+/// Asks the host for a keyframe now (no-op unless this is the live
+/// connection) — when the picture moves between the iPad and a TV, so the
+/// screen taking it starts from a clean frame.
+- (void)requestKeyframe;
+
 /// Starts the connection on a background thread. Stage callbacks arrive on the
 /// main queue. Non-blocking.
 - (void)start;

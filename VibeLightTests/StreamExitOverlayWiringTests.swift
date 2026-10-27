@@ -63,3 +63,27 @@ final class StreamExitOverlayWiringTests: XCTestCase {
         XCTAssertTrue(display[start.upperBound..<end.lowerBound].contains("installStreamOverlay()"))
     }
 }
+
+/// Plugging a TV in or out mid-stream (owner: perfect continuity).
+final class TVHandOffTests: XCTestCase {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    /// Without a TV the companion holds lit with a fresh clock, so plugging
+    /// one in shows "Playing on …" instead of going straight to black; and
+    /// the screen taking the picture gets a keyframe.
+    func testHandOffKeepsThePanelAndRequestsAKeyframe() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("if companionLive != wasLive {\n                    wasLive = companionLive\n                    session?.requestKeyframe()"))
+        XCTAssertTrue(engine.contains("if companionView != .panel { setCompanionView(.panel) }\n                    lastCompanionActivity = .now\n                    continue"))
+    }
+
+    /// Stream quality never depends on the display: nothing feeds the TV's
+    /// size into the stream settings.
+    func testDisplaySizeNeverReachesStreamSettings() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertFalse(engine.contains("pixelSize"))
+    }
+}

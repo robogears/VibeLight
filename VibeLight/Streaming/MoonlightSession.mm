@@ -121,6 +121,10 @@ static void ArCleanup(void);
     if (layer && sActive == self) LiRequestIdrFrame();
 }
 
+- (void)requestKeyframe {
+    if (sActive == self) LiRequestIdrFrame();
+}
+
 + (NSString *)launchUrlQueryParameters {
     const char *p = LiGetLaunchUrlQueryParameters();
     return p ? @(p) : @"";

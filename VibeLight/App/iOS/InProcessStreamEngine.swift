@@ -996,13 +996,30 @@ final class InProcessStreamEngine: StreamEngine {
     private func armCompanionIdle() {
         companionIdleTask?.cancel()
         setCompanionView(.panel)
+        var wasLive = companionLive
         companionIdleTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, !Task.isCancelled else { return }
-                // TV unplugged while the game was on the iPad: the main layer
-                // comes back here, so stop the mirror.
-                if !companionLive, companionView == .stream { setCompanionView(.panel); continue }
+                // A TV plugged in or pulled out mid-stream (owner: perfect
+                // continuity). The stream never changes — quality comes only
+                // from the preset (settingsForStream), never the display — so a
+                // restart isn't needed; the picture just moves. Ask for a
+                // keyframe so the screen taking it starts clean.
+                if companionLive != wasLive {
+                    wasLive = companionLive
+                    session?.requestKeyframe()
+                }
+                // No TV: the companion isn't on screen. Hold it lit with a fresh
+                // clock — its 5 s dim used to keep running here, so plugging a
+                // TV in mid-stream put the iPad straight to black instead of
+                // "Playing on …". Unplugged while the game was on the iPad, this
+                // also stops the mirror (the main layer comes back here).
+                if !companionLive {
+                    if companionView != .panel { setCompanionView(.panel) }
+                    lastCompanionActivity = .now
+                    continue
+                }
                 let idle = lastCompanionActivity.duration(to: .now)
                 if let next = Self.companionNext(companionView, idle: idle,
                                                  keyboardUp: onScreenKeyboardUp) {
