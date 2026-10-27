@@ -57,12 +57,26 @@ final class HostPairing: @unchecked Sendable {
             return .failed(error.localizedDescription)
         }
 
+        // Prove the pairing port answers BEFORE parking a request on it. Phase 1
+        // waits up to ten minutes by design, so a port that silently drops
+        // packets looked exactly like "waiting for the PIN": the iPad sat on
+        // "Waiting for pairing…" while the PC, which never got the request,
+        // answered the typed PIN with "Pairing Failed". Now that case fails in
+        // seconds and names the address and the reason.
+        do {
+            _ = try await get(address: address, path: "/serverinfo", query: "", timeout: 5)
+        } catch {
+            return .failed(Self.portUnreachableMessage(address: address, error: error))
+        }
+
         do {
             // Clear any zombie session first: Sunshine keeps a half-open pairing
             // session per uniqueid across aborted attempts (its emplace never
             // replaces), which makes the NEXT attempt die at stage 1. We're not
             // paired yet (pairing is only offered for unpaired hosts), so this
-            // is pure cleanup.
+            // is pure cleanup. (Vibepollo needs none of it: a new getservercert
+            // from the same uniqueid replaces the old session, and its /unpair
+            // never touches pending sessions — so there it is a harmless no-op.)
             await unpair(address)
 
             // Phase 1 — getservercert. The host parks this request until the
@@ -164,12 +178,28 @@ final class HostPairing: @unchecked Sendable {
         }
     }
 
+    /// Why the pre-pairing check failed, with the address and the system's own
+    /// reason, so it says which device can't reach which port.
+    static func portUnreachableMessage(address: String, error: any Error) -> String {
+        "Couldn't reach \(address) on port 47989, which pairing needs (\(error.localizedDescription)) "
+            + "Make sure the host app (Vibepollo, Apollo or Sunshine) is running and that this device "
+            + "can reach the PC on TCP ports 47984–47990."
+    }
+
+    /// The host's `/serverinfo` over plain HTTP, which answers before pairing
+    /// (the HTTPS one refuses an unpaired client). UNAUTHENTICATED — fine for
+    /// a display name, never for identity (uuid, MAC, certificates).
+    func plainServerInfo(address: String) async throws -> ServerInfo? {
+        let xml = try await get(address: address, path: "/serverinfo", query: "", timeout: 5)
+        return HostAPIClient.parseServerInfo(fromXML: Data(xml.utf8))
+    }
+
     // MARK: - Requests
 
     private func get(address: String, path: String = "/pair", query: String, timeout: TimeInterval = 10) async throws -> String {
         var comps = URLComponents()
         comps.scheme = "http"; comps.host = address; comps.port = 47989; comps.path = path
-        comps.percentEncodedQuery = query + "&uniqueid=\(uniqueID)&uuid=\(UUID().uuidString)"
+        comps.percentEncodedQuery = (query.isEmpty ? "" : query + "&") + "uniqueid=\(uniqueID)&uuid=\(UUID().uuidString)"
         // A malformed address (space, slash, bracket-less IPv6) makes comps.url
         // nil — throw instead of trapping (the pairing path can be reached with
         // imported/edited addresses the add-host UI never validated).

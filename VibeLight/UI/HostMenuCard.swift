@@ -279,6 +279,14 @@ private struct PairingPanel: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Theme.textSecondary)
                     }
+                    // Vibepollo refuses a PIN ("Pairing Failed") while more than
+                    // one device has a pairing request open — they last ten
+                    // minutes — and this screen never hears about it.
+                    Text(AppState.pairingFailedOnHostHint)
+                        .font(.system(size: Theme.labelSize(12), weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 380)
                     OverlayButton(id: "pair:cancel", title: "Cancel", symbol: "xmark")
                 }
             case .success:

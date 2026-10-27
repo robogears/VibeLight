@@ -50,6 +50,39 @@ final class PairingInterruptedTests: XCTestCase {
         XCTAssertTrue(text[start.upperBound..<end.lowerBound].contains("if !on { endBGPairTask() }"))
     }
 
+    // MARK: - Pre-pairing reachability check
+
+    /// The failure names the address, the port and the system's reason.
+    func testPortUnreachableMessageSaysWhereAndWhy() {
+        let msg = HostPairing.portUnreachableMessage(address: "100.64.1.2", error: URLError(.timedOut))
+        XCTAssertTrue(msg.contains("100.64.1.2"))
+        XCTAssertTrue(msg.contains("47989"))
+        XCTAssertTrue(msg.contains(URLError(.timedOut).localizedDescription))
+    }
+
+    /// The check runs before the ten-minute phase-1 request is ever sent, or a
+    /// dead port still looks like "Waiting for pairing…".
+    func testReachabilityCheckRunsBeforeGetServerCert() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let text = try String(contentsOf: root.appendingPathComponent("VibeLight/Core/HostPairing.swift"),
+                              encoding: .utf8)
+        let check = try XCTUnwrap(text.range(of: "path: \"/serverinfo\", query: \"\", timeout: 5)"))
+        let phase1 = try XCTUnwrap(text.range(of: "phrase=getservercert"))
+        XCTAssertLessThan(check.lowerBound, phase1.lowerBound)
+        XCTAssertTrue(text.contains("return .failed(Self.portUnreachableMessage(address: address, error: error))"))
+    }
+
+    /// An unpaired computer's plain-HTTP name is display-only: never its uuid.
+    func testUnpairedNameLookupNeverAdoptsIdentity() throws {
+        let text = try appStateSource()
+        let start = try XCTUnwrap(text.range(of: "private func learnUnpairedHostName(_ host: StreamHost) {"))
+        let end = try XCTUnwrap(text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex))
+        let body = text[start.upperBound..<end.lowerBound]
+        XCTAssertTrue(body.contains("upgradeAddedHost(ip: ip, uuid: nil, name: name)"))
+        XCTAssertFalse(body.contains("mac:"))
+    }
+
     private func appStateSource() throws -> String {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()

@@ -1196,6 +1196,10 @@ final class AppState {
         }
     }
 
+    nonisolated static let pairingFailedOnHostHint =
+        "If the PC says “Pairing Failed”, another device may be pairing at the same time. "
+        + "Restart the host app (or wait 10 minutes), then cancel here and pair again."
+
     /// What an unreachable pairing result means. After leaving the app it is
     /// almost always the suspension above, not the network, and "Couldn't
     /// reach the computer" sent people chasing a network problem they didn't have.
@@ -1618,6 +1622,27 @@ final class AppState {
 
     /// Once a probe learns an added host's real UUID/name, upgrade the stored
     /// entry so it de-dupes by UUID and shows a friendly name.
+    /// An unpaired computer added by IP kept showing its IP forever: the name
+    /// comes from /serverinfo, and the HTTPS one refuses a client the host
+    /// hasn't paired. The plain-HTTP one answers anyone (Moonlight names
+    /// unpaired hosts the same way). Unauthenticated, so it supplies the
+    /// display NAME only — never the uuid or MAC, which identify the PC.
+    @ObservationIgnored private var nameLookupsInFlight: Set<String> = []
+
+    private func learnUnpairedHostName(_ host: StreamHost) {
+        guard !host.isPaired, isAddedHost(host), let ip = host.manualAddress, host.name == ip,
+              nameLookupsInFlight.insert(ip).inserted else { return }
+        let lookup = HostPairing(identityProvider: identityProvider, uniqueID: clientUniqueID)
+        Task { [weak self] in
+            let info = try? await lookup.plainServerInfo(address: ip)
+            guard let self else { return }
+            nameLookupsInFlight.remove(ip)
+            if let name = info?.hostname.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                upgradeAddedHost(ip: ip, uuid: nil, name: name)   // id unchanged: no uuid
+            }
+        }
+    }
+
     private func upgradeAddedHost(ip: String, uuid: String?, name: String?, mac: Data? = nil) {
         guard let i = addedHosts.firstIndex(where: { $0.ip == ip }) else { return }
         var changed = false
@@ -1686,6 +1711,7 @@ final class AppState {
             if let ip = host.manualAddress, now.manualAddress == ip { return true }
             return false
         }
+        learnUnpairedHostName(host)
         do {
             let (info, address) = try await api.serverInfo(for: host)
             // The user can switch hosts (or a stream can start) during the
