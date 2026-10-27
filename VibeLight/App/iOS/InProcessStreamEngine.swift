@@ -996,8 +996,9 @@ final class InProcessStreamEngine: StreamEngine {
     private func armCompanionIdle() {
         companionIdleTask?.cancel()
         setCompanionView(.panel)
-        var wasLive = companionLive
         companionIdleTask = Task { @MainActor [weak self] in
+            // Task-local: Swift 6 forbids mutating a captured outer var here.
+            var wasLive = self?.companionLive ?? false
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, !Task.isCancelled else { return }
