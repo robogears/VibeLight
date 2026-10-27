@@ -9,6 +9,8 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var state: AppState?
     private let windowCoordinator = WindowCoordinator()
+    /// Display sleep → Bluetooth controllers off (ControllerPowerOff).
+    private var screenSleepObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The Mac unit tests run inside this app (project.yml TEST_HOST), with
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .environment(state)
                 .preferredColorScheme(.dark)
         )
+        screenSleepObserver = ControllerPowerOff.install()
     }
 
     /// True only when XCTest launched this process to host the unit tests:
@@ -70,6 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (SEV-03)
     func applicationWillTerminate(_ notification: Notification) {
         state?.session.disconnect()
+        // Quitting VibeLight turns the Bluetooth controllers off (owner). Not
+        // when hosting unit tests — they must never touch the owner's pads.
+        if !Self.isHostingUnitTests() { ControllerPowerOff.disconnectAll() }
     }
 
     /// Minimal main menu so ⌘Q / ⌘H / ⌘, work — a borderless app still needs

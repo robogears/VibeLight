@@ -48,6 +48,9 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: VibeLight connects to your gaming PC to list games, fetch box art, and stream them.
+        # IOBluetooth (ControllerPowerOff): without this key macOS kills the
+        # app the moment it touches Bluetooth.
+        NSBluetoothAlwaysUsageDescription: VibeLight turns your Bluetooth controllers off when you quit it or your Mac's display goes to sleep.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibelight.app
