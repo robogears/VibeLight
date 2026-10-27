@@ -20,6 +20,21 @@ xcodebuild -project VibeLight.xcodeproj -scheme VibeLight-iOS -configuration Deb
   -destination 'generic/platform=iOS Simulator' build                                      # iOS
 ```
 
+**Tell William when to regenerate (standing instruction).** The `.xcodeproj` is
+generated and gitignored, so a pulled branch that adds, removes or renames a
+source/test file, or edits `project.yml`, fails in Xcode ("Cannot find type 'X'
+in scope") until it's regenerated. Whenever your changes do any of those, end
+your reply with the exact steps, every time:
+
+```bash
+git pull origin <branch>
+find VibeLight -name "* [0-9].swift" -delete; find VibeLight -name "Info [0-9].plist" -delete
+xcodegen generate
+```
+then rebuild (Xcode may ask to reload the project). When nothing was added,
+removed or renamed and `project.yml` is untouched, a plain pull is enough —
+say so instead.
+
 Schemes: **VibeLight** (macOS) and **VibeLight-iOS** (iPhone/iPad). Plus
 **MoonlightCore**, a static-lib target compiling the vendored moonlight-common-c
 C core for iOS. (A `VibeLight-Dev` coexisting build existed until 0.2.1 — a
