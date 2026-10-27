@@ -825,7 +825,20 @@ final class InProcessStreamEngine: StreamEngine {
     /// task while streaming with the "Performance Stats" setting on.
     private(set) var perfStats: String?
     @ObservationIgnored private var statsTask: Task<Void, Never>?
-    @ObservationIgnored private var showPerfOverlay = false
+    /// Whether this stream shows the perf HUD. Starts from Settings ▸
+    /// Performance Stats (the active preset's value) at every launch; the
+    /// stream controls' button flips it for THIS stream only. Observed, so the
+    /// button shows its state.
+    private(set) var showPerfOverlay = false
+
+    /// The in-stream Performance Stats button (owner). Deliberately leaves the
+    /// setting alone: editing settings mid-game would detach the active preset
+    /// (its marker clears the moment they differ), and the next stream should
+    /// come back to what the preset says.
+    func togglePerformanceStats() {
+        showPerfOverlay.toggle()
+        if case .streaming = phase { setStatsHUD(active: true) }
+    }
 
     private func setStatsHUD(active: Bool) {
         statsTask?.cancel()

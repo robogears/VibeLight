@@ -23,6 +23,10 @@ struct StreamControls: View {
 
     let onLeave: () -> Void
     @Binding var keyboardUp: Bool
+    /// Performance Stats for this stream (owner: an on/off button beside the
+    /// keyboard and ✕). Lit while on.
+    let statsOn: Bool
+    let onToggleStats: () -> Void
 
     /// How long the controls linger at stream start (and after each reveal)
     /// before retiring. Long enough to notice and use, short enough not to sit
@@ -109,6 +113,8 @@ struct StreamControls: View {
                           label: keyboardUp ? "Hide the keyboard" : "Show the keyboard") {
                 keyboardUp.toggle()
             }
+            controlButton("speedometer", label: "Performance stats", isOn: statsOn,
+                          action: onToggleStats)
         }
         .padding(24)
         .offset(x: offsetX)
@@ -171,7 +177,8 @@ struct StreamControls: View {
             .accessibilityAction { reveal() }
     }
 
-    private func controlButton(_ symbol: String, label: String,
+    /// `isOn` (on/off buttons only) lights the circle in the accent colour.
+    private func controlButton(_ symbol: String, label: String, isOn: Bool? = nil,
                                action: @escaping () -> Void) -> some View {
         Button {
             action()
@@ -179,11 +186,13 @@ struct StreamControls: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(isOn == true ? Theme.onAccent : .white)
                 .frame(width: 44, height: 44)
-                .background(.black.opacity(0.45), in: Circle())
+                .background(isOn == true ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.black.opacity(0.45)),
+                            in: Circle())
         }
         .accessibilityLabel(label)
+        .accessibilityValue(isOn.map { $0 ? "On" : "Off" } ?? "")
     }
 
     // MARK: - Show / hide

@@ -656,11 +656,36 @@ final class AppState {
         }
         #endif
 
+        migrateTouchDefaultsOnce()
         wireCallbacks()
         rebuildFocus()
         focus.focusFirst()
         startRefreshLoop()
         runStartupChecks()
+    }
+
+    private static let touchDefaultsMigratedKey = "vibelight.migrated.touchDefaultsOn"
+
+    /// Touch Control and Touch With Controller became default-on (owner, Oct
+    /// 2026). Once, turn them on in what was saved before — every preset FIRST,
+    /// then the live settings: settings' didSet drops the active-preset marker
+    /// the moment the two disagree, and an old preset left at Off would switch
+    /// touch back off the next time it was applied.
+    private func migrateTouchDefaultsOnce() {
+        guard !UserDefaults.standard.bool(forKey: Self.touchDefaultsMigratedKey) else { return }
+        for i in presets.indices {
+            presets[i]?.settings.touchControls = true
+            presets[i]?.settings.touchWithController = true
+        }
+        persistPresets()
+        // One assignment, not two: between two separate ones the live settings
+        // would briefly differ from the (already updated) preset and lose its
+        // marker. didSet persists.
+        var updated = settings
+        updated.touchControls = true
+        updated.touchWithController = true
+        settings = updated
+        UserDefaults.standard.set(true, forKey: Self.touchDefaultsMigratedKey)
     }
 
     // MARK: - Presets
@@ -1311,7 +1336,7 @@ final class AppState {
         }
     }
 
-    /// iOS "Quit Game on App Exit": backgrounding suspends our sockets, so the
+    /// iOS quit game on app exit (always on): backgrounding suspends our sockets, so the
     /// stream can't survive anyway — tear down locally, and when the setting is
     /// on also /cancel the remote game. Runs inside a UIKit background task so
     /// the HTTPS round-trip has time to land before suspension.
@@ -2905,7 +2930,7 @@ final class AppState {
         case resolution, fps, bitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
-        case vsync, framePacing, gameOpt, quitAppAfter, keepAwake, performanceOverlay, stopStreamOnExit
+        case vsync, framePacing, keepAwake, performanceOverlay
         case background, interfaceSize
         case appVersion, checkUpdates, restartSetup
 
@@ -2939,11 +2964,8 @@ final class AppState {
             case .backgroundGamepad: "Background Gamepad"
             case .vsync: "V-Sync"
             case .framePacing: "Frame Pacing"
-            case .gameOpt: "Game Optimizations"
-            case .quitAppAfter: "Quit Game on Disconnect"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
-            case .stopStreamOnExit: "Quit Game on App Exit"
             case .background: "Background"
             case .interfaceSize: "Interface Size"
             case .appVersion: "Version"
@@ -2989,9 +3011,9 @@ final class AppState {
                 // V-Sync and Frame Pacing are macOS stream-helper (moonlight-qt)
                 // flags with no effect on the iOS in-process engine — hidden so
                 // they don't read as working toggles (audit QUA-ios-inert-settings).
-                [.gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                [.keepAwake, .performanceOverlay]
                 #else
-                [.vsync, .framePacing, .gameOpt, .quitAppAfter, .keepAwake, .performanceOverlay, .stopStreamOnExit]
+                [.vsync, .framePacing, .keepAwake, .performanceOverlay]
                 #endif
             case .themes: [.background, .interfaceSize]
             }
@@ -3112,11 +3134,8 @@ final class AppState {
         case .backgroundGamepad: settings.backgroundGamepad ? "On" : "Off"
         case .vsync: settings.vsync ? "On" : "Off"
         case .framePacing: settings.framePacing ? "On" : "Off"
-        case .gameOpt: settings.gameOptimizations ? "On" : "Off"
-        case .quitAppAfter: settings.quitAppAfter ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
-        case .stopStreamOnExit: settings.stopStreamOnExit ? "On" : "Off"
         case .background: backgroundTheme.title
         case .interfaceSize: interfaceSize.label
         case .appVersion: "v\(updateService.currentVersion)"
@@ -3192,11 +3211,8 @@ final class AppState {
         case .backgroundGamepad: settings.backgroundGamepad.toggle()
         case .vsync: settings.vsync.toggle()
         case .framePacing: settings.framePacing.toggle()
-        case .gameOpt: settings.gameOptimizations.toggle()
-        case .quitAppAfter: settings.quitAppAfter.toggle()
         case .keepAwake: settings.keepAwake.toggle(); refreshKeepAwake()
         case .performanceOverlay: settings.performanceOverlay.toggle()
-        case .stopStreamOnExit: settings.stopStreamOnExit.toggle()
         case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
         case .interfaceSize: interfaceSize = Self.cycle(interfaceSize, forward: forward)
         case .appVersion, .checkUpdates, .restartSetup: break  // not value rows

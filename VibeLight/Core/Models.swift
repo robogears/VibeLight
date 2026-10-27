@@ -253,7 +253,7 @@ struct StreamSettings: Sendable, Codable, Equatable {
          muteOnFocusLoss: Bool = false, absoluteMouse: Bool = false, swapMouseButtons: Bool = false,
          reverseScrolling: Bool = false, captureSystemKeys: CaptureSystemKeys = .fullscreen,
          swapGamepadButtons: Bool = false, backgroundGamepad: Bool = false, touchControls: Bool = true,
-         touchWithController: Bool = false,
+         touchWithController: Bool = true,
          externalDisplay: Bool = true,
          vsync: Bool = true,
          framePacing: Bool = false, gameOptimizations: Bool = true, quitAppAfter: Bool = false,
@@ -308,11 +308,15 @@ struct StreamSettings: Sendable, Codable, Equatable {
         externalDisplay = true
         vsync = try c.decodeIfPresent(Bool.self, forKey: .vsync) ?? f.vsync
         framePacing = try c.decodeIfPresent(Bool.self, forKey: .framePacing) ?? f.framePacing
-        gameOptimizations = try c.decodeIfPresent(Bool.self, forKey: .gameOptimizations) ?? f.gameOptimizations
-        quitAppAfter = try c.decodeIfPresent(Bool.self, forKey: .quitAppAfter) ?? f.quitAppAfter
+        // Game Optimizations, Quit Game on Disconnect and Quit Game on App Exit
+        // were removed as options (owner); each is pinned to its old default
+        // so a saved value from before — in settings or a preset — has no
+        // hidden effect left behind with no switch to change it.
+        gameOptimizations = f.gameOptimizations
+        quitAppAfter = f.quitAppAfter
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? f.keepAwake
         performanceOverlay = try c.decodeIfPresent(Bool.self, forKey: .performanceOverlay) ?? f.performanceOverlay
-        stopStreamOnExit = try c.decodeIfPresent(Bool.self, forKey: .stopStreamOnExit) ?? f.stopStreamOnExit
+        stopStreamOnExit = f.stopStreamOnExit
         self = clampedToLegalRanges()
     }
 }

@@ -37,16 +37,18 @@ struct RootView: View {
     #if os(iOS)
     /// A TV companion panel button: the 44 pt dark circle the panel's lone ✕
     /// always used, now beside the keyboard button too.
-    private func companionButton(_ symbol: String, label: String,
+    private func companionButton(_ symbol: String, label: String, isOn: Bool? = nil,
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(isOn == true ? Theme.onAccent : .white)
                 .frame(width: 44, height: 44)
-                .background(.black.opacity(0.45), in: Circle())
+                .background(isOn == true ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.black.opacity(0.45)),
+                            in: Circle())
         }
         .accessibilityLabel(label)
+        .accessibilityValue(isOn.map { $0 ? "On" : "Off" } ?? "")
     }
     #endif
 
@@ -163,9 +165,15 @@ struct RootView: View {
                             set: { state.session.onScreenKeyboardUp = $0 }
                         )
                         if !onTV || gameOnIPad {
-                            StreamControls(onLeave: { state.session.disconnect() }, keyboardUp: keyboardUp)
+                            StreamControls(onLeave: { state.session.disconnect() }, keyboardUp: keyboardUp,
+                                           statsOn: state.session.showPerfOverlay,
+                                           onToggleStats: { state.session.togglePerformanceStats() })
                         } else if !dimmedOnTV {
                             HStack(spacing: 12) {
+                                companionButton("speedometer", label: "Performance stats",
+                                                isOn: state.session.showPerfOverlay) {
+                                    state.session.togglePerformanceStats()
+                                }
                                 companionButton(keyboardUp.wrappedValue ? "keyboard.chevron.compact.down" : "keyboard",
                                                 label: keyboardUp.wrappedValue ? "Hide the keyboard" : "Show the keyboard") {
                                     keyboardUp.wrappedValue.toggle()
@@ -204,7 +212,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.45), value: isStreamingPhase)
         // Mid-game, a drag that starts at a screen edge must reach the game
         // first: without deferral one bottom-edge swipe goes Home, which ends
-        // the stream and (with Quit Game on App Exit, the default) closes the
+        // the stream and (quit game on app exit is always on) closes the
         // game on the PC. Deferred, iOS needs a second swipe, as in Moonlight.
         // Streaming only: the launcher keeps normal one-swipe gestures. The
         // stream controls' grab pill is a tap/drag target inside the edge, so

@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    /// "Quit Game on App Exit" (default on): when VibeLight quits with a live
+    /// Quit game on app exit (always on; no longer an option): when VibeLight quits with a live
     /// session, fully stop the game on the host (`/cancel`) so nothing is left
     /// streaming/running there. That's an async network call, so we defer
     /// termination until it finishes (or its watchdog fires). Also covers logout/
