@@ -68,7 +68,7 @@ enum HostAPIError: Error, LocalizedError, Sendable {
         // pair in VibeLight now, and pairing in Moonlight would pair a different
         // identity entirely. No "this Mac" either; the same strings ship on iPad.
         case .unreachable(let host): "\(host) is not reachable."
-        case .notResponding(let host): "\(host) isn't answering — restart Sunshine/Vibepollo on the PC."
+        case .notResponding(let host): "\(host) is offline"   // owner's wording; the empty shelf says what to try
         case .xmlStatus(let code, let message): "Host error \(code): \(message)"
         case .notAuthorized: "Not paired with this computer — pair it again in Computers."
         case .hostIdentityChanged: "This computer's security certificate changed — pair it again."

@@ -220,7 +220,7 @@ private struct HostRow: View {
     }
 
     private var statusColor: Color {
-        if isSelected && state.hostOnline { return .green }
+        if isSelected { return state.selectedHostDot.color }   // same dot as the header chip
         if !host.isPaired { return .orange }
         return .gray
     }

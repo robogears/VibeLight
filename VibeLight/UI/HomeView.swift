@@ -125,7 +125,7 @@ private struct HostChip: View {
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(state.hostOnline ? .green : .orange)
+                .fill(state.selectedHostDot.color)
                 .frame(width: 9, height: 9)
                 .shadow(color: state.hostOnline ? .green.opacity(0.8) : .clear, radius: 5)
             Text(host.name)
@@ -349,7 +349,7 @@ private struct EmptyShelfPanel: View {
         case .asleep: "\(name) is asleep"
         case .waking: "Waking \(name)…"
         case .offline: "\(name) is offline"
-        case .notResponding: "\(name) isn't responding"
+        case .notResponding: "\(name) is offline"
         case .problem: "Couldn't load games from \(name)"
         case .noGames: "No games on \(name) yet"
         }
@@ -556,5 +556,17 @@ private struct PresetSlotChip: View {
         if isFocused { return .white.opacity(0.7) }
         if isActive { return .white.opacity(0.25) }
         return Theme.hairline(isFilled ? 0.08 : 0.14, contrast)
+    }
+}
+
+extension AppState.HostDot {
+    /// One mapping for the header chip and the Computers card, so the two dots
+    /// always agree.
+    var color: Color {
+        switch self {
+        case .online: .green
+        case .unreachable: .red
+        case .attention: .orange
+        }
     }
 }

@@ -246,6 +246,29 @@ final class AppState {
     }
     var hostOnline: Bool { serverInfo != nil }
 
+    /// The status dot beside a computer's name.
+    enum HostDot: Equatable, Sendable {
+        case online        // green
+        case unreachable   // red: not answering at all (offline, asleep, stuck)
+        case attention     // orange: still being checked, or it answered with a problem
+    }
+
+    /// Red only once a check has actually failed to get an answer: a stuck
+    /// service (`notResponding`) or nothing there (no error recorded — asleep
+    /// or offline is not an error). An error means the PC DID answer (e.g.
+    /// "pair it again"), so it stays orange.
+    nonisolated static func hostDot(online: Bool, checked: Bool,
+                                    notResponding: Bool, hasError: Bool) -> HostDot {
+        if online { return .online }
+        guard checked else { return .attention }
+        return (notResponding || !hasError) ? .unreachable : .attention
+    }
+
+    var selectedHostDot: HostDot {
+        Self.hostDot(online: hostOnline, checked: selectedHostChecked,
+                     notResponding: hostNotResponding, hasError: hostError != nil)
+    }
+
     /// The host answered at the socket level but never replied — its streaming
     /// service is stuck, not asleep. Kept distinct from plain offline so the UI
     /// can say something true and skip the useless wake offer.
