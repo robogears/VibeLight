@@ -114,6 +114,15 @@ enum SessionPhase: Sendable, Equatable {
     case failed(String)
 }
 
+/// Which real step a launch is on, for the starting card's status line
+/// (Poster Lift). Only what the engine actually does — never a percentage.
+enum LaunchStep: Equatable, Sendable {
+    case checkingHost
+    case starting(resume: Bool)
+    case connecting
+    case waitingForVideo
+}
+
 /// Events the session manager emits for the UI layer.
 enum SessionEvent: Sendable {
     case phaseChanged(SessionPhase)
@@ -130,15 +139,6 @@ enum SessionEvent: Sendable {
 /// so observation stays exact; this protocol keeps the two implementations in
 /// lockstep. See docs/plans/ios-support-plan.md §3.2.
 @MainActor
-/// Which real step a launch is on, for the starting card's status line
-/// (Poster Lift). Only what the engine actually does — never a percentage.
-enum LaunchStep: Equatable, Sendable {
-    case checkingHost
-    case starting(resume: Bool)
-    case connecting
-    case waitingForVideo
-}
-
 protocol StreamEngine: AnyObject {
     var phase: SessionPhase { get }
     var remoteQuitRequested: Bool { get }
