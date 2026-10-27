@@ -2209,13 +2209,6 @@ final class AppState {
         useTV && tvConnected && !streaming && hasGamepad
     }
 
-    /// The companion panel's "Use the iPad Instead": turns Use TV / Monitor
-    /// off (persisted by `settings.didSet`; Settings ▸ Video turns it back on).
-    func useIPadInsteadOfTV() {
-        settings.externalDisplay = false
-        sfx.play(.select)
-    }
-
     // MARK: - Onboarding
 
     /// True if any preset slot is filled — used to skip the presets tutorial for

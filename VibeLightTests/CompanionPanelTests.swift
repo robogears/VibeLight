@@ -33,8 +33,7 @@ final class CompanionPanelTests: XCTestCase {
 
     // MARK: - Source pins (checked by source only)
 
-    /// RootView's idle companion overlay goes through the tested rule and
-    /// hands the panel its way out.
+    /// RootView's idle companion overlay goes through the tested rule.
     func testRootViewGatesCompanionOnTheRule() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -46,18 +45,18 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertTrue(getter.contains("AppState.companionPanelOwnsIPad("))
         XCTAssertTrue(getter.contains("hasGamepad: state.controller.hasGamepad"))
         XCTAssertTrue(text.contains("if companionOwnsIPad {\n"
-                                    + "                ExternalDisplayPlaceholder(streaming: false,\n"
-                                    + "                                           onUseIPad: { state.useIPadInsteadOfTV() })"))
+                                    + "                ExternalDisplayPlaceholder(streaming: false)"))
         XCTAssertFalse(text.contains("if tvActive && idle {"))
     }
 
-    /// The idle panel always offers "Use the iPad Instead", labelled for VoiceOver.
-    func testCompanionPanelOffersUseTheIPadInstead() throws {
+    /// The owner removed "Use the iPad Instead" — the gamepad gate above is
+    /// what keeps the iPad from being a dead end, so the button must not creep
+    /// back in.
+    func testCompanionPanelHasNoUseTheIPadButton() throws {
         let body = try placeholderSource()
-        XCTAssertTrue(body.contains("if !streaming, let onUseIPad {"))
-        XCTAssertTrue(body.contains("Button(action: action)"))
-        XCTAssertTrue(body.contains(".accessibilityLabel(\"Use the iPad Instead\")"))
-        XCTAssertTrue(body.contains("Turns off Use TV / Monitor (Settings ▸ Video)."))
+        XCTAssertFalse(body.contains("Use the iPad Instead\")"))
+        XCTAssertFalse(body.contains("onUseIPad"))
+        XCTAssertFalse(body.contains("Button("))
     }
 
     /// The body of `ExternalDisplayPlaceholder`, from its declaration to the

@@ -89,8 +89,7 @@ struct RootView: View {
         // a pad dropping out puts the launcher back under the user's finger.
         .overlay {
             if companionOwnsIPad {
-                ExternalDisplayPlaceholder(streaming: false,
-                                           onUseIPad: { state.useIPadInsteadOfTV() })
+                ExternalDisplayPlaceholder(streaming: false)
                     .transition(.opacity)
             }
         }
@@ -352,15 +351,14 @@ struct ExternalDisplayContent: View {
 /// The iPad companion screen shown whenever a TV / monitor is driving the
 /// display — VibeLight itself lives on the big screen, so the iPad is a calm
 /// status panel. While streaming it's also a trackpad (touches pass through);
-/// while idle it says "use your controller" and offers "Use the iPad Instead".
+/// while idle it says "use your controller". (It once offered a "Use the iPad
+/// Instead" button; the owner removed it. The panel only takes the iPad while a
+/// gamepad can drive the TV — see `companionPanelOwnsIPad` — so there is no
+/// dead end without it; Settings ▸ Video ▸ Use TV / Monitor turns it off.)
 private struct ExternalDisplayPlaceholder: View {
     @Environment(AppState.self) private var state
     @Environment(\.colorSchemeContrast) private var contrast
     var streaming = true
-    /// Idle only: the always-present way out (UX-tv-attached-touch-dead-end) —
-    /// turns Use TV / Monitor off so the launcher comes back to the iPad. Touch
-    /// only by construction (the TV owns the focus engine), so no focus ID.
-    var onUseIPad: (() -> Void)? = nil
 
     /// Whether companion touches actually reach the host: the phantom-cursor
     /// gate suppresses touch while a gamepad is connected (unless the user
@@ -422,41 +420,12 @@ private struct ExternalDisplayPlaceholder: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(contrast == .increased ? Theme.textPrimary.opacity(0.85)
                                                                 : Theme.textSecondary)
-                    if !streaming, let onUseIPad {
-                        useIPadButton(onUseIPad)
-                            .padding(.top, 28 - 16)   // 28 pt from the line above (stack spacing is 16)
-                    }
                     // No pixel/point readout here (UX-companion-geometry-readout):
                     // it was a TV-sizing aid, too faint to read and nothing the
                     // user can act on. `ExternalDisplay` still logs it on connect.
                 }
                 .offset(x: dx * 40, y: dy * 34)             // content drifts gently too
             }
-        }
-    }
-
-    /// The escape hatch, deliberately quiet: a hairline capsule, not the accent
-    /// (that's for primary actions). Drifts with the OLED content — intended.
-    private func useIPadButton(_ action: @escaping () -> Void) -> some View {
-        let increased = contrast == .increased
-        return VStack(spacing: 8) {
-            Button(action: action) {
-                Text("Use the iPad Instead")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 44)   // the 44 pt touch-target floor (DESIGN.md §6)
-                    .background(.white.opacity(0.10), in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(increased ? 0.35 : 0.14), lineWidth: 1))
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Use the iPad Instead")
-            .accessibilityHint("Turns off Use TV / Monitor.")
-            Text("Turns off Use TV / Monitor (Settings ▸ Video).")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
         }
     }
 }
