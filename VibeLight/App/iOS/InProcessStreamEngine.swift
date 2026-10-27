@@ -378,6 +378,9 @@ final class InProcessStreamEngine: StreamEngine {
     /// instantaneous down+up that games otherwise miss.
     @ObservationIgnored private var menuStickyUntil: ContinuousClock.Instant?
     @ObservationIgnored private weak var menuStickyPad: GCExtendedGamepad?
+    /// Select + Start → one Guide press, per pad (keyed like `padSlots`). See
+    /// GuideChord for why, and the rules.
+    @ObservationIgnored private var guideChords: [ObjectIdentifier: GuideChord] = [:]
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -493,6 +496,9 @@ final class InProcessStreamEngine: StreamEngine {
     ///      press — and could not see the presses the system had already taken,
     ///      which was the entire answer.
     ///
+    /// The one-press way to Guide is therefore Select + Start (GuideChord,
+    /// applied in `forward`).
+    ///
     /// Declaring the app a game (LSApplicationCategoryType / LSSupportsGameMode
     /// in project.yml) does NOT change this. It was kept anyway: Game Mode
     /// meaningfully lowers controller Bluetooth latency, which matters here.
@@ -516,6 +522,7 @@ final class InProcessStreamEngine: StreamEngine {
         guard let cm = controllerSource else { return }
         if active {
             resetPadSlots()
+            guideChords.removeAll()
             keyboardModifiers = 0
             heldKeys.removeAll()
             setSystemGestures(disabled: true)
@@ -753,6 +760,26 @@ final class InProcessStreamEngine: StreamEngine {
             flags |= 0x0010
         }
 
+        // Select + Start → one PS / Guide press (GuideChord): the pad's own
+        // PS button needs two presses on iPadOS. Runs AFTER the Menu latch so a
+        // latched START reads as still held rather than as a fresh press, and
+        // BEFORE the leave-stream check, which it leaves intact (L1/R1 joining
+        // abandons the chord and passes the full combo through).
+        let chordKey = ObjectIdentifier(controller)
+        var chord = guideChords[chordKey] ?? GuideChord()
+        let chordOut = chord.process(flags, now: now)
+        guideChords[chordKey] = chord
+        flags = chordOut.flags
+        if let at = chordOut.recheckAt {
+            // A held-back lone Start/Select must go out even if the pad then
+            // reports nothing new (no stick wiggle to trigger a forward).
+            Task { @MainActor [weak self, weak pad] in
+                try? await Task.sleep(until: at, clock: .continuous)
+                guard let self, let pad else { return }
+                self.forward(pad)
+            }
+        }
+
         // Leave-stream combo — Start + Select/Share + L1 + R1. HELD ~1s (with a
         // progress ring, like the launcher's hold-to-quit) so it's deliberate and
         // gives feedback. While held, the buttons are suppressed (not forwarded
@@ -767,10 +794,21 @@ final class InProcessStreamEngine: StreamEngine {
         // ordinary inputs must not reset the ring.
         if pad === quitHoldPad { cancelQuitHold() }
 
+        // A pulse (the chord's Guide, or a lone tap the chord held back) goes
+        // out pressed now; a re-forward 100 ms later sends the pad's real
+        // state, which no longer carries it — that is the release.
+        if chordOut.pulse != 0 {
+            Task { @MainActor [weak self, weak pad] in
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, let pad else { return }
+                self.forward(pad)
+            }
+        }
+
         func axis(_ v: Float) -> Int16 { Int16(clamping: Int(v * 32767)) }
         session.sendControllerNumber(
             slot, activeMask: slotMask,
-            buttonFlags: flags,
+            buttonFlags: flags | chordOut.pulse,
             leftTrigger: UInt8(min(max(pad.leftTrigger.value, 0), 1) * 255),
             rightTrigger: UInt8(min(max(pad.rightTrigger.value, 0), 1) * 255),
             leftStickX: axis(pad.leftThumbstick.xAxis.value),
