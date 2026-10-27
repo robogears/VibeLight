@@ -100,6 +100,17 @@ struct VibeLightApp: App {
                         vc.view.traitOverrides.displayScale = renderScale  // UIKit trait → layer scale
                         return vc
                     }
+                    // Drawn over the TV's video while streaming: the same
+                    // leave-stream fade + ring the iPad shows.
+                    ExternalDisplay.shared.setStreamOverlayBuilder { renderScale in
+                        let vc = UIHostingController(
+                            rootView: StreamExitOverlay()
+                                .environment(state)
+                                .environment(\.displayScale, renderScale)
+                                .preferredColorScheme(.dark))
+                        vc.view.traitOverrides.displayScale = renderScale
+                        return vc
+                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Runaway-repeat guard: controller button releases are

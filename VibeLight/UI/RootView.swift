@@ -162,25 +162,10 @@ struct RootView: View {
                         .frame(width: 0, height: 0)
                         .allowsHitTesting(false)
                     }
-                    .overlay {
-                        // While the leave chord is held the stream sinks toward
-                        // black (scrim = ring progress), and it STAYS black at
-                        // fire (the engine pins progress to 1 through teardown)
-                        // so leaving is a fade — not a jump cut to the launcher.
-                        if let p = state.session.streamQuitProgress {
-                            Color.black.opacity(p)
-                                .ignoresSafeArea()
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .overlay {
-                        // Hold Start+Select+L1+R1 → leave-stream progress ring
-                        // (hidden once the hold completes and the fade takes over).
-                        if let p = state.session.streamQuitProgress, p < 1 {
-                            HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
-                                .transition(.opacity)
-                        }
-                    }
+                    // Hold Start+Select+L1+R1 → the fade + ring. The TV draws
+                    // the same view over its video (ExternalDisplay's stream
+                    // overlay), so the exit plays on both screens.
+                    .overlay { StreamExitOverlay() }
                     .transition(.opacity)
             }
         }
@@ -317,6 +302,34 @@ struct LauncherContent: View {
 }
 
 #if os(iOS)
+/// The leave-stream hold's feedback, drawn over the video on the iPad AND on
+/// the TV (the TV's stream window is UIKit, so it hosts this view on top of
+/// the video — see `ExternalDisplay.setStreamOverlayBuilder`). It used to live
+/// only in RootView, so on a TV the hold showed nothing on the screen people
+/// were actually watching.
+struct StreamExitOverlay: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        ZStack {
+            // While the chord is held the stream sinks toward black (scrim =
+            // ring progress), and it STAYS black at fire (the engine pins
+            // progress to 1 through teardown) so leaving is a fade — not a jump
+            // cut to the launcher.
+            if let p = state.session.streamQuitProgress {
+                Color.black.opacity(p)
+                    .ignoresSafeArea()
+            }
+            // The ring, hidden once the hold completes and the fade takes over.
+            if let p = state.session.streamQuitProgress, p < 1 {
+                HoldProgressRing(progress: HoldProgress(kind: .disconnectStream, fraction: p))
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)   // touches still reach the stream underneath
+    }
+}
+
 /// What the external display (TV / monitor) shows when NOT streaming: the full
 /// launcher UI, fit to the TV. During a stream the window swaps to the raw
 /// stream layer (see `ExternalDisplay`), so this view is only the idle surface.

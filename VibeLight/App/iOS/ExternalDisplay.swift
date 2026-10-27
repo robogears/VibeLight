@@ -77,6 +77,11 @@ final class ExternalDisplay {
     /// can force the launcher to rasterize at ≥2× on low-DPI panels.
     @ObservationIgnored private var makeLauncher: ((CGFloat) -> UIViewController)?
     @ObservationIgnored private var launcherVC: UIViewController?
+    /// Builds the SwiftUI layer drawn over the TV's video (the leave-stream
+    /// fade + ring). Set once by the app, like `makeLauncher`, because the view
+    /// needs `AppState`.
+    @ObservationIgnored private var makeStreamOverlay: ((CGFloat) -> UIViewController)?
+    @ObservationIgnored private var streamOverlayVC: UIViewController?
 
     private init() {
         let nc = NotificationCenter.default
@@ -109,6 +114,28 @@ final class ExternalDisplay {
         if window != nil, streamLayer == nil { showLauncher() }
     }
 
+    /// Called once by the app (scene `.task`), next to `setLauncherBuilder`.
+    func setStreamOverlayBuilder(_ builder: @escaping (CGFloat) -> UIViewController) {
+        makeStreamOverlay = builder
+        installStreamOverlay()
+    }
+
+    /// Puts the overlay on top of the TV's stream host (above the video
+    /// sublayer and the perf label). Once per connected display.
+    private func installStreamOverlay() {
+        guard streamOverlayVC == nil, let make = makeStreamOverlay,
+              let streamVC, let host = streamHost else { return }
+        let vc = make(launcherRenderScale)
+        vc.view.backgroundColor = .clear
+        vc.view.isUserInteractionEnabled = false
+        vc.view.frame = host.bounds
+        vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        streamVC.addChild(vc)
+        host.addSubview(vc.view)
+        vc.didMove(toParent: streamVC)
+        streamOverlayVC = vc
+    }
+
     // MARK: - External scene lifecycle
 
     func sceneConnected(_ ws: UIWindowScene) {
@@ -128,6 +155,7 @@ final class ExternalDisplay {
         self.window = window
         self.streamHost = host
         self.streamVC = streamVC
+        installStreamOverlay()
         let scale = ws.traitCollection.displayScale
         let px = pixelSize ?? .zero
         self.name = "the display"
@@ -160,6 +188,7 @@ final class ExternalDisplay {
         window = nil
         streamHost = nil
         streamVC = nil
+        streamOverlayVC = nil
         launcherVC = nil
         geometrySummary = nil
         isConnected = false
