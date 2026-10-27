@@ -273,8 +273,6 @@ struct Badge: View {   // also on the starting card (PosterLiftCard)
 
 private struct AppShelf: View {
     @Environment(AppState.self) private var state
-    /// The shelf's visible width, for `ShelfScroll` (0 until first measured).
-    @State private var viewport: CGFloat = 0
 
     var body: some View {
         if let empty = state.emptyShelf {
@@ -285,75 +283,140 @@ private struct AppShelf: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: AppTileView.Metrics.shelf)
                 .introReveal(state.intro.tileArrived(0))
+        } else if #available(iOS 18, macOS 15, *) {
+            ShelfScroller()
         } else {
-            shelf
+            LegacyShelfScroller()
         }
     }
+}
 
-    private var shelf: some View {
+/// The games row's contents, shared by both scrollers.
+private struct ShelfTiles: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        LazyHStack(alignment: .top, spacing: ShelfScroll.spacing) {
+            ForEach(Array(state.apps.enumerated()), id: \.element.id) { index, app in
+                AppTileView(app: app)
+                    .id("app:\(state.appKey(app))")
+                    .introReveal(state.intro.tileArrived(index))   // left→right cascade
+            }
+        }
+        .padding(.leading, ShelfScroll.leading)
+        // End-rest padding: at max scroll the last tile parks at the same
+        // margin the shelf leads with. (The old right-edge preset rail — and
+        // the edge-dissolve mask that kept tiles from sliding under it — is
+        // gone: the row lives below the shelf now, so tiles bleed to the
+        // screen edge like a proper shelf.)
+        .padding(.trailing, ShelfScroll.trailing)
+        .padding(.vertical, AppTileView.Metrics.focusPadding)
+    }
+}
+
+/// The shelf, scrolled to EXACT offsets. `scrollTo(id, anchor:)` with a
+/// computed anchor still jumped a whole tile on the first move (owner's
+/// screenshot: one step right put Desktop half off the left edge), so the
+/// row no longer asks SwiftUI to line anything up: it reads the scroll
+/// view's real width, content and offset, and sets the offset itself.
+@available(iOS 18, macOS 15, *)
+private struct ShelfScroller: View {
+    @Environment(AppState.self) private var state
+    @State private var position = ScrollPosition(edge: .leading)
+    @State private var geometry = ShelfScroll.Geometry()
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            ShelfTiles()
+        }
+        .scrollPosition($position)
+        // Pin the shelf to its content. Unconstrained, a horizontal
+        // ScrollView claims all the vertical space on offer, which pushed
+        // everything below it to the bottom of the screen.
+        .frame(height: AppTileView.Metrics.shelf)
+        // Live, including where a swipe or trackpad left it.
+        .onScrollGeometryChange(for: ShelfScroll.Geometry.self) { g in
+            ShelfScroll.Geometry(offset: g.contentOffset.x, viewport: g.containerSize.width,
+                                 content: g.contentSize.width)
+        } action: { _, new in
+            geometry = new
+        }
+        .onChange(of: state.focus.focusedItemID) { _, new in
+            guard let new, new.hasPrefix("app:"),
+                  let index = state.apps.firstIndex(where: { "app:\(state.appKey($0))" == new })
+            else { return }
+            let x = ShelfScroll.offset(index: index, from: geometry)
+            guard abs(x - geometry.offset) > 0.5 else { return }   // already on screen: hold still
+            withAnimation(Theme.focusSpring) { position.scrollTo(x: x) }
+        }
+    }
+}
+
+/// iOS 17 has no exact-offset scrolling, so it keeps the anchor route — with
+/// the same "only when it must" rule, from where it last put the row.
+private struct LegacyShelfScroller: View {
+    @Environment(AppState.self) private var state
+    @State private var geometry = ShelfScroll.Geometry()
+
+    var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 28) {
-                    ForEach(Array(state.apps.enumerated()), id: \.element.id) { index, app in
-                        AppTileView(app: app)
-                            .id("app:\(state.appKey(app))")
-                            .introReveal(state.intro.tileArrived(index))   // left→right cascade
-                    }
-                }
-                .padding(.leading, 72)
-                // End-rest padding: at max scroll the last tile parks at the
-                // same margin the shelf leads with. (The old right-edge preset
-                // rail — and the edge-dissolve mask that kept tiles from
-                // sliding under it — is gone: the row lives below the shelf
-                // now, so tiles bleed to the screen edge like a proper shelf.)
-                .padding(.trailing, 72)
-                .padding(.vertical, AppTileView.Metrics.focusPadding)
+                ShelfTiles()
             }
-            // Pin the shelf to its content. Unconstrained, a horizontal
-            // ScrollView claims all the vertical space on offer, which pushed
-            // everything below it to the bottom of the screen.
             .frame(height: AppTileView.Metrics.shelf)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { viewport = $0 }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { geometry.viewport = $0 }
             .onChange(of: state.focus.focusedItemID) { _, new in
-                guard let new, new.hasPrefix("app:") else { return }
-                // Exactly where ShelfScroll says, never "centre it and let the
-                // scroll view correct": near either end that asked for a spot
-                // past the edge, and the springy correction made the whole
-                // row lurch on the very first move.
-                guard viewport > 0,
+                guard let new, new.hasPrefix("app:"), geometry.viewport > 0,
                       let index = state.apps.firstIndex(where: { "app:\(state.appKey($0))" == new })
-                else {
-                    withAnimation(Theme.focusSpring) { proxy.scrollTo(new, anchor: .center) }
-                    return
-                }
-                let offset = ShelfScroll.offset(index: index, count: state.apps.count, viewport: viewport)
+                else { return }
+                geometry.content = ShelfScroll.contentWidth(count: state.apps.count)
+                let x = ShelfScroll.offset(index: index, from: geometry)
+                guard abs(x - geometry.offset) > 0.5 else { return }
+                geometry.offset = x
                 withAnimation(Theme.focusSpring) {
-                    proxy.scrollTo(new, anchor: ShelfScroll.anchor(index: index, offset: offset, viewport: viewport))
+                    proxy.scrollTo(new, anchor: ShelfScroll.anchor(index: index, offset: x,
+                                                                   viewport: geometry.viewport))
                 }
             }
         }
     }
 }
 
-/// Where the games row scrolls when focus lands on a tile (owner): it holds
-/// still while the first few tiles are selected, then keeps the selected tile
-/// in the middle, then holds still again for the last few — like a console
-/// shelf. Pure, so the rule is tested; sizes mirror `AppShelf`'s layout.
+/// Where the games row scrolls when focus lands on a tile (owner: hold still
+/// "until it really needs to change"). Nothing moves while the selected tile
+/// — and a peek of the one beyond it — is already on screen; past that the
+/// row moves just far enough, one tile per step, and never past either end.
+/// Pure, so the rule is tested; sizes mirror `ShelfTiles`' layout.
 enum ShelfScroll {
     static let leading: CGFloat = 72
     static let trailing: CGFloat = 72
     static let spacing: CGFloat = 28
     static var tile: CGFloat { AppTileView.Metrics.art.width }
+    /// Room kept beside the selected tile: the shelf's own margin plus about
+    /// half a neighbouring tile, so you can see there's more that way.
+    static var margin: CGFloat { leading + tile / 2 }
 
-    /// The scroll offset for focus on tile `index`: its centre in the middle
-    /// of the viewport, clamped to the row's real range. So nothing moves
-    /// until a tile is past the middle, and nothing moves past the end.
-    static func offset(index: Int, count: Int, viewport: CGFloat) -> CGFloat {
-        guard count > 0, viewport > 0 else { return 0 }
-        let content = leading + CGFloat(count) * tile + CGFloat(count - 1) * spacing + trailing
-        let maxOffset = max(0, content - viewport)
-        let centre = leading + CGFloat(index) * (tile + spacing) + tile / 2
-        return min(max(centre - viewport / 2, 0), maxOffset)
+    /// The scroll view as the row last saw it.
+    struct Geometry: Equatable {
+        var offset: CGFloat = 0     // content offset (x)
+        var viewport: CGFloat = 0   // visible width
+        var content: CGFloat = 0    // full row width
+    }
+
+    static func contentWidth(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return leading + CGFloat(count) * tile + CGFloat(count - 1) * spacing + trailing
+    }
+
+    /// The offset for focus on tile `index`, starting from where the row is.
+    static func offset(index: Int, from g: Geometry) -> CGFloat {
+        guard g.viewport > 0 else { return g.offset }
+        let left = leading + CGFloat(index) * (tile + spacing)
+        let right = left + tile
+        var x = g.offset
+        if left - margin < x { x = left - margin }                      // going left: just enough
+        if right + margin > x + g.viewport { x = right + margin - g.viewport }   // going right
+        return min(max(x, 0), max(0, g.content - g.viewport))
     }
 
     /// The `scrollTo` anchor that puts tile `index` exactly where `offset`
