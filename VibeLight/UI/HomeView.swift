@@ -137,13 +137,17 @@ private struct HostChip: View {
             case .error(let error):
                 // Two lines, never "…": the full text is also in the Computers
                 // card this chip opens (UX-host-banner-truncates).
-                Text(error)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.orange)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 420, alignment: .leading)
+                // WidthCap, not .frame(maxWidth: 420): that frame always grows
+                // to 420 when there's room, so a short "is offline" left a long
+                // empty bar after it. The chip now ends where the text ends.
+                WidthCap(max: 420) {
+                    Text(AppState.chipBannerText(error, hostName: host.name))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             case .notice(let notice):
                 // Normal progress (a restart) — neutral, with a spinner.
                 HStack(spacing: 6) {
@@ -568,5 +572,24 @@ extension AppState.HostDot {
         case .unreachable: .red
         case .attention: .orange
         }
+    }
+}
+
+/// Caps a view's width WITHOUT stretching it: proposes at most `max` and then
+/// takes the child's own size. `.frame(maxWidth:)` instead grows to the cap
+/// whenever the parent offers more, which padded short text out to the full
+/// width inside its capsule.
+private struct WidthCap: Layout {
+    let max: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let width = proposal.width.map { Swift.min($0, max) } ?? max
+        return child.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin,
+                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

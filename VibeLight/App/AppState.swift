@@ -335,6 +335,16 @@ final class AppState {
         return nil
     }
 
+    /// The header chip's error text. The chip already shows the computer's
+    /// name, so an error that opens with it ("UAE Server is offline") drops
+    /// the repeat and reads "is offline" beside the name. Elsewhere (the
+    /// Computers card) the full sentence is shown.
+    nonisolated static func chipBannerText(_ error: String, hostName: String) -> String {
+        let prefix = hostName + " "
+        guard !hostName.isEmpty, error.hasPrefix(prefix) else { return error }
+        return String(error.dropFirst(prefix.count))
+    }
+
     var hostBanner: HostBanner? {
         Self.hostBanner(error: hostError, notice: hostNotice, online: hostOnline,
                         hasMAC: selectedHost?.macAddress != nil)

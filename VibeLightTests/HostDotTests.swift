@@ -36,3 +36,26 @@ final class HostDotTests: XCTestCase {
         XCTAssertEqual(HostAPIError.notResponding("Gaming PC").localizedDescription, "Gaming PC is offline")
     }
 }
+
+/// The chip already shows the name, so its banner doesn't repeat it.
+final class ChipBannerTextTests: XCTestCase {
+    func testDropsTheLeadingHostName() {
+        XCTAssertEqual(AppState.chipBannerText("UAE Server is offline", hostName: "UAE Server"), "is offline")
+    }
+
+    func testOtherMessagesAreUnchanged() {
+        XCTAssertEqual(AppState.chipBannerText("Pair UAE Server again", hostName: "UAE Server"),
+                       "Pair UAE Server again")
+        XCTAssertEqual(AppState.chipBannerText("UAE Serverless is offline", hostName: "UAE Server"),
+                       "UAE Serverless is offline")
+        XCTAssertEqual(AppState.chipBannerText("is offline", hostName: ""), "is offline")
+    }
+
+    /// `.frame(maxWidth:)` stretched short text to the full cap.
+    func testChipBannerHugsItsText() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let home = try String(contentsOf: root.appendingPathComponent("VibeLight/UI/HomeView.swift"), encoding: .utf8)
+        XCTAssertTrue(home.contains("WidthCap(max: 420) {"))
+        XCTAssertFalse(home.contains(".frame(maxWidth: 420, alignment: .leading)"))
+    }
+}
