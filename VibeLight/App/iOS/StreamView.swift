@@ -48,7 +48,9 @@ struct StreamView: UIViewRepresentable {
             // (removeFromSuperlayer), `attached` still points at it; an
             // identity-only check would skip addSublayer and leave the iPad black.
             if display.superlayer !== layer {
-                attached?.removeFromSuperlayer()
+                if let attached, attached.superlayer === layer {
+                    attached.removeFromSuperlayer()
+                }
                 layer.addSublayer(display)
                 attached = display
             }
@@ -57,7 +59,11 @@ struct StreamView: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            attached?.frame = bounds
+            // A previous stream view can still lay out during the fade after
+            // the TV takes the layer. Only its current owner may resize it.
+            if let attached, attached.superlayer === layer {
+                attached.frame = bounds
+            }
         }
 
         // MARK: Touch forwarding

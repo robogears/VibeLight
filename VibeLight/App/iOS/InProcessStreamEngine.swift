@@ -917,6 +917,7 @@ final class InProcessStreamEngine: StreamEngine {
 
     fileprivate func handleStage(_ stage: MoonlightStage) {
         guard let app = launchingApp else { return }
+        NSLog("[VibeLight] stream reached stage \(stage.rawValue)")
         // "Connected" (or reaching the video-start stage) means the stream is live.
         if !connectedOnce, stage == .connected || stage.rawValue >= MoonlightStage.videoStart.rawValue {
             connectedOnce = true
@@ -947,6 +948,7 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     fileprivate func handleFail(stage: MoonlightStage, error: Int) {
+        NSLog("[VibeLight] stream failed: stage=\(stage.rawValue) error=\(error)")
         setStreamInput(active: false)
         setStatsHUD(active: false)
         cancelCompanionIdle()
@@ -964,6 +966,7 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     fileprivate func handleTerminated(error: Int) {
+        NSLog("[VibeLight] stream terminated: error=\(error) requestedQuit=\(remoteQuitRequested)")
         setStreamInput(active: false)
         setStatsHUD(active: false)
         cancelCompanionIdle()
@@ -976,8 +979,29 @@ final class InProcessStreamEngine: StreamEngine {
         proxy = nil
         deactivateAudioSession()
         let cleanly = (error == 0) || remoteQuitRequested
-        if let app = launchingApp { phase = .ending(app) } else { phase = .idle }
+        phase = Self.terminationPhase(error: error, remoteQuitRequested: remoteQuitRequested,
+                                      app: launchingApp)
         onStreamDidEnd?(cleanly)
+    }
+
+    /// Keep the protocol's failure reason instead of treating missing video as
+    /// a normal game exit. Explicit quits retain their existing end flow.
+    nonisolated static func terminationPhase(error: Int, remoteQuitRequested: Bool,
+                                             app: StreamApp?) -> SessionPhase {
+        guard error != 0, !remoteQuitRequested else {
+            return app.map(SessionPhase.ending) ?? .idle
+        }
+        let reason: String
+        // ML_ERROR_* values from moonlight-common-c's Limelight.h.
+        switch error {
+        case -100: reason = "No video data arrived from the PC. Check the host's connection and firewall."
+        case -101: reason = "A complete video frame could not arrive. Try a lower bitrate and reconnect."
+        case -102: reason = "The PC stopped the stream before video could start. Check the host's capture and encoder."
+        case -103: reason = "The PC stopped video because protected content is on screen."
+        case -104: reason = "The PC could not convert its video frames. Check the host's display settings."
+        default: reason = "The stream connection ended unexpectedly. Reconnect to try again."
+        }
+        return .failed("\(reason) (Error \(error))")
     }
 }
 

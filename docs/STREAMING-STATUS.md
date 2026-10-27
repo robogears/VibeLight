@@ -112,6 +112,36 @@ mode was "working great" on iPadOS 27 with version 0.2.3 installed. Separate
 results were not reported for every stream start/leave/relaunch and
 unplug/reconnect scenario; those remain useful checks after future changes.
 
+### TV stream geometry follow-up (27 October 2026)
+
+The owner subsequently reported a black TV stream, distorted sizing and a
+return to the menu after roughly three seconds at 4K/120 FPS, while iPad-only
+streaming still worked. The earlier hardware confirmation established the
+launcher hand-off; it did not establish this complete gameplay path.
+
+The follow-up on `cantAffordTokens` keeps FPS and bitrate unchanged:
+
+- iPad and TV hosts resize or remove a previously attached video layer only
+  while it is still their own sublayer. Four host-free iOS tests reproduced the
+  stale-owner corruption before the fix, including 1920×1080 TV video being
+  resized to the old iPad view's 1194×834 bounds.
+- The stream reads `UIScreen.currentMode.size` at launch, with valid native
+  pixel bounds as a fallback. It no longer caches scene points multiplied by a
+  UI scale. Output orientation and even H.264 dimensions are handled explicitly.
+- Unexpected transport termination uses the existing error overlay with the
+  actual connection error code. Normal host exits and explicit quits retain
+  their previous end flow.
+
+Verification: all 49 iOS tests and 261 Mac tests passed; no new compiler warning
+messages were found. The intentional failing iOS run executed all five layout
+tests (four failures and one control pass), then Xcode stalled collecting
+failure diagnostics and was stopped; the corrected full run completed normally.
+The precise cause of the physical three-second disconnect remains unconfirmed.
+Next live check: rebuild this branch, use the owner's normal 4K/120 setup,
+launch/leave/relaunch a game, and record any error code if the stream still ends.
+The owner could not run a 60 FPS comparison and reported that 4K/120 had worked
+previously; no frame-rate cap or automatic quality reduction was introduced.
+
 Also done: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
 with double-tap deadzone; Settings ▸ Input ▸ Touch Control), keep-awake during
 stream (`refreshKeepAwake` — Auto-Lock killed an 8-minute session; gamepad

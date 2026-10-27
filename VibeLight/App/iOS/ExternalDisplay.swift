@@ -24,8 +24,41 @@ final class ExternalDisplay {
     private(set) var isConnected = false
     /// Name for the iPad placeholder.
     private(set) var name = "the display"
-    /// The external display's native pixel size — what the stream targets.
-    private(set) var pixelSize: CGSize?
+    /// Read output pixels when launching, after scene geometry has settled.
+    /// UI points and the launcher's supersampling scale are not the HDMI mode.
+    var pixelSize: CGSize? {
+        guard let scene = window?.windowScene else { return nil }
+        return Self.streamPixelSize(
+            currentMode: scene.screen.currentMode?.size,
+            nativeBounds: scene.screen.nativeBounds.size,
+            sceneBounds: Self.bounds(of: scene).size)
+    }
+
+    private static func bounds(of scene: UIWindowScene) -> CGRect {
+        if #available(iOS 26.0, *) {
+            return scene.effectiveGeometry.coordinateSpace.bounds
+        } else {
+            return scene.coordinateSpace.bounds
+        }
+    }
+
+    nonisolated static func streamPixelSize(currentMode: CGSize?, nativeBounds: CGSize,
+                                            sceneBounds: CGSize) -> CGSize? {
+        func valid(_ size: CGSize) -> Bool {
+            size.width.isFinite && size.height.isFinite &&
+            size.width >= 2 && size.height >= 2 &&
+            size.width <= CGFloat(Int32.max) && size.height <= CGFloat(Int32.max)
+        }
+        guard var pixels = [currentMode, nativeBounds].compactMap({ $0 }).first(where: valid) else {
+            return nil // engine retains the person's valid settings during display churn
+        }
+        if valid(sceneBounds), sceneBounds.width != sceneBounds.height,
+           (pixels.width > pixels.height) != (sceneBounds.width > sceneBounds.height) {
+            pixels = CGSize(width: pixels.height, height: pixels.width)
+        }
+        return CGSize(width: (pixels.width / 2).rounded(.down) * 2,
+                      height: (pixels.height / 2).rounded(.down) * 2)
+    }
     /// Human-readable geometry the OS reports for the display (pixels, points,
     /// scale) — logged on connect for tuning the TV UI. Not shown to the user
     /// (UX-companion-geometry-readout: diagnostic text, nothing to act on).
@@ -81,7 +114,7 @@ final class ExternalDisplay {
     func sceneConnected(_ ws: UIWindowScene) {
         guard ws.session.role == .windowExternalDisplayNonInteractive, window == nil else { return }
 
-        let bounds = ws.coordinateSpace.bounds
+        let bounds = Self.bounds(of: ws)
         let window = UIWindow(windowScene: ws)
         window.frame = bounds
         window.backgroundColor = .black
@@ -96,8 +129,7 @@ final class ExternalDisplay {
         self.streamHost = host
         self.streamVC = streamVC
         let scale = ws.traitCollection.displayScale
-        let px = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        self.pixelSize = px
+        let px = pixelSize ?? .zero
         self.name = "the display"
         self.isConnected = true
         // The launcher super-samples to ≥2× (see `launcherRenderScale`); surface
@@ -122,13 +154,13 @@ final class ExternalDisplay {
 
     func sceneDisconnected(_ ws: UIWindowScene) {
         guard ws === window?.windowScene else { return }
+        NSLog("[VibeLight] external display disconnected; video attached=\(streamLayer != nil)")
         streamLayer?.removeFromSuperlayer()
         window?.isHidden = true
         window = nil
         streamHost = nil
         streamVC = nil
         launcherVC = nil
-        pixelSize = nil
         geometrySummary = nil
         isConnected = false
     }
@@ -141,6 +173,7 @@ final class ExternalDisplay {
         guard let host = streamHost else { return }
         host.attach(layer)
         window?.rootViewController = streamVC
+        NSLog("[VibeLight] external video attached: \(Int(host.bounds.width))×\(Int(host.bounds.height)) pt")
     }
 
     /// Mirror the iPad's perf HUD onto the TV (nil hides it). Cached so a TV
@@ -199,7 +232,7 @@ private extension CGFloat {
 
 /// A plain black view that hosts (and keeps sized) the stream's display layer,
 /// plus the perf HUD mirrored from the iPad so the numbers are visible on the TV.
-private final class DisplayHostView: UIView {
+final class DisplayHostView: UIView {
     private weak var attached: AVSampleBufferDisplayLayer?
     private let perfLabel = PaddedLabel()
 
@@ -222,7 +255,9 @@ private final class DisplayHostView: UIView {
         // `dismiss()` (removeFromSuperlayer) while `attached` still pointed at it;
         // an identity-only check skipped addSublayer and the TV stayed black.
         if display.superlayer !== layer {
-            attached?.removeFromSuperlayer()
+            if let attached, attached.superlayer === layer {
+                attached.removeFromSuperlayer()
+            }
             layer.insertSublayer(display, at: 0)   // video under the perf label
             attached = display
         }
@@ -237,7 +272,9 @@ private final class DisplayHostView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        attached?.frame = bounds
+        if let attached, attached.superlayer === layer {
+            attached.frame = bounds
+        }
         let inset: CGFloat = 28
         let maxW = bounds.width - inset * 2
         let fit = perfLabel.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
