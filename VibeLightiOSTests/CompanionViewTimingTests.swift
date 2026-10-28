@@ -55,11 +55,13 @@ final class ExitFireTests: XCTestCase {
         XCTAssertEqual(d.midX, screen.width / 2, accuracy: 0.5)
     }
 
-    /// Muffled at once when the hold starts, fully when it fires; silent
-    /// before the fire's black ends.
+    /// Clear when the hold starts, closing in faster and faster (exponential),
+    /// full when it fires; silent before the fire's black ends.
     func testLeaveAudioCurve() {
-        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: 0), 0.45, accuracy: 0.001)
-        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: InProcessStreamEngine.leaveHoldSeconds), 1, accuracy: 0.001)
+        let hold = InProcessStreamEngine.leaveHoldSeconds
+        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: 0), 0, accuracy: 0.001)
+        XCTAssertLessThan(InProcessStreamEngine.leaveMuffle(elapsed: hold / 2), 0.25)   // gentle first half
+        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: hold), 1, accuracy: 0.001)
         XCTAssertLessThan(InProcessStreamEngine.leaveAudioFade, 0.95)   // fireWindow is black from 95 % of 1 s
     }
 

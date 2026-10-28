@@ -75,7 +75,7 @@ final class LeaveAudioTests: XCTestCase {
 
     func testMuffleFollowsTheHoldAndFadeFollowsTheFire() throws {
         let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
-        XCTAssertTrue(engine.contains("quitHoldStartedAt = Date()\n        // Owner: the game goes muffled"))
+        XCTAssertTrue(engine.contains("quitHoldStartedAt = Date()\n        // Owner: from the moment the chord is held"))
         XCTAssertTrue(engine.contains("session?.setAudioMuffle(Self.leaveMuffle(elapsed: elapsed))"))
         XCTAssertTrue(engine.contains("session?.setAudioMuffle(0)   // let go early"))
         XCTAssertTrue(engine.contains("session?.fadeOutAudio(over: Self.leaveAudioFade)"))

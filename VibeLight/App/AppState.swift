@@ -3132,10 +3132,11 @@ final class AppState {
                 session.acknowledgeEnd()
                 // A card still fading closes itself when the fade is done.
                 if case .sessionEnded = overlay, endedSession?.quitting != true { dismissOverlay() }
-                // NOW the phase is idle, so the refresh that onStreamDidEnd
-                // couldn't run can finally happen.
-                Task { await refreshSelectedHost() }
             }
+            // NOW the phase is idle, so the refresh that onStreamDidEnd
+            // couldn't run can happen — unless the card is still fading out,
+            // which refreshes once it has gone (no shelf re-sort under it).
+            if case .sessionEnded = overlay, endedSession?.quitting == true { return }
             await refreshSelectedHost()
         }
     }
@@ -3191,6 +3192,10 @@ final class AppState {
             // Restart PC, where the same impatient mash walks straight into a
             // PC reboot (select → confirm → yes). The chip just opens a menu.
             focus.focus(itemID: "header:host")
+            // Only now: the shelf re-sorting (the game no longer LIVE) showed
+            // through the fading scrim. (Bails if /cancel is still out; the
+            // quit refreshes when it lands.)
+            await refreshSelectedHost()
         }
     }
 
@@ -3261,7 +3266,11 @@ final class AppState {
                 guard let self, !Task.isCancelled, isShowingEnded(app) else { return }
                 // A failed ask changes nothing: no answer isn't "closed".
                 guard let answer = try? await api.serverInfo(for: host) else { continue }
-                guard isShowingEnded(app), endedSession?.leaving == false else { return }
+                // Stops once the card is on its way out — /cancel makes the PC
+                // report "closed", which flipped the card to Play Again (Quit
+                // gone, everything jumping up) in the middle of its fade.
+                guard isShowingEnded(app), endedSession?.leaving == false,
+                      endedSession?.quitting == false else { return }
                 setEndedClosed(answer.info.runningAppID != app.id)
             }
         }

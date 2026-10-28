@@ -17,7 +17,6 @@ struct HoldProgressRing: View {
                     .trim(from: 0, to: progress.fraction)
                     .stroke(tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 0.05), value: progress.fraction)
                 Image(systemName: symbolName)
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)

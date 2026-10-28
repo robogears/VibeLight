@@ -333,7 +333,6 @@ private struct PosterRestCard: View {
             .scaleEffect(settled || reduceMotion ? 1 : 0.96)
             .opacity(faded ? 0 : 1)
             .animation(.easeOut(duration: 0.3), value: closed)
-            .animation(.linear(duration: 0.05), value: hold)
             .accessibilityHidden(true)
     }
 
@@ -603,7 +602,6 @@ struct OverlayButton: View {
                     RoundedRectangle(cornerRadius: 13)
                         .fill(.white.opacity(0.3))
                         .scaleEffect(x: holdFraction, anchor: .leading)
-                        .animation(.linear(duration: 0.05), value: holdFraction)
                 }
             }
         }

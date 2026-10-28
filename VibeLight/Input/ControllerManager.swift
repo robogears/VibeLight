@@ -472,7 +472,8 @@ final class ControllerManager {
     // MARK: - Hold chords (shared runner)
 
     /// Drives one press-and-hold chord: waits a short grace (so quick taps
-    /// never flash UI), then publishes ring progress at ~30 Hz until the
+    /// never flash UI), then publishes ring progress at ~120 Hz (one step per
+    /// ProMotion frame — owner: the Quit fill looked choppy at 30) until the
     /// threshold, fires the event exactly once, and clears the ring. Release
     /// or reset cancels the task; the defer clears any leftover ring state.
     /// `source` is the device holding (nil for touch/mouse hint buttons, which
@@ -501,7 +502,7 @@ final class ControllerManager {
                 let fraction = (elapsed - grace) / (duration - grace)
                 holdProgress = HoldProgress(kind: kind, fraction: min(max(fraction, 0), 1))
             }
-            try? await Task.sleep(for: .milliseconds(33))
+            try? await Task.sleep(for: .milliseconds(8))
         }
     }
 

@@ -684,15 +684,17 @@ final class InProcessStreamEngine: StreamEngine {
     nonisolated static let leaveHoldSeconds = 1.7
     /// Nothing is drawn for this long, so a brushed chord never flashes.
     nonisolated static let leaveHoldGrace = 0.15
-    /// How muffled the game is `elapsed` seconds into the leave hold: clearly
-    /// muffled at once (owner: "as soon as the user starts holding"), deepest
-    /// by the time the hold fires.
+    /// How muffled the game is `elapsed` seconds into the leave hold. Owner:
+    /// start at 100 % (clear), then low-pass "exponentially more and more" —
+    /// barely there at first, closing in faster and faster, full at fire
+    /// (then the volume mutes). 0 → 1 on an exponential curve.
     nonisolated static func leaveMuffle(elapsed: Double) -> Double {
-        0.45 + 0.55 * min(max(elapsed / leaveHoldSeconds, 0), 1)
+        let t = min(max(elapsed / leaveHoldSeconds, 0), 1)
+        return (exp(3 * t) - 1) / (exp(3) - 1)
     }
-    /// The volume fade when the hold fires — inside the exit overlay's 1 s
-    /// fire, so the game is silent before its black ends and the stream stops.
-    nonisolated static let leaveAudioFade = 0.8
+    /// The volume fade to silence when the hold fires — well inside the exit
+    /// overlay's 1 s fire, so the game is silent before its black ends.
+    nonisolated static let leaveAudioFade = 0.6
 
     /// When the current hold began (nil = not holding). `StreamExitOverlay`
     /// computes its progress from this on every display refresh, so Frame
@@ -721,8 +723,9 @@ final class InProcessStreamEngine: StreamEngine {
         guard quitHoldTask == nil else { return }
         let start = ContinuousClock.now
         quitHoldStartedAt = Date()
-        // Owner: the game goes muffled the moment the chord is held, deeper
-        // as the hold fills (MoonlightSession glides it, so no clicks).
+        // Owner: from the moment the chord is held the game closes in — clear
+        // at first, low-passed more and more as the hold fills, then muted at
+        // fire (MoonlightSession glides it, so no clicks).
         session?.setAudioMuffle(Self.leaveMuffle(elapsed: 0))
         quitHoldTask = Task { @MainActor [weak self] in
             let grace = Self.leaveHoldGrace, total = Self.leaveHoldSeconds
@@ -752,8 +755,8 @@ final class InProcessStreamEngine: StreamEngine {
                     // stream only stops (and freezes) under black. Disconnecting
                     // in the same turn removed the stream view mid-fire.
                     setStreamInput(active: false)
-                    // Sound follows the picture: fully muffled, then faded out
-                    // to silence before the fire's black ends.
+                    // Sound follows the picture: fully muffled, then muted
+                    // (a quick fade, no click) before the fire's black ends.
                     session?.setAudioMuffle(1)
                     session?.fadeOutAudio(over: Self.leaveAudioFade)
                     try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(120))
