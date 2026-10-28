@@ -30,8 +30,9 @@ final class CompanionViewTimingTests: XCTestCase {
     }
 }
 /// Leaving the stream (Frame Trace's fire): the frame closes in to black, a
-/// curved diamond opens on the game and closes again, and it ENDS black, so
-/// the stream only stops under black (owner). Pure, so the shape is tested.
+/// diamond grows out of the centre over the game while the game dims, and it
+/// ENDS black, so the stream only stops under black (owner). Pure, so the
+/// shape is tested.
 final class ExitFireTests: XCTestCase {
     private let screen = CGSize(width: 1376, height: 1032)
     private func window(_ f: Double) -> CGRect? {
@@ -44,15 +45,32 @@ final class ExitFireTests: XCTestCase {
     }
 
     func testClosesToBlackBeforeTheDiamond() {
-        XCTAssertNil(window(0.40))
-        XCTAssertNil(window(0.47))
+        XCTAssertNil(window(0.29))
+        XCTAssertNil(window(0.33))
     }
 
-    func testDiamondPeaksTallerThanWide() throws {
-        let d = try XCTUnwrap(window(0.75))
-        XCTAssertEqual(d.width, 0.6 * screen.width, accuracy: 1)
-        XCTAssertEqual(d.height, 0.9 * screen.height, accuracy: 1)
+    /// One closing, then the diamond only GROWS (it once opened and closed
+    /// again, which read as the ring closing twice).
+    func testDiamondGrowsFromAPointPastTheCorners() throws {
+        let sizes = try [0.38, 0.45, 0.55, 0.65, 0.75, 0.85].map { try XCTUnwrap(window($0)).width }
+        XCTAssertLessThan(sizes[0], 0.05 * screen.width)            // starts as a point
+        XCTAssertEqual(sizes, sizes.sorted())
+        let late = try XCTUnwrap(StreamExitOverlay.fireWindow(f: 0.80, in: screen, inset: 10))
+        XCTAssertTrue(late.contains(CGPoint(x: 1, y: 1)))            // the whole game shows
+    }
+
+    func testDiamondIsTallerThanWideAndCentred() throws {
+        let d = try XCTUnwrap(window(0.55))
+        XCTAssertEqual(d.width / d.height, (0.6 * screen.width) / (0.9 * screen.height), accuracy: 0.01)
         XCTAssertEqual(d.midX, screen.width / 2, accuracy: 0.5)
+        XCTAssertEqual(d.midY, screen.height / 2, accuracy: 0.5)
+    }
+
+    /// The game stays bright while the diamond grows, then fades to black.
+    func testGameDimsToBlackAfterTheDiamondGrows() {
+        XCTAssertEqual(StreamExitOverlay.fireDim(f: 0.6), 0)
+        XCTAssertGreaterThan(StreamExitOverlay.fireDim(f: 0.8), StreamExitOverlay.fireDim(f: 0.7))
+        XCTAssertEqual(StreamExitOverlay.fireDim(f: 0.92), 1, accuracy: 0.0001)
     }
 
     /// Clear when the hold starts, closing in faster and faster (exponential),
@@ -62,12 +80,16 @@ final class ExitFireTests: XCTestCase {
         XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: 0), 0, accuracy: 0.001)
         XCTAssertLessThan(InProcessStreamEngine.leaveMuffle(elapsed: hold / 2), 0.25)   // gentle first half
         XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: hold), 1, accuracy: 0.001)
-        XCTAssertLessThan(InProcessStreamEngine.leaveAudioFade, 0.95)   // fireWindow is black from 95 % of 1 s
+        XCTAssertLessThan(InProcessStreamEngine.leaveAudioFade, 0.92 * 1.2)   // the fire is black from 92 % of 1.2 s
     }
 
     /// The whole last stretch is solid black — the engine waits past it.
     func testEndsBlack() {
-        for f in stride(from: 0.95, through: 1.0, by: 0.01) { XCTAssertNil(window(f), "f = \(f)") }
+        XCTAssertEqual(StreamExitOverlay.fireDuration, .milliseconds(1200))
+        for f in stride(from: 0.92, through: 1.0, by: 0.01) {
+            XCTAssertNil(window(f), "f = \(f)")
+            XCTAssertEqual(StreamExitOverlay.fireDim(f: f), 1, accuracy: 0.0001)
+        }
     }
 }
 

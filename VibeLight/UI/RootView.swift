@@ -367,10 +367,10 @@ struct StreamExitOverlay: View {
     /// "Frame Trace" (owner's pick of four, Oct 2026): an accent line traces
     /// the screen's edge from the top centre both ways and meets at the
     /// bottom; gameplay stays visible. At fire the frame closes in to black,
-    /// a curved diamond opens on the game and closes again, and it ends on
-    /// black (`fireWindow`). The engine waits this long after fire before
-    /// tearing the stream view down, so the stream only stops under black.
-    static let fireDuration: Duration = .milliseconds(1000)
+    /// a diamond grows out of the centre over the game, and the game dims
+    /// to black (`fireWindow`, `fireDim`). The engine waits this long after
+    /// fire before tearing the stream view down, so it only stops under black.
+    nonisolated static let fireDuration: Duration = .milliseconds(1200)
 
     /// Set one transaction after progress pins at 1, so the p = 1 frame (the
     /// thick, complete border) is drawn once before the lines fade.
@@ -423,25 +423,29 @@ struct StreamExitOverlay: View {
     /// The fire, as the window the black leaves open at `f` (0…1 of
     /// `fireDuration`); nil = all black. Owner loved the diamond — which was
     /// an accident of stroking: a black stroke grown far past the screen
-    /// folded over at the rounded corners, opened a diamond on the game, and
-    /// ended on the WHOLE game again, so the stream froze in view before the
-    /// cut to black. Now it's drawn on purpose, a little slower, and ends
-    /// black: the frame closes in (to 38 %), black, a curved diamond opens
-    /// (48–75 %) and closes (to 95 %), black.
+    /// folded over at the rounded corners, so after the frame closed a
+    /// diamond GREW out of the centre over the game, past the corners, and
+    /// left the whole game showing — the stream then froze in view before
+    /// the cut to black. Now it's drawn on purpose, slower, and ends black:
+    /// the frame closes in (to 28 %), black, the diamond grows from a point
+    /// (34–86 %) — pointed while small, sides bulging as it grows, like the
+    /// original — while `fireDim` takes the game to black; black from 92 %.
+    /// (It once opened and closed again: two closings read as "the ring
+    /// twice", and the diamond never registered.)
     nonisolated static func fireWindow(f: Double, in size: CGSize, inset: CGFloat) -> Path? {
         let w = size.width, h = size.height, half = min(w, h) / 2
-        func easeIn(_ t: Double) -> Double { t * t * t }
-        func easeOut(_ t: Double) -> Double { 1 - pow(1 - t, 3) }
-        if f < 0.38 {
-            let d = inset + CGFloat(easeIn(f / 0.38)) * (half - inset)
+        if f < 0.28 {
+            let d = inset + CGFloat(pow(f / 0.28, 2)) * (half - inset)
             guard d < half else { return nil }
             return Path(CGRect(x: d, y: d, width: w - 2 * d, height: h - 2 * d))
         }
-        guard f >= 0.48, f < 0.95 else { return nil }
-        let g = CGFloat(f < 0.75 ? easeOut((f - 0.48) / 0.27) : 1 - easeIn((f - 0.75) / 0.20))
+        guard f >= 0.34, f < 0.92 else { return nil }
+        // Ease in and out: a point that visibly grows, sweeps out, settles.
+        let t = min((f - 0.34) / 0.52, 1)
+        let g = CGFloat(2.8 * (t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2))
         guard g > 0.001 else { return nil }
-        // Taller than wide, sides bulging out, like the one it replaces.
-        let a = 0.30 * w * g, b = 0.45 * h * g, k: CGFloat = 0.72
+        // Taller than wide; past g ≈ 2.4 it clears the screen's corners.
+        let a = 0.30 * w * g, b = 0.45 * h * g, k = 0.5 + 0.22 * min(g, 1)
         let cx = w / 2, cy = h / 2
         var p = Path()
         p.move(to: CGPoint(x: cx, y: cy - b))
@@ -451,6 +455,14 @@ struct StreamExitOverlay: View {
         p.addQuadCurve(to: CGPoint(x: cx, y: cy - b), control: CGPoint(x: cx - a * k, y: cy - b * k))
         p.closeSubpath()
         return p
+    }
+
+    /// How dark the game showing through the diamond is at `f`: none while
+    /// it grows, then a smooth fade to black as it sweeps past the corners —
+    /// so the fire ends on black without closing a second time.
+    nonisolated static func fireDim(f: Double) -> Double {
+        let t = min(max((f - 0.62) / 0.30, 0), 1)
+        return t * t * (3 - 2 * t)
     }
 
     @ViewBuilder
@@ -465,12 +477,15 @@ struct StreamExitOverlay: View {
             Color.black.opacity(fired ? 1 : 0)
         } else {
             // The fire: black everywhere but `fireWindow` (even-odd), so
-            // the screen closes, shows the diamond, and lands on black.
+            // the screen closes and the diamond grows; `fireDim` lands it on black.
             if let fire {
                 Canvas { ctx, canvas in
-                    var black = Path(CGRect(origin: .zero, size: canvas))
+                    let screen = Path(CGRect(origin: .zero, size: canvas))
+                    var black = screen
                     if let window = Self.fireWindow(f: fire, in: canvas, inset: 10 * tv) { black.addPath(window) }
                     ctx.fill(black, with: .color(.black), style: FillStyle(eoFill: true))
+                    let dim = Self.fireDim(f: fire)
+                    if dim > 0 { ctx.fill(screen, with: .color(.black.opacity(dim))) }
                 }
             }
             ForEach([1.0, -1.0], id: \.self) { direction in

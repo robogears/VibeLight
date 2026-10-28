@@ -32,9 +32,21 @@ final class StreamExitOverlayWiringTests: XCTestCase {
     /// swell to black — disconnecting in the same turn cut it off.
     func testFireWaitsForTheSwellBeforeTeardown() throws {
         let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
-        let stop = try XCTUnwrap(engine.range(of: "setStreamInput(active: false)\n                    try? await Task.sleep(for: StreamExitOverlay.fireDuration"))
+        let stop = try XCTUnwrap(engine.range(of: "setStreamInput(active: false)\n                    // Sound follows the picture"))
+        let wait = try XCTUnwrap(engine.range(of: "try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(120))"))
         let leave = try XCTUnwrap(engine.range(of: "exitCurtain = 1\n                    disconnect()"))
-        XCTAssertLessThan(stop.lowerBound, leave.lowerBound)
+        XCTAssertLessThan(stop.lowerBound, wait.lowerBound)
+        XCTAssertLessThan(wait.lowerBound, leave.lowerBound)
+    }
+
+    /// Owner: "the outside ring thing twice". With Start still held after the
+    /// fire, the Menu latch's own re-forward (not the ControllerManager) saw
+    /// the whole chord and started a second hold, so Frame Trace traced again
+    /// instead of the fire. Forwarding stops with stream input.
+    func testHeldChordCannotStartASecondHold() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("private func setStreamInput(active: Bool) {\n        streamInputLive = active"))
+        XCTAssertTrue(engine.contains("private func forward(_ pad: GCExtendedGamepad) {\n        guard streamInputLive, let session else { return }"))
     }
 
     /// Owner: black for about a second while the stream closes, then a slow

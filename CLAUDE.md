@@ -231,7 +231,7 @@ both platforms behind the two `Core/Contracts.swift` seams (`StreamEngine`,
 `PlatformChrome`). Convention: AppKit/`Process`/macOS-only code is under
 `#if os(macOS)`. **Streaming is real on iOS**: in-process moonlight-common-c
 (H.264 to native res @ 120fps, Opus audio, full controller passthrough with a
-held (1.7 s) Start+Select+LB+RB leave chord drawn as "Frame Trace" (its 1 s fire: the frame closes to black, a curved diamond opens on the game and closes, and it ends black — `fireWindow`) then a black curtain while the stream closes; the game audio starts clear and low-passes exponentially more as the chord is held, then mutes during the fire — `MoonlightSession` setAudioMuffle / fadeOutAudio, glided per sample on the render thread, touch-as-input
+held (1.7 s) Start+Select+LB+RB leave chord drawn as "Frame Trace" (its 1.2 s fire: the frame closes to black, a diamond grows from the centre over the game while the game dims, and it ends black — `fireWindow` / `fireDim`; stream input stops at fire — `forward` checks `streamInputLive`, because the Menu latch re-forwards on its own and once restarted the hold) then a black curtain while the stream closes; the game audio starts clear and low-passes exponentially more as the chord is held, then mutes during the fire — `MoonlightSession` setAudioMuffle / fadeOutAudio, glided per sample on the render thread, touch-as-input
 with native passthrough + mouse fallback, Moonlight-parity perf HUD, keep-awake,
 quit-on-exit). **External display / TV output (SHIPPED, device-verified & loved):**
 when a TV/monitor is attached (`App/iOS/ExternalDisplay.swift`, a real

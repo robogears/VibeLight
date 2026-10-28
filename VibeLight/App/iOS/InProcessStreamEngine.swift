@@ -395,6 +395,13 @@ final class InProcessStreamEngine: StreamEngine {
     /// Keeps the leave chord's buttons out of the game while it's pressed and
     /// released, per pad (LeaveChordGuard).
     @ObservationIgnored private var leaveGuards: [ObjectIdentifier: LeaveChordGuard] = [:]
+    /// The pads belong to the stream (`setStreamInput`). `forward` checks it
+    /// because the Menu latch, GuideChord re-checks and pulse releases call it
+    /// directly, not through the ControllerManager: while Start stayed held
+    /// after the leave hold fired, the latch's 120 ms re-forward saw the full
+    /// chord, started a SECOND hold, and Frame Trace traced again instead of
+    /// playing the fire (owner: "the outside ring thing twice").
+    @ObservationIgnored private var streamInputLive = false
 
     /// LI_CTYPE_* values (Limelight.h) — what family of pad the user holds.
     private enum LiControllerType {
@@ -533,6 +540,7 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     private func setStreamInput(active: Bool) {
+        streamInputLive = active
         guard let cm = controllerSource else { return }
         if active {
             resetPadSlots()
@@ -693,7 +701,7 @@ final class InProcessStreamEngine: StreamEngine {
         return (exp(3 * t) - 1) / (exp(3) - 1)
     }
     /// The volume fade to silence when the hold fires — well inside the exit
-    /// overlay's 1 s fire, so the game is silent before its black ends.
+    /// overlay's 1.2 s fire, so the game is silent before its black ends.
     nonisolated static let leaveAudioFade = 0.6
 
     /// When the current hold began (nil = not holding). `StreamExitOverlay`
@@ -748,9 +756,9 @@ final class InProcessStreamEngine: StreamEngine {
                                                       rightStickX: 0, rightStickY: 0)
                     }
                     // Input stops NOW (nothing more reaches the game, and the
-                    // still-held chord can't start a second hold), but teardown
-                    // waits for the exit overlay's whole fire — close in, the
-                    // diamond, and its last stretch of solid black
+                    // still-held chord can't start a second hold — `forward`
+                    // checks streamInputLive), but teardown waits for the exit
+                    // overlay's whole fire — close in, the diamond, and black
                     // (StreamExitOverlay.fireDuration) — plus a beat, so the
                     // stream only stops (and freezes) under black. Disconnecting
                     // in the same turn removed the stream view mid-fire.
@@ -794,7 +802,7 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     private func forward(_ pad: GCExtendedGamepad) {
-        guard let session else { return }
+        guard streamInputLive, let session else { return }
         guard let slot = slot(for: pad) else { return }   // 5th+ pad: no free slot
         // Hold back events until the slot's arrival announcement has landed —
         // a plain event slipping out first would lock the slot as X360.
