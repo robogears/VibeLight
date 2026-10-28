@@ -1,8 +1,8 @@
 #if os(iOS)
 import SwiftUI
 
-/// The in-stream controls on the iPad: leave the stream, and raise the
-/// on-screen keyboard.
+/// The in-stream controls on the iPad: leave the stream, raise the on-screen
+/// keyboard, stats, Task View, and Quit Game (StreamQuitGameButton).
 ///
 /// They show themselves when a stream starts, then get out of the way — after
 /// `visibleDuration` they slide off the right edge, because a game does not
@@ -110,7 +110,8 @@ struct StreamControls: View {
     }
 
     private var controls: some View {
-        VStack(spacing: 12) {
+        // Trailing: Quit Game's "tap again" label opens to the left of its circle.
+        VStack(alignment: .trailing, spacing: 12) {
             controlButton("xmark", label: "Leave the stream", action: onLeave)
             controlButton(keyboardUp ? "keyboard.chevron.compact.down" : "keyboard",
                           label: keyboardUp ? "Hide the keyboard" : "Show the keyboard") {
@@ -120,6 +121,7 @@ struct StreamControls: View {
                           action: onToggleStats)
             controlButton("rectangle.on.rectangle", label: "Task View (Windows key + Tab)",
                           action: onTaskView)
+            StreamQuitGameButton(diameter: 44) { scheduleHide() }
         }
         .padding(24)
         .offset(x: offsetX)
@@ -206,6 +208,52 @@ struct StreamControls: View {
             guard !Task.isCancelled, !keyboardUp else { return }
             revealed = false
         }
+    }
+}
+/// In-stream Quit Game (owner): the game AND the stream, through VibeLight
+/// Helper — the same as the still-running card's Quit Stream and Game. A tap
+/// arms it for 3 s: it turns red and names the game the helper sees; a second
+/// tap quits. Greyed with no helper, or no game running. `diameter` 44 over
+/// the game; much bigger on the TV companion panel (owner).
+struct StreamQuitGameButton: View {
+    @Environment(AppState.self) private var state
+    var diameter: CGFloat = 44
+    /// Any use (StreamControls: resets its retire clock).
+    var onUse: () -> Void = {}
+
+    private var game: String? { state.canQuitGame ? state.helperGame?.title : nil }
+
+    var body: some View {
+        HStack(spacing: diameter * 0.25) {
+            if state.quitGameArmed, let game {
+                Text("Tap again to quit \(game)")
+                    .font(.system(size: diameter * 0.32, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, diameter * 0.3)
+                    .padding(.vertical, diameter * 0.18)
+                    .background(Color.red.opacity(0.9), in: Capsule())
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .accessibilityHidden(true)   // the button's own label says it
+            }
+            Button {
+                onUse()
+                state.tapQuitGameInStream()
+            } label: {
+                Image(systemName: "power")
+                    .font(.system(size: diameter * 0.36, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: diameter, height: diameter)
+                    .background(state.quitGameArmed ? AnyShapeStyle(Color.red) : AnyShapeStyle(.black.opacity(0.45)),
+                                in: Circle())
+            }
+            .disabled(game == nil)
+            .opacity(game == nil ? 0.4 : 1)
+            .accessibilityLabel(game.map { state.quitGameArmed ? "Confirm: quit \($0) and the stream"
+                                                               : "Quit \($0) and the stream" }
+                                ?? "Quit Game, no game running")
+        }
+        .animation(.easeOut(duration: 0.2), value: state.quitGameArmed)
     }
 }
 #endif

@@ -6,7 +6,8 @@ import XCTest
 /// stub would bypass the very delegate callbacks under test).
 ///
 /// This is the shared reader behind `HostPairing` (plaintext HTTP :47989, the
-/// one leg anyone on the path can answer) and `MoonDeckBuddyClient`. Both used
+/// one leg anyone on the path can answer) and, since, `WindowsHelperClient`
+/// (it replaced `MoonDeckBuddyClient`, the other original user). Both used
 /// to check `data.count` AFTER `URLSession.data(for:)` had already buffered the
 /// whole body — which bounds nothing, and could not fire at all on a chunked
 /// reply, since that declares no length to check. `testChunkedOversizeIsAborted`

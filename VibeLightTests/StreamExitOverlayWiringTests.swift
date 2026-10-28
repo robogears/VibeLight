@@ -49,7 +49,7 @@ final class StreamExitOverlayWiringTests: XCTestCase {
         XCTAssertTrue(controls.contains("controlButton(\"rectangle.on.rectangle\""))
         let root = try source("VibeLight/UI/RootView.swift")
         XCTAssertTrue(root.contains("onTaskView: { state.session.showTaskView() }"))
-        XCTAssertTrue(root.contains("VStack(spacing: 12) {\n                                companionButton(\"xmark\""))
+        XCTAssertTrue(root.contains("VStack(alignment: .trailing, spacing: 22) {\n                                companionButton(\"xmark\""))
     }
 
     /// Rejoin: a drop with the game still to rejoin holds the picture and

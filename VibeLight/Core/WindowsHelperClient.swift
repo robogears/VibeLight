@@ -4,7 +4,8 @@ import Security
 /// Talks to **VibeLight Helper**, the small tray app on the gaming PC
 /// (`WindowsHelper/` in this repo; wire contract in its `Protocol.cs`). It
 /// does what the stream can't: Match TV (the PC's display and the game take
-/// the stream's size) and Quit Game.
+/// the stream's size), Quit Game, and Restart PC (MoonDeckBuddy's way — the
+/// helper replaced MoonDeckBuddy).
 ///
 /// - HTTPS on `port`, JSON, one request per connection.
 /// - No pairing of its own (owner: "it should just work"). The TLS handshake
@@ -53,10 +54,22 @@ final class WindowsHelperClient: Sendable {
         let height: Int
         let refreshHz: Int
     }
+    /// The game in front on the PC — only a window with evidence of being a
+    /// game (a store's game folder, started by a launcher, on Windows' game
+    /// list, exclusive fullscreen), never just any big window. `pid` is what
+    /// Quit asks to close; `evidence` says why it counts. (Optional: helper
+    /// 0.1.1 sent neither.)
     struct Game: Decodable, Sendable, Equatable {
         let title: String
         let process: String
+        let pid: Int?
         let exclusiveFullscreen: Bool
+        let evidence: String?
+    }
+    struct Status: Decodable, Sendable, Equatable {
+        let display: Display?
+        let game: Game?
+        let matched: Bool
     }
     /// What /match and /restore did; `message` is a short line to show as is.
     struct MatchResult: Decodable, Sendable, Equatable {
@@ -70,6 +83,10 @@ final class WindowsHelperClient: Sendable {
         let ok: Bool
         let title: String?
         let forced: Bool
+        let message: String
+    }
+    struct RestartResult: Decodable, Sendable, Equatable {
+        let ok: Bool
         let message: String
     }
 
@@ -114,6 +131,11 @@ final class WindowsHelperClient: Sendable {
         }
     }
 
+    /// The PC's display and the game in front (nil when nothing counts as one).
+    func status(at address: String, pinned: Data) async throws -> Status {
+        try await decode(Status.self, send("GET", "/status", at: address, pinned: pinned, timeout: 4).0)
+    }
+
     /// The PC's display to `width`×`height` (same refresh rate), the game
     /// fitted to it, borderless.
     func match(width: Int, height: Int, at address: String, pinned: Data) async throws -> MatchResult {
@@ -127,13 +149,24 @@ final class WindowsHelperClient: Sendable {
     }
 
     /// Closes the game in front on the PC: politely, then by force after
-    /// `graceSeconds` (1…30).
-    func quitGame(graceSeconds: Int, at address: String, pinned: Data) async throws -> QuitResult {
+    /// `graceSeconds` (1…30). `pid`: the game VibeLight showed — if another
+    /// one is in front now, the helper closes nothing.
+    func quitGame(graceSeconds: Int, pid: Int?, at address: String, pinned: Data) async throws -> QuitResult {
         let grace = min(max(graceSeconds, 1), 30)
+        var body = ["graceSeconds": grace]
+        if let pid { body["pid"] = pid }
         // The helper answers once the game is gone: allow the grace and then some.
         return try await decode(QuitResult.self, send("POST", "/quit-game", at: address, pinned: pinned,
-                                                      body: ["graceSeconds": grace],
-                                                      timeout: TimeInterval(grace + 10)).0)
+                                                      body: body, timeout: TimeInterval(grace + 10)).0)
+    }
+
+    /// Restarts the PC no matter what's running, MoonDeckBuddy's way: the
+    /// helper answers at once and restarts after `delaySeconds` (1…30, its
+    /// range), with apps forced closed.
+    func restart(delaySeconds: Int, at address: String, pinned: Data) async throws -> RestartResult {
+        let delay = min(max(delaySeconds, 1), 30)
+        return try await decode(RestartResult.self, send("POST", "/restart", at: address, pinned: pinned,
+                                                         body: ["delaySeconds": delay], timeout: 8).0)
     }
 
     // MARK: - HTTP
@@ -179,7 +212,7 @@ final class WindowsHelperClient: Sendable {
         } catch {
             if Task.isCancelled { throw CancellationError() }
             // Only a rejection by the pin itself means "changed" — an ordinary
-            // cancellation must not read as one (see MoonDeckBuddyClient).
+            // cancellation must not read as one, or a forced re-trust could follow.
             if tls.rejectedPin { throw HelperError.certChanged }
             throw HelperError.notRunning
         }

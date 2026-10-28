@@ -110,29 +110,37 @@ final class SavedDataRecoveryTests: XCTestCase {
         XCTAssertEqual(backups(under: key).count, 2, "a launch that fails on the same blob again adds nothing")
     }
 
-    // MARK: - Restart PC configs (DAT-buddy-config-latch-silent)
+    // MARK: - Keyed maps (DAT-buddy-config-latch-silent)
 
-    func testUnreadableRestartPCEntrySurvivesPairingAnotherComputer() throws {
+    /// The shape of the old per-computer Restart PC config (MoonDeckBuddy,
+    /// since replaced by VibeLight Helper); the map rules stay covered.
+    private struct Config: Codable, Equatable {
+        var port: Int
+        var paired: Bool
+        var pinnedCert: Data?
+    }
+
+    func testUnreadableMapEntrySurvivesSavingAnotherOne() throws {
         let badValue = #"{"port": "not a number", "paired": true}"#
         let stored = json(#"{"192.0.2.10": {"port": 59999, "paired": true}, "198.51.100.7": "# + badValue + "}")
-        let loaded = try XCTUnwrap(SavedDataRecovery.decodeMap(AppState.MoonDeckConfig.self, from: stored))
+        let loaded = try XCTUnwrap(SavedDataRecovery.decodeMap(Config.self, from: stored))
         XCTAssertEqual(loaded.records.keys.sorted(), ["192.0.2.10"])
         XCTAssertEqual(loaded.unreadable, ["198.51.100.7": json(badValue)])
 
         var configs = loaded.records
-        configs["203.0.113.5"] = AppState.MoonDeckConfig(port: 59999, paired: true, pinnedCert: Data([1, 2, 3]))
+        configs["203.0.113.5"] = Config(port: 59999, paired: true, pinnedCert: Data([1, 2, 3]))
         let saved = try XCTUnwrap(SavedDataRecovery.encodeMap(configs, preserving: loaded.unreadable))
 
         XCTAssertTrue(contains(saved, json(badValue)), "the unreadable entry must be written back byte for byte")
-        let reloaded = try XCTUnwrap(SavedDataRecovery.decodeMap(AppState.MoonDeckConfig.self, from: saved))
+        let reloaded = try XCTUnwrap(SavedDataRecovery.decodeMap(Config.self, from: saved))
         XCTAssertEqual(reloaded.records.keys.sorted(), ["192.0.2.10", "203.0.113.5"], "the new pairing must persist")
         XCTAssertEqual(reloaded.records["203.0.113.5"]?.pinnedCert, Data([1, 2, 3]))
         XCTAssertEqual(reloaded.unreadable, ["198.51.100.7": json(badValue)])
     }
 
-    func testRestartPCMapThatIsNotAnObjectIsReportedUnreadable() {
-        XCTAssertNil(SavedDataRecovery.decodeMap(AppState.MoonDeckConfig.self, from: json("[1,2]")))
-        XCTAssertNil(SavedDataRecovery.decodeMap(AppState.MoonDeckConfig.self, from: json(#"{"a":"#)))
+    func testAMapThatIsNotAnObjectIsReportedUnreadable() {
+        XCTAssertNil(SavedDataRecovery.decodeMap(Config.self, from: json("[1,2]")))
+        XCTAssertNil(SavedDataRecovery.decodeMap(Config.self, from: json(#"{"a":"#)))
     }
 
     // MARK: - Presets (DAT-preset-recovery-loss)
@@ -244,30 +252,5 @@ final class SavedDataRecoveryTests: XCTestCase {
         XCTAssertEqual(step(60, true), 90)
         XCTAssertEqual(step(30, false), 30)
         XCTAssertEqual(step(240, true), 240)
-    }
-
-    // MARK: - Restart PC port (NET-negative-buddy-port)
-
-    func testRestartPCPortFieldRejectsPortsOutsideOneTo65535() {
-        for bad in ["-1", "0", "70000", "65536", "port", "1.5"] {
-            XCTAssertNil(MoonDeckBuddyClient.port(fromField: bad), "\(bad) is not a port")
-        }
-        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: ""), MoonDeckBuddyClient.defaultPort)
-        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: " 59999 "), 59999)
-        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: "1"), 1)
-        XCTAssertEqual(MoonDeckBuddyClient.port(fromField: "65535"), 65535)
-    }
-
-    func testStoredNegativeRestartPCPortThrowsInsteadOfCrashing() async {
-        XCTAssertNil(MoonDeckBuddyClient.requestURL(host: "192.0.2.10", port: -1, path: "/apiVersion"))
-        XCTAssertNotNil(MoonDeckBuddyClient.requestURL(host: "192.0.2.10", port: 59999, path: "/apiVersion"))
-        // The real request path: a negative port used to reach URLComponents'
-        // port setter, which raises an exception that ends the app.
-        do {
-            try await MoonDeckBuddyClient().checkReachable(host: "192.0.2.10", port: -1)
-            XCTFail("a negative port must be refused")
-        } catch {
-            XCTAssertEqual(error as? MoonDeckBuddyClient.MDError, .badResponse("port -1 is not a valid port"))
-        }
     }
 }

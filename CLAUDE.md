@@ -127,15 +127,17 @@ iOS `iOSPlatformChrome`).
   every request instead. Do NOT add `NSAllowsLocalNetworking` — its presence
   makes Apple IGNORE `NSAllowsArbitraryLoads` (verified on device).
 
-**MoonDeckBuddy** (`Core/MoonDeckBuddyClient.swift`): optional Restart-PC tier —
-HTTPS :59999, Basic auth = base64(clientId), TOFU cert pinning, PIN pairing.
-`pairState` arrives as a **string** ("Paired"/"Pairing"/"NotPaired") on v7 AND
-v8; restart = `POST /restartHost {"delay": 1-30}`, with fallbacks for older
-buddies. See the header comments for the version-compat matrix.
-
 **VibeLight Helper** (`WindowsHelper/`, C# .NET 8; client
 `Core/WindowsHelperClient.swift`, Settings ▸ Windows Helper): our own tray app
-on the PC for what the stream can't do — Match TV and Quit Stream and Game.
+on the PC for what the stream can't do — Match TV, Quit Stream and Game, and
+Restart PC. It **replaced MoonDeckBuddy** (owner): Restart PC is MoonDeckBuddy's
+method — SeShutdownPrivilege at startup, `POST /restart {delaySeconds 1–30}`
+(400 otherwise), one at a time, cancellable from the tray, then
+`InitiateSystemShutdownW(force apps closed, reboot)` (+ `ExitWindowsEx`
+EWX_FORCE fallback). "The game" needs evidence (store library folder,
+launcher/host parent, Windows' GameConfigStore, exclusive fullscreen), and
+Quit sends the pid VibeLight showed — a different game in front is never
+closed.
 HTTPS :47333, JSON. **No pairing of its own**: VibeLight presents its
 GameStream client identity in TLS and the helper admits it only if the PC's
 Vibepollo/Apollo/Sunshine paired that certificate with launch permission
@@ -266,7 +268,7 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   Opus → RemoteIO AudioUnit, input events; iOS targets only)
 - `VibeLight/Core/` — models, contracts, config import, identity (macOS reuse +
   iOS keychain), host API + pairing + crypto, session manager (macOS),
-  MoonDeckBuddy, wake-on-LAN, update service (no UI imports)
+  VibeLight Helper client, wake-on-LAN, update service (no UI imports)
 - `VibeLight/Input/` — controller manager (navigation + stream passthrough +
   haptics), keyboard routing, focus engine
 - `VibeLight/UI/` — theme, screens, components, menu SFX (consumes Core/Input

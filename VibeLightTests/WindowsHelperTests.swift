@@ -122,15 +122,65 @@ final class WindowsHelperTests: XCTestCase {
     // MARK: - Quit Stream and Game
 
     /// Beside Quit Stream Completely, held the same way, greyed and out of
-    /// focus without the helper.
+    /// focus without the helper — or with no game running (owner) — and it
+    /// names the game it would close.
     func testQuitStreamAndGameOnTheCard() throws {
         let overlays = try source("VibeLight/UI/OverlayViews.swift")
         XCTAssertTrue(overlays.contains("OverlayButton(id: AppState.quitGameButtonID, title: \"Quit Stream and Game\""))
-        XCTAssertTrue(overlays.contains("disabled: !state.windowsHelperReady)"))
+        XCTAssertTrue(overlays.contains("disabled: !state.canQuitGame)"))
+        XCTAssertTrue(overlays.contains("guard let game = state.helperGame else { return \"No game running on \\(hostName)\" }"))
         let state = try source("VibeLight/App/AppState.swift")
         XCTAssertTrue(state.contains("? [\"ended:resume\", \"ended:quit\", Self.quitGameButtonID, \"ended:home\"]"))
         XCTAssertTrue(state.contains("if case .sessionEnded = overlay, focus.focusedItemID == Self.quitGameButtonID {\n                quitStreamAndGame()"))
         XCTAssertEqual(AppState.quitGameGrace, 5)
+        // Only the game the helper named: its pid goes with the quit.
+        XCTAssertTrue(state.contains("var canQuitGame: Bool { windowsHelperReady && helperGame != nil }"))
+        XCTAssertTrue(state.contains("let result = try await client.quitGame(graceSeconds: Self.quitGameGrace, pid: pid,"))
+    }
+
+    /// In the stream too (owner): the controls over the game and the TV
+    /// companion panel, whose buttons are much bigger. A tap arms, a second quits.
+    func testQuitGameInTheStream() throws {
+        let controls = try source("VibeLight/App/iOS/StreamControls.swift")
+        XCTAssertTrue(controls.contains("StreamQuitGameButton(diameter: 44) { scheduleHide() }"))
+        XCTAssertTrue(controls.contains("Text(\"Tap again to quit \\(game)\")"))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertTrue(root.contains("StreamQuitGameButton(diameter: Self.companionDiameter)"))
+        XCTAssertTrue(root.contains("static let companionDiameter: CGFloat = 104"))
+        let state = try source("VibeLight/App/AppState.swift")
+        XCTAssertTrue(state.contains("        if quitGameArmed {\n            quitGameArmed = false\n            quitStreamAndGame()"))
+    }
+
+    // MARK: - Restart PC (VibeLight Helper replaced MoonDeckBuddy)
+
+    /// MoonDeckBuddy is gone; Restart PC goes through the helper with its
+    /// 5 s grace, and is greyed (and out of focus) without it.
+    func testRestartPCGoesThroughTheHelper() throws {
+        XCTAssertEqual(AppState.restartDelaySeconds, 5)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("VibeLight/Core/MoonDeckBuddyClient.swift").path))
+        let state = try source("VibeLight/App/AppState.swift")
+        XCTAssertFalse(state.contains("moonDeck"))
+        XCTAssertTrue(state.contains("outcome = .success(try await client.restart(delaySeconds: Self.restartDelaySeconds,"))
+        XCTAssertTrue(state.contains("var headerIDs = canRestartPC ? [\"header:restart\", \"header:host\"] : [\"header:host\"]"))
+        let home = try source("VibeLight/UI/HomeView.swift")
+        XCTAssertTrue(home.contains(".disabled(!state.canRestartPC)"))
+    }
+
+    func testRestartAndStatusRepliesDecode() throws {
+        let restart = try JSONDecoder().decode(WindowsHelperClient.RestartResult.self,
+                                               from: Data(#"{"ok":true,"message":"Restarting in 5 second(s)."}"#.utf8))
+        XCTAssertTrue(restart.ok)
+        let status = try JSONDecoder().decode(WindowsHelperClient.Status.self, from: Data(#"""
+        {"display":{"device":"DISPLAY1","width":1920,"height":1080,"refreshHz":120},
+         "game":{"title":"Elden Ring","process":"eldenring","pid":4242,"exclusiveFullscreen":false,
+                 "evidence":"installed by a game store"},"matched":false}
+        """#.utf8))
+        XCTAssertEqual(status.game?.pid, 4242)
+        XCTAssertEqual(status.game?.evidence, "installed by a game store")
+        let none = try JSONDecoder().decode(WindowsHelperClient.Status.self, from: Data(#"{"matched":false}"#.utf8))
+        XCTAssertNil(none.game)
     }
 
     // MARK: - Wire contract (WindowsHelper/VibeLightHelper.Core/Protocol.cs)

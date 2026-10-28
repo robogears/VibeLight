@@ -25,8 +25,7 @@ enum Overlay: Equatable {
     case confirmRemoveHost(String)  // forget a computer + its pairing — confirm
     case presetMenu(String)         // one preset's options (preset id)
     case namePreset(PresetNameTarget)  // name a new preset, or rename one
-    case moonDeckSetup(String)      // set up / pair MoonDeckBuddy for host id
-    case confirmRestartPC(String)   // confirm force-restarting host id
+    case confirmRestartPC(String)   // confirm force-restarting host id (VibeLight Helper)
     case confirmSwitchStream(running: String, target: StreamApp)  // host busy — switch to target?
 }
 
@@ -205,45 +204,12 @@ final class AppState {
     var pairing: PairingState?
     @ObservationIgnored private var pairingTask: Task<Void, Never>?
 
-    // MARK: MoonDeckBuddy (force-restart the host PC)
+    // MARK: Restart PC (VibeLight Helper)
 
-    /// Per-host MoonDeckBuddy settings, keyed by the host's stable primary
-    /// address. Persisted; the port defaults to MoonDeckBuddy's 59999.
-    struct MoonDeckConfig: Codable, Equatable, Sendable {
-        var port: Int = MoonDeckBuddyClient.defaultPort
-        var paired: Bool = false
-        /// Leaf TLS cert captured at first pairing; pinned on later connections
-        /// so an active MITM can't hijack the restart credential.
-        var pinnedCert: Data?
-    }
-    /// Live pairing progress shown in the MoonDeckBuddy setup overlay.
-    struct MoonDeckPairing: Equatable, Sendable {
-        var hostID: String
-        var pin: String
-        enum Status: Equatable, Sendable {
-            case connecting, waiting, paired, offline, failed(String)
-        }
-        var status: Status
-    }
-    @ObservationIgnored let moonDeck = MoonDeckBuddyClient()
-    /// One client identity for this VibeLight install (the whole Basic-auth
-    /// credential). Generated once, reused for every host.
-    private(set) var moonDeckClientID: String = ""
-    private(set) var moonDeckConfigs: [String: MoonDeckConfig] = [:]
-    /// Saved configs this build can't read, by key, as their original bytes.
-    /// Written back unchanged beside `moonDeckConfigs` on every save, so they
-    /// survive AND other computers' Restart PC pairings still save. Replaces a
-    /// latch that silently refused every save once one entry failed to read.
-    /// (audit DAT-buddy-config-latch-silent)
-    @ObservationIgnored private var unreadableMoonDeckConfigs: [String: Data] = [:]
-    var moonDeckPairing: MoonDeckPairing?
-    /// The port field text in the setup overlay.
-    var moonDeckPortText: String = String(MoonDeckBuddyClient.defaultPort)
     /// True while a restart request is in flight (locks the confirm overlay).
-    private(set) var moonDeckRestarting = false
-    @ObservationIgnored private var moonDeckPairingTask: Task<Void, Never>?
-    private static let moonDeckClientKey = "vibelight.moondeck.clientid"
-    private static let moonDeckConfigsKey = "vibelight.moondeck.configs"
+    /// Restart PC goes through VibeLight Helper on the PC, which replaced
+    /// MoonDeckBuddy (owner) and restarts the way MoonDeckBuddy did.
+    private(set) var restartingPC = false
 
     var selectedHost: StreamHost? {
         hosts.first { $0.id == selectedHostID }
@@ -546,9 +512,11 @@ final class AppState {
     }
     private(set) var windowsHelper: WindowsHelperState = .unknown {
         didSet {
-            // Quit Stream and Game takes focus only while the helper is ready.
+            // Quit Stream and Game and the header's Restart PC take focus
+            // only while the helper is ready.
             guard Self.helperReady(oldValue) != windowsHelperReady else { return }
-            if case .sessionEnded = overlay { rebuildFocus() }
+            if overlay == nil { rebuildFocus() }
+            else if case .sessionEnded = overlay { rebuildFocus() }
         }
     }
     var windowsHelperReady: Bool { Self.helperReady(windowsHelper) }
@@ -809,27 +777,6 @@ final class AppState {
         activePresetID = presets.contains { $0.id == savedActive } ? savedActive
             : presets.first { $0.settings == settings }?.id
         if savedPresets.migrated { persistPresets() }
-
-        // MoonDeckBuddy: a stable per-install client id + saved per-host configs.
-        if let existing = UserDefaults.standard.string(forKey: Self.moonDeckClientKey), !existing.isEmpty {
-            moonDeckClientID = existing
-        } else {
-            moonDeckClientID = UUID().uuidString
-            UserDefaults.standard.set(moonDeckClientID, forKey: Self.moonDeckClientKey)
-        }
-        if let data = UserDefaults.standard.data(forKey: Self.moonDeckConfigsKey) {
-            if let decoded = SavedDataRecovery.decodeMap(MoonDeckConfig.self, from: data) {
-                // Unreadable entries stay as their original bytes and are
-                // written back with every save (see persistMoonDeckConfigs).
-                moonDeckConfigs = decoded.records
-                unreadableMoonDeckConfigs = decoded.unreadable
-            } else {
-                // TOP-LEVEL failure (truncated blob, not an object): the map
-                // starts empty and the next save writes over this key, so keep
-                // the original aside first.
-                SavedDataRecovery.backUpOnce(data, to: "\(Self.moonDeckConfigsKey).unreadable", in: .standard)
-            }
-        }
 
         #if DEBUG
         // Simulator instruments (see DebugInstruments). In-memory only: the
@@ -1196,6 +1143,7 @@ final class AppState {
         session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
             chrome?.beginStreamPresentation(helperPID: helperPID)
+            watchHelperGame()   // which game Quit Stream and Game would close
             #if os(iOS)
             syncPCToStream()   // Match TV: the PC takes the stream's size
             // The starting card's exit (the poster growing into the picture)
@@ -1854,7 +1802,7 @@ final class AppState {
     }
 
     /// The status row: ask again — and after a reinstall on the PC (a new
-    /// certificate), trust the new one, like pairing MoonDeckBuddy again.
+    /// certificate), trust the new one.
     func windowsHelperStatusSelected() {
         if windowsHelper == .certChanged, let id = selectedHost?.id {
             setWindowsHelperPin(nil, for: id)
@@ -1874,21 +1822,90 @@ final class AppState {
         return (address, pinned)
     }
 
-    /// The still-running card's "Quit Stream and Game" (owner: "quit stream
-    /// completely and quit game, which basically force quits any active
-    /// game"). The helper closes the game in front on the PC — WM_CLOSE, then
+    /// The game VibeLight Helper sees in front on the PC: only a window with
+    /// evidence of being a game (a store's game folder, started by a launcher
+    /// or the host, on Windows' game list, exclusive fullscreen) — see the
+    /// helper's README. nil with no helper, or nothing that counts.
+    private(set) var helperGame: WindowsHelperClient.Game? {
+        didSet {
+            // Quit Stream and Game takes focus only with a game to quit.
+            guard (oldValue == nil) != (helperGame == nil) else { return }
+            if case .sessionEnded = overlay { rebuildFocus() }
+        }
+    }
+    @ObservationIgnored private var helperGameWatch: Task<Void, Never>?
+
+    /// Quit Stream and Game can go: the helper is ready and names a game
+    /// (owner: greyed out when no game is running).
+    var canQuitGame: Bool { windowsHelperReady && helperGame != nil }
+
+    /// Asks the helper which game is in front every 5 s while there's one to
+    /// quit — during a stream and while the still-running card is up — so the
+    /// Quit buttons show (and close) the game it actually is. A failed ask
+    /// keeps the last answer; the watch ends itself once neither is true.
+    func watchHelperGame() {
+        helperGameWatch?.cancel()
+        let client = windowsHelperClient
+        helperGameWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard wantsHelperGame, let target = windowsHelperTarget else {
+                    helperGame = nil
+                    return
+                }
+                if let status = try? await client.status(at: target.address, pinned: target.pinned),
+                   !Task.isCancelled {
+                    helperGame = status.game
+                }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private var wantsHelperGame: Bool {
+        if case .sessionEnded = overlay { return true }
+        return isLocalStreamActive
+    }
+
+    /// In-stream Quit Game (owner, in the controls over the game and on the
+    /// TV companion panel): a tap arms it for 3 s — it turns red and names the
+    /// game — and a second tap quits the game and the stream.
+    private(set) var quitGameArmed = false
+    @ObservationIgnored private var quitGameArmTask: Task<Void, Never>?
+
+    func tapQuitGameInStream() {
+        guard canQuitGame else { return }
+        quitGameArmTask?.cancel()
+        if quitGameArmed {
+            quitGameArmed = false
+            quitStreamAndGame()
+            return
+        }
+        quitGameArmed = true
+        quitGameArmTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.quitGameArmed = false
+        }
+    }
+
+    /// "Quit Stream and Game" (owner: "quit stream completely and quit game,
+    /// which basically force quits any active game") — on the still-running
+    /// card and in the stream. The helper closes the game it named (its pid:
+    /// if another game is in front by now, nothing is closed) — WM_CLOSE, then
     /// by force after `quitGameGrace` — while the stream ends as Quit Stream
     /// Completely does. Only the helper can reach a game the host didn't
     /// start itself (one launched from Steam or Playnite, say).
     func quitStreamAndGame() {
-        guard let target = windowsHelperTarget else { return }
+        guard canQuitGame, let target = windowsHelperTarget else { return }
         if case .sessionEnded = overlay, endedSession?.quitting == true { return }
         endedSession?.closingGame = true
         let client = windowsHelperClient
+        let pid = helperGame?.pid
         Task { [weak self] in
             let problem: String?
             do {
-                let result = try await client.quitGame(graceSeconds: Self.quitGameGrace,
+                let result = try await client.quitGame(graceSeconds: Self.quitGameGrace, pid: pid,
                                                        at: target.address, pinned: target.pinned)
                 // No game in front isn't a failure: the stream still ends.
                 problem = result.ok || result.title == nil ? nil : result.message
@@ -1991,170 +2008,53 @@ final class AppState {
     }
     #endif
 
-    // MARK: - MoonDeckBuddy (force-restart the host PC)
+    // MARK: - Restart PC (VibeLight Helper, MoonDeckBuddy's way)
 
-    /// Stable key for per-host MoonDeckBuddy config: the host's primary address.
-    private func moonDeckKey(for host: StreamHost) -> String? {
-        host.candidateAddresses.first?.host
-    }
-    /// Address to actually connect to: the resolved address GameStream reached
-    /// (works over Tailscale / when remote), falling back to the primary. Config
-    /// stays keyed by the stable primary via `moonDeckKey`.
-    private func moonDeckConnectAddress(for host: StreamHost) -> String? {
-        if host.id == selectedHostID, let resolved = hostAddress, !resolved.isEmpty { return resolved }
-        return moonDeckKey(for: host)
-    }
-    func moonDeckConfig(for host: StreamHost) -> MoonDeckConfig? {
-        guard let key = moonDeckKey(for: host) else { return nil }
-        return moonDeckConfigs[key]
-    }
-    func isMoonDeckPaired(_ host: StreamHost) -> Bool {
-        moonDeckConfig(for: host)?.paired == true
-    }
-    private func updateMoonDeckConfig(for host: StreamHost, _ mutate: (inout MoonDeckConfig) -> Void) {
-        guard let key = moonDeckKey(for: host) else { return }
-        var cfg = moonDeckConfigs[key] ?? MoonDeckConfig()
-        mutate(&cfg)
-        moonDeckConfigs[key] = cfg
-        // Setting up Restart PC again for this computer replaces its
-        // unreadable entry, if it had one.
-        unreadableMoonDeckConfigs[key] = nil
-        persistMoonDeckConfigs()
-    }
+    /// Restart PC works once VibeLight Helper is ready on the selected PC; the
+    /// header button is greyed and out of focus otherwise (owner rule for
+    /// everything the helper controls).
+    var canRestartPC: Bool { windowsHelperTarget != nil }
 
-    /// Writes the readable configs back together with the unreadable entries'
-    /// original bytes, so a save never flattens what didn't read.
-    private func persistMoonDeckConfigs() {
-        if let data = SavedDataRecovery.encodeMap(moonDeckConfigs, preserving: unreadableMoonDeckConfigs) {
-            UserDefaults.standard.set(data, forKey: Self.moonDeckConfigsKey)
-        }
-    }
-
-    /// The "Restart PC" button in the header. Paired → confirm; otherwise walk
-    /// the user through installing/pairing MoonDeckBuddy first.
+    /// The "Restart PC" button in the header: confirm, then restart.
     func requestRestartPC() {
-        guard let host = selectedHost else { return }
-        moonDeckRestarting = false
-        if isMoonDeckPaired(host) {
-            presentOverlay(.confirmRestartPC(host.id))
-        } else {
-            moonDeckPairing = nil
-            moonDeckPortText = String(moonDeckConfig(for: host)?.port ?? MoonDeckBuddyClient.defaultPort)
-            presentOverlay(.moonDeckSetup(host.id))
-        }
+        guard let host = selectedHost, canRestartPC else { return }
+        restartingPC = false
+        presentOverlay(.confirmRestartPC(host.id))
     }
 
-    /// Kick off MoonDeckBuddy PIN pairing from the setup overlay: reach the
-    /// buddy, POST /pair, then poll until the user approves the PIN on the PC.
-    func beginMoonDeckPairing() {
-        guard case .moonDeckSetup(let hostID)? = overlay,
-              let host = hostForCapturedID(hostID),
-              let addr = moonDeckConnectAddress(for: host) else { return }
-        // Reject an out-of-range port before it is saved or reaches a URL.
-        // (audit NET-negative-buddy-port)
-        guard let port = MoonDeckBuddyClient.port(fromField: moonDeckPortText) else {
-            moonDeckPairing = MoonDeckPairing(
-                hostID: hostID, pin: "",
-                status: .failed("Enter a port from 1 to 65535. MoonDeckBuddy uses 59999 unless you changed it."))
-            rebuildFocus()
-            return
-        }
-        let pin = String(format: "%04d", Int.random(in: 0...9999))
-        updateMoonDeckConfig(for: host) { $0.port = port }
-        moonDeckPairing = MoonDeckPairing(hostID: hostID, pin: pin, status: .connecting)
-        rebuildFocus()
+    /// Seconds the PC waits before restarting — MoonDeckBuddy's own grace
+    /// (1…30; VibeLight always asked it for 5).
+    nonisolated static let restartDelaySeconds = 5
 
-        moonDeckPairingTask?.cancel()
-        moonDeckPairingTask = Task { [weak self] in
-            guard let self else { return }
-            let clientID = moonDeckClientID
-            // TOFU pinning: require the saved cert if we have one; otherwise accept
-            // and capture this first cert so every later connection is pinned to it.
-            moonDeck.setExpectedCert(moonDeckConfig(for: host)?.pinnedCert, forHost: addr)
-            do {
-                try await moonDeck.checkReachable(host: addr, port: port)
-                if moonDeckConfig(for: host)?.pinnedCert == nil,
-                   let cert = moonDeck.observedCert(forHost: addr) {
-                    updateMoonDeckConfig(for: host) { $0.pinnedCert = cert }
-                    moonDeck.setExpectedCert(cert, forHost: addr)
-                }
-                try await moonDeck.startPairing(host: addr, port: port, clientID: clientID, pin: pin)
-                guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
-                moonDeckPairing?.status = .waiting
-                rebuildFocus()
-                // Poll ~2 minutes for the user to type the PIN into MoonDeckBuddy.
-                for _ in 0..<60 {
-                    try await Task.sleep(for: .seconds(2))
-                    guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
-                    if try await moonDeck.pairState(host: addr, port: port, clientID: clientID) == .paired {
-                        updateMoonDeckConfig(for: host) { $0.paired = true; $0.port = port }
-                        moonDeckPairing?.status = .paired
-                        rebuildFocus()
-                        return
-                    }
-                }
-                moonDeckPairing?.status = .failed("Timed out. Enter the PIN in the MoonDeckBuddy pop-up on your PC, then try again.")
-                rebuildFocus()
-            } catch {
-                guard !Task.isCancelled, moonDeckPairing?.hostID == hostID else { return }
-                switch error as? MoonDeckBuddyClient.MDError {
-                case .offline:
-                    moonDeckPairing?.status = .offline
-                case .certChanged:
-                    // The Buddy on the PC presents a different cert than the one
-                    // pinned at the last pairing — a reinstall/update, normally.
-                    // Pairing is the user's explicit act of (re)establishing
-                    // trust, so this is the ONE place the old pin may be
-                    // dropped: forget it, mark unpaired, and the next attempt
-                    // trust-on-first-use captures the new cert. Without this
-                    // the stale pin gated re-pairing itself, and Restart PC was
-                    // dead for good after any Buddy reinstall.
-                    updateMoonDeckConfig(for: host) { $0.pinnedCert = nil; $0.paired = false }
-                    moonDeck.setExpectedCert(nil, forHost: addr)
-                    moonDeckPairing?.status = .failed(
-                        "MoonDeckBuddy was reinstalled or updated on the PC. Try pairing again — the new certificate will be trusted from now on.")
-                default:
-                    moonDeckPairing?.status = .failed((error as? LocalizedError)?.errorDescription ?? "Pairing failed.")
-                }
-                rebuildFocus()
-            }
-        }
-    }
-
-    func cancelMoonDeckPairing() {
-        moonDeckPairingTask?.cancel()
-        moonDeckPairingTask = nil
-        moonDeckPairing = nil
-    }
-
-    /// Still showing the restart flow for this host? Guards the async completion
+    /// Still showing the restart card for this host? Guards the async completion
     /// from clobbering whatever overlay the user moved on to.
     private func inRestartFlow(for hostID: String) -> Bool {
-        switch overlay {
-        case .confirmRestartPC(let id), .moonDeckSetup(let id): return id == hostID
-        default: return false
-        }
+        if case .confirmRestartPC(let id) = overlay { return id == hostID }
+        return false
     }
 
-    /// Fire the restart. Called from the confirm overlay's "Restart" and from the
-    /// setup overlay's "Restart now" (right after a successful pair).
+    /// Fire the restart (the confirm card's "Restart PC"). The helper answers
+    /// at once and restarts Windows after `restartDelaySeconds`, apps forced
+    /// closed — the way MoonDeckBuddy does it.
     func performRestartPC(hostID: String) {
-        guard let host = hostForCapturedID(hostID),
-              let addr = moonDeckConnectAddress(for: host),
-              let cfg = moonDeckConfig(for: host) else { return }
-        moonDeckRestarting = true
+        guard let host = hostForCapturedID(hostID), host.id == selectedHostID,
+              let target = windowsHelperTarget else { return }
+        restartingPC = true
         rebuildFocus()
+        let client = windowsHelperClient
         Task { [weak self] in
-            guard let self else { return }
-            // Pin to the cert captured at pairing (nil → accept+capture if the
-            // host was paired before pinning existed).
-            moonDeck.setExpectedCert(cfg.pinnedCert, forHost: addr)
+            let outcome: Result<WindowsHelperClient.RestartResult, Error>
             do {
-                try await moonDeck.restart(host: addr, port: cfg.port,
-                                           clientID: moonDeckClientID, delaySeconds: 5)
-                moonDeckRestarting = false
-                guard inRestartFlow(for: hostID) else { return }
-                cancelMoonDeckPairing()
+                outcome = .success(try await client.restart(delaySeconds: Self.restartDelaySeconds,
+                                                            at: target.address, pinned: target.pinned))
+            } catch {
+                outcome = .failure(error)
+            }
+            guard let self else { return }
+            restartingPC = false
+            guard inRestartFlow(for: hostID) else { return }
+            switch outcome {
+            case .success(let result) where result.ok:
                 dismissOverlay()
                 // The PC is rebooting; drop the live connection state so the UI
                 // shows it going offline rather than a stale "online".
@@ -2167,29 +2067,10 @@ final class AppState {
                 // wake button's header:power id becomes focusable immediately
                 // instead of only on the next refresh. (review: restart focus gap)
                 rebuildFocus()
-            } catch {
-                moonDeckRestarting = false
-                guard inRestartFlow(for: hostID) else { return }
-                cancelMoonDeckPairing()
-                // A changed Buddy certificate (or a revoked client) is
-                // RECOVERABLE, but only if we route it back to pairing. Showing
-                // a plain error here was a permanent dead end: requestRestartPC
-                // sends paired hosts to the confirm card, and the only code that
-                // clears a stale pin lives inside beginMoonDeckPairing, which is
-                // reachable only from the setup card that paired hosts never
-                // see. Once Buddy was reinstalled, Restart PC could never work
-                // again — with no forget/re-pair path anywhere in the app.
-                if let md = error as? MoonDeckBuddyClient.MDError,
-                   md == .certChanged || md == .unauthorized {
-                    updateMoonDeckConfig(for: host) { $0.pinnedCert = nil; $0.paired = false }
-                    if let addr = moonDeckConnectAddress(for: host) {
-                        moonDeck.setExpectedCert(nil, forHost: addr)
-                    }
-                    presentOverlay(.moonDeckSetup(hostID))
-                    return
-                }
-                let message = (error as? LocalizedError)?.errorDescription ?? "Restart failed."
-                presentOverlay(.error(message))
+            case .success(let result):
+                presentOverlay(.error(result.message))
+            case .failure(let error):
+                presentOverlay(.error((error as? LocalizedError)?.errorDescription ?? "Restart failed."))
             }
         }
     }
@@ -2288,17 +2169,8 @@ final class AppState {
         // later changed (re-pair, reinstall) orphaned another one. Cache growth
         // here is unbounded by design otherwise: nothing else deletes.
         Task { [artwork, id = host.id] in await artwork.invalidate(hostUUID: id) }
-        // Forget its MoonDeckBuddy pairing too. That map is keyed by ADDRESS and
-        // nothing ever removed an entry, so a removed computer left its pinned
-        // Buddy certificate and `paired` flag behind forever — and re-adding the
-        // same IP silently inherited a stale pin from a machine that may since
-        // have been reinstalled.
-        for candidate in host.candidateAddresses {
-            moonDeckConfigs[candidate.host] = nil
-            unreadableMoonDeckConfigs[candidate.host] = nil
-        }
-        persistMoonDeckConfigs()
-        // And its VibeLight Helper certificate (under either id it had).
+        // Forget its VibeLight Helper certificate too (under either id it had),
+        // so re-adding the same PC after a reinstall doesn't inherit a stale pin.
         setWindowsHelperPin(nil, for: host.id)
         if let ip = host.manualAddress { setWindowsHelperPin(nil, for: "added:\(ip)") }
         let wasSelected = selectedHostID == host.id
@@ -2633,7 +2505,7 @@ final class AppState {
     /// Home-header power button action: wake the selected computer over the
     /// network (WoL) and show a transient waking state. No-op if it's already
     /// online or has no stored MAC. There is deliberately no remote power-OFF —
-    /// neither GameStream nor MoonDeckBuddy exposes shutdown/sleep; "power" here
+    /// GameStream has none, and VibeLight Helper only restarts; "power" here
     /// means turn ON, and Restart covers reboot.
     func wakeSelectedHost() {
         guard let host = selectedHost, host.macAddress != nil, !hostOnline else { return }
@@ -2689,7 +2561,7 @@ final class AppState {
             // takes focus only with it.
             let ids = endedSession?.closedOnHost == true
                 ? ["ended:resume", "ended:home"]
-                : windowsHelperReady
+                : canQuitGame
                     ? ["ended:resume", "ended:quit", Self.quitGameButtonID, "ended:home"]
                     : ["ended:resume", "ended:quit", "ended:home"]
             sections = [FocusSection(id: "ended", kind: .vList, itemIDs: ids)]
@@ -2738,21 +2610,10 @@ final class AppState {
                              itemIDs: presetNameSuggestions.indices.map { "namesugg:\($0)" }),
                 FocusSection(id: "namecard", kind: .vList, itemIDs: ["name:save", "name:cancel"]),
             ].filter { !$0.itemIDs.isEmpty }
-        case .moonDeckSetup:
-            // Locked while a restart is in flight, matching confirmRestartPC —
-            // otherwise the card renders a ProgressView while the focus engine
-            // still holds ids for buttons no view is drawing, breaking the
-            // "never hold a focusable id nothing renders" invariant.
-            if moonDeckRestarting { return }
-            let ids: [String]
-            switch moonDeckPairing?.status {
-            case .some(.connecting), .some(.waiting): ids = ["moondeck:cancel"]
-            case .some(.paired):                      ids = ["moondeck:restart", "moondeck:done"]
-            default:                                  ids = ["moondeck:pair", "moondeck:cancel"]
-            }
-            sections = [FocusSection(id: "moondeck", kind: .vList, itemIDs: ids)]
         case .confirmRestartPC:
-            if moonDeckRestarting { return }   // locked while the request is in flight
+            // Locked while the request is in flight: the card draws a spinner
+            // then, and no focusable id may outlive the view that drew it.
+            if restartingPC { return }
             sections = [FocusSection(id: "restartpc", kind: .vList,
                                      itemIDs: ["restartpc:yes", "restartpc:cancel"])]
         case .confirmSwitchStream:
@@ -2771,7 +2632,9 @@ final class AppState {
                 // with d-pad UP from the games. IDs only when the views render
                 // (host set) — never emit focusable IDs no view draws.
                 if selectedHost != nil {
-                    var headerIDs = ["header:restart", "header:host"]
+                    // Restart PC only with VibeLight Helper ready; it's drawn
+                    // greyed (and takes no focus) without it.
+                    var headerIDs = canRestartPC ? ["header:restart", "header:host"] : ["header:host"]
                     // The wake/power button sits LEFT of restart, but only when the
                     // selected computer is wakeable — its only useful moment. Shares
                     // canWakeSelectedHost with HomeView's render gate so the id is
@@ -2841,7 +2704,7 @@ final class AppState {
             return true
         case .confirmRestartPC:
             // rebuildFocus installs no section while a restart is in flight.
-            return !moonDeckRestarting
+            return !restartingPC
         default:
             return false
         }
@@ -3080,8 +2943,7 @@ final class AppState {
         switch event {
         case .select:
             if overlay != nil {
-                let firesRestart = !moonDeckRestarting &&
-                    (focus.focusedItemID == "restartpc:yes" || focus.focusedItemID == "moondeck:restart")
+                let firesRestart = !restartingPC && focus.focusedItemID == "restartpc:yes"
                 sfx.play(firesRestart ? .restart : .select)
             } else if screen != .settings {
                 sfx.play(.select)
@@ -3423,21 +3285,6 @@ final class AppState {
                     presetNameDraft = presetNameSuggestions[i]
                 }
             }
-        case .moonDeckSetup(let hostID):
-            if moonDeckRestarting { break }   // locked while a restart is in flight
-            switch event {
-            case .select:
-                switch focus.focusedItemID {
-                case "moondeck:pair":    beginMoonDeckPairing()
-                case "moondeck:restart": performRestartPC(hostID: hostID)
-                case "moondeck:done":    cancelMoonDeckPairing(); dismissOverlay()
-                default:                 cancelMoonDeckPairing(); dismissOverlay()  // cancel
-                }
-            case .back:
-                cancelMoonDeckPairing(); dismissOverlay()
-            default:
-                _ = focus.handle(event)
-            }
         case .confirmSwitchStream(_, let target):
             switch event {
             case .select:
@@ -3453,7 +3300,7 @@ final class AppState {
                 _ = focus.handle(event)
             }
         case .confirmRestartPC(let hostID):
-            if moonDeckRestarting { break }   // locked while in flight
+            if restartingPC { break }   // locked while in flight
             switch event {
             case .select:
                 if focus.focusedItemID == "restartpc:yes" { performRestartPC(hostID: hostID) }
@@ -3475,7 +3322,6 @@ final class AppState {
     private func dismissOverlay(returningTo id: String? = nil) {
         pairingTask?.cancel(); pairingTask = nil; pairing = nil
         setPairingKeepAwake(false)
-        moonDeckPairingTask?.cancel(); moonDeckPairingTask = nil; moonDeckPairing = nil
         overlay = nil
         rebuildFocus()
         if let id { focus.focus(itemID: id) }
@@ -3613,6 +3459,7 @@ final class AppState {
         // from a 0.8 s hold, and nothing is taken until the curtain lifts.
         focus.focus(itemID: "ended:quit")
         watchEndedGame(app)
+        watchHelperGame()   // asks again now: the card shows which game Quit would close
     }
 
     /// How long the card takes to fade out after Quit fires, in seconds
@@ -3669,7 +3516,7 @@ final class AppState {
     /// a press start the hold instead of selecting (ControllerManager).
     var focusedHoldButton: Bool {
         let onQuit = focus.focusedItemID == "ended:quit"
-            || (focus.focusedItemID == Self.quitGameButtonID && windowsHelperReady)
+            || (focus.focusedItemID == Self.quitGameButtonID && canQuitGame)
         return endedCardOffersQuit && onQuit && endedAcceptsInput
     }
 

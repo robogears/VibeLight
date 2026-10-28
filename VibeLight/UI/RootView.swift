@@ -35,15 +35,18 @@ struct RootView: View {
     }
 
     #if os(iOS)
-    /// A TV companion panel button: the 44 pt dark circle the panel's lone ✕
-    /// always used, now beside the keyboard button too.
+    /// The TV companion panel's buttons: dark circles much bigger than the
+    /// ones over the game (owner: "way bigger" with a TV) — the panel has the
+    /// whole iPad to itself.
+    static let companionDiameter: CGFloat = 104
+
     private func companionButton(_ symbol: String, label: String, isOn: Bool? = nil,
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: Self.companionDiameter * 0.36, weight: .bold))
                 .foregroundStyle(isOn == true ? Theme.onAccent : .white)
-                .frame(width: 44, height: 44)
+                .frame(width: Self.companionDiameter, height: Self.companionDiameter)
                 .background(isOn == true ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.black.opacity(0.45)),
                             in: Circle())
         }
@@ -174,7 +177,7 @@ struct RootView: View {
                         } else if !dimmedOnTV {
                             // Stacked like the controls over the game, in the
                             // same order (owner: vertical on the TV panel too).
-                            VStack(spacing: 12) {
+                            VStack(alignment: .trailing, spacing: 22) {
                                 companionButton("xmark", label: "Leave the stream") {
                                     state.session.disconnect()
                                 }
@@ -189,8 +192,9 @@ struct RootView: View {
                                 companionButton("rectangle.on.rectangle", label: "Task View (Windows key + Tab)") {
                                     state.session.showTaskView()
                                 }
+                                StreamQuitGameButton(diameter: Self.companionDiameter)
                             }
-                            .padding(24)
+                            .padding(32)
                         }
                     }
                     .overlay {

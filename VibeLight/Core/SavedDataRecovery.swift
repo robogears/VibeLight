@@ -1,8 +1,9 @@
 import CryptoKit
 import Foundation
 
-/// How VibeLight reads its own saved JSON stores (saved computers, Restart PC
-/// configs, presets) without ever losing what it can't read. One rule for every
+/// How VibeLight reads its own saved JSON stores (saved computers, presets,
+/// and keyed maps — the old Restart PC configs used them) without ever losing
+/// what it can't read. One rule for every
 /// store — "never rewrite a file you couldn't fully read; keep the unreadable
 /// original aside":
 ///
@@ -72,7 +73,7 @@ enum SavedDataRecovery {
         return joinArray(parts + unreadable)
     }
 
-    // MARK: - Maps (Restart PC configs)
+    // MARK: - Maps (keyed records)
 
     /// Decodes a JSON object value by value; unreadable values are kept as
     /// their exact original bytes under their key. nil when the blob is not a

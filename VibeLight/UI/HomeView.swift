@@ -728,8 +728,9 @@ private struct WakePCButton: View {
 }
 
 /// Header button, left of the host chip: force-restart the selected PC via
-/// MoonDeckBuddy. First use walks the user through pairing; after that it's a
-/// one-tap confirm → reboot (no dialog on the PC).
+/// VibeLight Helper (MoonDeckBuddy's way, which it replaced): confirm →
+/// reboot, no dialog on the PC. Greyed, and out of focus, until the helper is
+/// ready on that PC.
 private struct RestartPCButton: View {
     @Environment(AppState.self) private var state
     @State private var hovering = false
@@ -746,9 +747,11 @@ private struct RestartPCButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .disabled(!state.canRestartPC)
+        .opacity(state.canRestartPC ? 1 : 0.4)
         .scaleEffect(isFocused ? Theme.focusScale(1.06) : 1.0)
         .onHover { hovering = $0 }
-        .help("Restart PC")
+        .help(state.canRestartPC ? "Restart PC" : "Restart PC needs VibeLight Helper on the PC")
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(Theme.focusSpring, value: isFocused)
     }
