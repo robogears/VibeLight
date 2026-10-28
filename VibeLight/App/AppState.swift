@@ -275,6 +275,9 @@ final class AppState {
         var leaving = false
         /// Quit has fired: the card holds its "closing" look and fades out.
         var quitting = false
+        /// Put up by leaving the app mid-stream (iPad): it opens on Rejoin and
+        /// says so (see handleAppDidEnterBackground).
+        var fromAppExit = false
     }
     private(set) var endedSession: EndedSession?
     /// Bumped when Quit on the card is tapped instead of held, so its hint flashes.
@@ -497,6 +500,27 @@ final class AppState {
         defaults.object(forKey: menuSoundsKey) as? Bool ?? true
     }
 
+    /// Settings ▸ Video ▸ Adaptive Bitrate (on by default): the Link Governor
+    /// lowers the bitrate mid-stream when the connection struggles and brings
+    /// it back to the preset's number when it's calm. Its own key, like Menu
+    /// Sounds: the preset's bitrate is the ceiling, so this is not part of a
+    /// preset. iPad only for now (the Mac's helper has no live bitrate).
+    var adaptiveBitrate: Bool = true {
+        didSet {
+            #if os(iOS)
+            session.adaptiveBitrate = adaptiveBitrate
+            #endif
+            guard oldValue != adaptiveBitrate else { return }
+            UserDefaults.standard.set(adaptiveBitrate, forKey: Self.adaptiveBitrateKey)
+        }
+    }
+    static let adaptiveBitrateKey = "vibelight.adaptiveBitrate"
+
+    /// The saved Adaptive Bitrate choice; a missing or non-Bool value reads as On.
+    static func storedAdaptiveBitrate(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: adaptiveBitrateKey) as? Bool ?? true
+    }
+
     // MARK: First-run setup wizard
 
     /// The current setup-wizard step, or nil when the launcher is live. Non-nil
@@ -648,6 +672,10 @@ final class AppState {
         }
         menuSounds = Self.storedMenuSounds(in: .standard)
         sfx.isEnabled = menuSounds   // didSet doesn't fire during init
+        adaptiveBitrate = Self.storedAdaptiveBitrate(in: .standard)
+        #if os(iOS)
+        session.adaptiveBitrate = adaptiveBitrate
+        #endif
         // Show the setup wizard when the user hasn't completed the CURRENT
         // required version (fresh install → 0; a bump forces a redo for all).
         let completedSetup = UserDefaults.standard.integer(forKey: Self.setupVersionKey)
@@ -1549,10 +1577,12 @@ final class AppState {
         }
     }
 
-    /// iOS quit game on app exit (always on): backgrounding suspends our sockets, so the
-    /// stream can't survive anyway — tear down locally, and when the setting is
-    /// on also /cancel the remote game. Runs inside a UIKit background task so
-    /// the HTTPS round-trip has time to land before suspension.
+    /// Leaving the app mid-stream. Backgrounding suspends our sockets, so the
+    /// stream ends at once — but the GAME stays on the PC (owner: swiping up
+    /// by accident shouldn't cost it). VibeLight keeps running for the
+    /// background time iOS allows, and coming back inside it lands on the
+    /// still-running card with Rejoin focused. Only if it isn't back in time
+    /// does Quit Game on App Exit /cancel the game, before iOS's deadline.
     func handleAppDidEnterBackground() {
         holdPairingInBackground()
         // DELIBERATELY narrow: only a stream THIS device is running right now.
@@ -1560,17 +1590,29 @@ final class AppState {
         // (hasActiveRemoteSession) would /cancel games this device merely
         // *sees* running: another client's live session, or a game the user
         // explicitly kept playing via disconnect-keep-playing (invariant 6).
-        let live: Bool
+        let liveApp: StreamApp?
         switch session.phase {
-        case .streaming, .launching: live = true
-        default: live = false
+        case .streaming(let app), .launching(let app): liveApp = app
+        default: liveApp = nil
         }
-        guard live else { return }
-        // One quit-on-background episode at a time: if a prior assertion's Task is
-        // still in flight (rapid foreground→background toggle), let it finish
-        // rather than begin a second and cross-end them — ending id=2 from Task_A
-        // could cut off Task_B's /cancel mid-round-trip. The in-flight Task's own
-        // disconnect() already covers the teardown. (review: bgQuitTaskID race)
+        // Left again from the card an earlier exit put up, still undecided:
+        // the same window applies, or the game would run on forever.
+        var leftApp = liveApp
+        if leftApp == nil, endedSession?.fromAppExit == true, endedCardOffersQuit,
+           case .sessionEnded(let shown) = overlay {
+            leftApp = shown
+        }
+        guard let app = leftApp else { return }
+        // Written down in case iOS kills the app inside the window (swiped
+        // away in the app switcher): the next launch offers the same card.
+        if let host = selectedHost { recordPendingAppExit(hostID: host.id, appID: app.id) }
+        if liveApp != nil {
+            session.disconnect()   // the still-running card comes up underneath
+            markEndedFromAppExit(focusRejoin: true)
+        }
+        // One episode at a time: if a prior assertion is still in flight
+        // (rapid foreground→background toggle), its wait covers this one
+        // rather than a second crossing it. (review: bgQuitTaskID race)
         guard bgQuitTaskID == .invalid else { return }
         // An expiration handler is mandatory: if the task outlives iOS's grace
         // window with no handler, the app is force-terminated. Here we just end
@@ -1578,13 +1620,96 @@ final class AppState {
         bgQuitTaskID = UIApplication.shared.beginBackgroundTask(withName: "vibelight.quit-on-background") { [weak self] in
             self?.endBGQuitTask()
         }
-        Task {
-            // 2.5 s budget: iOS SIGKILLs (0x8BADF00D) any app that takes ≥5 s to
-            // terminate — the /cancel is best-effort, staying alive is not.
+        guard settings.stopStreamOnExit else {
+            endBGQuitTask()
+            return
+        }
+        let grace = Self.appExitGrace(backgroundTimeRemaining: UIApplication.shared.backgroundTimeRemaining)
+        appExitQuitTask = Task { [weak self] in
+            try? await Task.sleep(for: grace)
+            guard let self, !Task.isCancelled else { return }
+            // 2.5 s budget: the /cancel is best-effort, staying alive is not —
+            // iOS SIGKILLs (0x8BADF00D) an app that overruns its deadline.
             await stopStreamForAppExit(budget: .milliseconds(2500))
-            session.disconnect()           // always: never strand a dead .streaming UI
+            clearPendingAppExit()
+            appExitQuitTask = nil
             endBGQuitTask()
         }
+    }
+
+    /// The game's wait for a return from the background (nil when none).
+    @ObservationIgnored private var appExitQuitTask: Task<Void, Never>?
+
+    /// How long the game waits for VibeLight to come back: iOS's remaining
+    /// background time, less room for the /cancel (2.5 s budget) to land
+    /// before the deadline, and never more than 25 s.
+    nonisolated static func appExitGrace(backgroundTimeRemaining remaining: TimeInterval) -> Duration {
+        let usable = remaining.isFinite ? remaining - 5 : 25
+        return .milliseconds(Int(max(0, min(usable, 25)) * 1000))
+    }
+
+    /// Back in the foreground. Inside the window, the game stays and the card
+    /// waits on Rejoin.
+    func handleAppDidBecomeActive() {
+        guard let pending = appExitQuitTask else { return }
+        pending.cancel()
+        appExitQuitTask = nil
+        clearPendingAppExit()
+        endBGQuitTask()
+    }
+
+    /// The card that leaving the app put up opens on Rejoin, not Quit, and
+    /// says why it's there.
+    private func markEndedFromAppExit(focusRejoin: Bool) {
+        guard case .sessionEnded = overlay, endedSession != nil else { return }
+        endedSession?.fromAppExit = true
+        if focusRejoin { focus.focus(itemID: "ended:resume") }
+    }
+
+    /// A stream left by leaving the app, written when it happens and cleared
+    /// when VibeLight comes back or the game is closed. It outlives the window
+    /// only if iOS killed the app inside it.
+    struct PendingAppExit: Codable, Equatable, Sendable {
+        var hostID: String
+        var appID: Int
+        var at: Date
+    }
+    static let pendingAppExitKey = "vibelight.pendingAppExit"
+    /// Older than this, a leftover note says nothing useful about the PC.
+    static let pendingAppExitLifetime: TimeInterval = 12 * 60 * 60
+
+    private func recordPendingAppExit(hostID: String, appID: Int) {
+        let pending = PendingAppExit(hostID: hostID, appID: appID, at: Date())
+        if let data = try? JSONEncoder().encode(pending) {
+            UserDefaults.standard.set(data, forKey: Self.pendingAppExitKey)
+        }
+    }
+
+    private func clearPendingAppExit() {
+        UserDefaults.standard.removeObject(forKey: Self.pendingAppExitKey)
+    }
+
+    /// Inside the window a relaunch offers Rejoin first; after it, the card
+    /// opens on Quit — the quit-on-exit that never got to run.
+    nonisolated static func appExitWindowOpen(age: TimeInterval) -> Bool { age <= 30 }
+
+    /// After a relaunch, once this PC has answered: if VibeLight was killed
+    /// mid-stream and the PC still runs that game, the still-running card
+    /// comes back.
+    private func presentPendingAppExitIfAny() {
+        guard let data = UserDefaults.standard.data(forKey: Self.pendingAppExitKey) else { return }
+        guard let pending = try? JSONDecoder().decode(PendingAppExit.self, from: data) else {
+            clearPendingAppExit()
+            return
+        }
+        guard selectedHost?.id == pending.hostID else { return }   // that PC isn't the one showing
+        clearPendingAppExit()
+        let age = Date().timeIntervalSince(pending.at)
+        guard age < Self.pendingAppExitLifetime, serverInfo?.runningAppID == pending.appID,
+              let app = apps.first(where: { $0.id == pending.appID }),
+              onboardingStep == nil, overlay == nil, session.phase == .idle else { return }
+        presentSessionEnded(app)
+        markEndedFromAppExit(focusRejoin: Self.appExitWindowOpen(age: age))
     }
     #endif
 
@@ -2037,6 +2162,9 @@ final class AppState {
             // before is over.
             hostsNeedingRepair.remove(host.id)
             rememberApps(fresh, for: host)
+            #if os(iOS)
+            presentPendingAppExitIfAny()
+            #endif
         } catch let error as HostAPIError {
             // The host is reachable but refuses our identity — remember it so
             // selecting this computer offers PAIRING again instead of just
@@ -2644,6 +2772,19 @@ final class AppState {
             routeOnboarding(event)
             return
         }
+        #if os(iOS)
+        // Rejoining a dropped stream: the pads are back on the launcher's
+        // navigation (the stream stopped forwarding), but the launcher is
+        // hidden under the held frame, so nothing may act on it. B stops
+        // trying and shows the still-running card.
+        if session.rejoin != nil {
+            if event == .back {
+                sfx.play(.back)
+                session.stopRejoining()
+            }
+            return
+        }
+        #endif
         // Menu SFX — deliberate actions make sound, navigation mostly doesn't:
         //  • Overlays (cards) keep normal select/back — they're deliberate.
         //  • Settings screen is SILENT except an explicit value change (adjust()).
@@ -3291,8 +3432,9 @@ final class AppState {
 
     /// The card's line under the game's name.
     nonisolated static func endedStatusLine(game: String, host: String, closed: Bool,
-                                            played: TimeInterval?) -> String {
-        let head = closed ? "\(game) has closed on \(host)" : "Still running on \(host)"
+                                            played: TimeInterval?, leftApp: Bool = false) -> String {
+        let head = closed ? "\(game) has closed on \(host)"
+                          : leftApp ? "You left VibeLight · still running on \(host)" : "Still running on \(host)"
         guard let played else { return head }
         return "\(head) · \(playedText(played))"
     }
@@ -3338,7 +3480,7 @@ final class AppState {
     // MARK: - Settings rows
 
     enum SettingsRow: String, CaseIterable {
-        case resolution, fps, bitrate, codec, hdr, decoder, yuv444
+        case resolution, fps, bitrate, adaptiveBitrate, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, keepAwake, performanceOverlay
@@ -3357,6 +3499,7 @@ final class AppState {
             case .resolution: "Resolution"
             case .fps: "Frame Rate"
             case .bitrate: "Bitrate"
+            case .adaptiveBitrate: "Adaptive Bitrate"
             case .codec: "Video Codec"
             case .hdr: "HDR"
             case .decoder: "Video Decoder"
@@ -3404,7 +3547,7 @@ final class AppState {
                 // value that never took effect (audit QUA-ios-inert-settings).
                 // Re-add each when its decode path ships — HEVC/HDR/frame-pacing
                 // are on the roadmap (see InProcessStreamEngine + STREAMING-STATUS).
-                [.resolution, .fps, .bitrate]
+                [.resolution, .fps, .bitrate, .adaptiveBitrate]
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
@@ -3527,6 +3670,7 @@ final class AppState {
         case .fps: "\(settings.fps) fps"
         // Whole-number Mbps now that bitrate snaps to the 10 Mbps grid.
         case .bitrate: "\(settings.bitrateKbps / 1000) Mbps"
+        case .adaptiveBitrate: adaptiveBitrate ? "On" : "Off"
         case .codec: settings.codec.label
         case .hdr: settings.hdr ? "On" : "Off"
         case .decoder: settings.decoder.label
@@ -3602,6 +3746,7 @@ final class AppState {
             let next = onGrid ? current + (forward ? step : -step)
                               : (forward ? base + step : base)
             settings.bitrateKbps = min(max(next, Self.bitrateMin), Self.bitrateMax)
+        case .adaptiveBitrate: adaptiveBitrate.toggle()
         case .codec: settings.codec = Self.cycle(settings.codec, forward: forward)
         case .audio: settings.audio = Self.cycle(settings.audio, forward: forward)
         case .decoder: settings.decoder = Self.cycle(settings.decoder, forward: forward)

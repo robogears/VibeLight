@@ -25,6 +25,10 @@ final class PosterRestTests: XCTestCase {
                        "Still running on Gaming PC · played 42 min")
         XCTAssertEqual(AppState.endedStatusLine(game: "Ridgeline", host: "Gaming PC", closed: true, played: nil),
                        "Ridgeline has closed on Gaming PC")
+        // Put up by leaving the app mid-stream: it says why it's there.
+        XCTAssertEqual(AppState.endedStatusLine(game: "Ridgeline", host: "Gaming PC", closed: false, played: nil,
+                                                leftApp: true),
+                       "You left VibeLight · still running on Gaming PC")
     }
 
     // MARK: Wiring (AppState and the views need a live app, so pinned by source)

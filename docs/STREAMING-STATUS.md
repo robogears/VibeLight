@@ -169,8 +169,12 @@ Also done: touch-as-input (native LiSendTouchEvent + absolute-mouse fallback
 with double-tap deadzone; Settings ▸ Input ▸ Touch Control), keep-awake during
 stream (`refreshKeepAwake` — Auto-Lock killed an 8-minute session; gamepad
 input never resets the idle timer), iOS "Quit Game on App Exit"
-(scenePhase .background → teardown + /cancel in a UIKit background task; also
-prevents host-side stale-session poisoning on relaunch), and PS/Home-button
+(scenePhase .background → teardown, then the game waits on the PC for the
+background window — a return lands on the still-running card on Rejoin; no
+return → /cancel in the UIKit background task, which also prevents host-side
+stale-session poisoning on relaunch), Rejoin after a mid-stream drop (held
+frame, /resume at 2/5/10 s), the Link Governor (live bitrate via Vibepollo's
+`/bitrate`), and PS/Home-button
 delivery in-stream (disable system gestures on the pad while streaming).
 
 ## QoL roadmap (from deep-research, ranked by demand × solo-app feasibility)

@@ -37,7 +37,7 @@ final class PairingInterruptedTests: XCTestCase {
         let start = try XCTUnwrap(text.range(of: "func handleAppDidEnterBackground() {"))
         let body = text[start.upperBound...]
         let hold = try XCTUnwrap(body.range(of: "holdPairingInBackground()"))
-        let guardLive = try XCTUnwrap(body.range(of: "guard live else { return }"))
+        let guardLive = try XCTUnwrap(body.range(of: "guard let app = leftApp else { return }"))
         XCTAssertLessThan(hold.lowerBound, guardLive.lowerBound)
     }
 

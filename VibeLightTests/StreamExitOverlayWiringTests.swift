@@ -52,6 +52,36 @@ final class StreamExitOverlayWiringTests: XCTestCase {
         XCTAssertTrue(root.contains("VStack(spacing: 12) {\n                                companionButton(\"xmark\""))
     }
 
+    /// Rejoin: a drop with the game still to rejoin holds the picture and
+    /// retries instead of ending; B stops it; leaving the app keeps the game
+    /// on the PC for the background window instead of /cancel-ing at once.
+    func testRejoinAndAppExitWiring() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("beginRejoin(app: app, error: error)"))
+        XCTAssertTrue(engine.contains("if rejoin != nil {   // a rejoin try that didn't connect"))
+        let state = try source("VibeLight/App/AppState.swift")
+        XCTAssertTrue(state.contains("if session.rejoin != nil {\n            if event == .back {"))
+        XCTAssertTrue(state.contains("session.disconnect()   // the still-running card comes up underneath"))
+        XCTAssertFalse(state.contains("await stopStreamForAppExit(budget: .milliseconds(2500))\n            session.disconnect()"),
+                       "the old exit quit the game within 2.5 s")
+        XCTAssertTrue(state.contains("presentPendingAppExitIfAny()"))
+        let app = try source("VibeLight/App/iOS/VibeLightApp.swift")
+        XCTAssertTrue(app.contains("state.handleAppDidBecomeActive()"))
+        XCTAssertTrue(app.contains(".background { StreamNotices(interactive: false) }"))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertTrue(root.contains(".overlay { StreamNotices(showsPill: !dimmedOnTV) }"))
+    }
+
+    /// Link Governor: steps go through Vibepollo's runtime /bitrate, and the
+    /// stats loop feeds it even with the HUD off.
+    func testLinkGovernorWiring() throws {
+        let api = try source("VibeLight/Core/HostAPIClient.swift")
+        XCTAssertTrue(api.contains("path: \"/bitrate\""))
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("guard active, showPerfOverlay || governor != nil, let session else { return }"))
+        XCTAssertTrue(engine.contains("let applied = try await api.setBitrate(kbps: step.to, for: host, at: address)"))
+    }
+
     /// The grey pill takes no touches; only StreamView's corner swipe opens.
     func testTheCornerTapBelongsToTheGame() throws {
         let controls = try source("VibeLight/App/iOS/StreamControls.swift")

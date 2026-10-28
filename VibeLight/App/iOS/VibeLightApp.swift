@@ -101,10 +101,12 @@ struct VibeLightApp: App {
                         return vc
                     }
                     // Drawn over the TV's video while streaming: the same
-                    // leave-stream fade + ring the iPad shows.
+                    // leave-stream fade + ring the iPad shows, over the same
+                    // Link Governor pill and Rejoin card.
                     ExternalDisplay.shared.setStreamOverlayBuilder { renderScale in
                         let vc = UIHostingController(
                             rootView: StreamExitOverlay()
+                                .background { StreamNotices(interactive: false) }
                                 .environment(state)
                                 .environment(\.displayScale, renderScale)
                                 .preferredColorScheme(.dark))
@@ -118,14 +120,14 @@ struct VibeLightApp: App {
                     // on foreground — the iOS analogue of the macOS
                     // didBecomeActive reset in ControllerManager.
                     if phase == .active {
+                        state.handleAppDidBecomeActive()   // back inside the app-exit window: keep the game
                         state.controller.handleAppBecameActive()
                         state.refreshKeepAwake()   // iOS can drop keep-awake while we're away
                         VibeLightAppDelegate.forceLandscape()   // re-lock after any rotation while away
                     }
-                    // "Quit Game on App Exit" (and general stream teardown):
-                    // backgrounding suspends our sockets, so the stream dies
-                    // regardless — end it deliberately, /cancel-ing the remote
-                    // game when the setting is on.
+                    // Backgrounding suspends our sockets, so the stream ends
+                    // here — the game waits on the PC for a return, and Quit
+                    // Game on App Exit only runs if there isn't one in time.
                     if phase == .background { state.handleAppDidEnterBackground() }
                 }
         }

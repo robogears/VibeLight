@@ -356,12 +356,14 @@ private struct PosterRestCard: View {
             }
             Text(quitting ? "Closing \(app.name) on \(hostName)…"
                           : AppState.endedStatusLine(game: app.name, host: hostName, closed: closed,
-                                                     played: ended?.played))
+                                                     played: ended?.played,
+                                                     leftApp: ended?.fromAppExit == true))
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 12) {
-                OverlayButton(id: "ended:resume", title: closed ? "Play Again" : "Resume Stream",
+                OverlayButton(id: "ended:resume",
+                              title: closed ? "Play Again" : ended?.fromAppExit == true ? "Rejoin Stream" : "Resume Stream",
                               symbol: "play.fill")
                 if !closed {
                     OverlayButton(id: "ended:quit", title: "Quit Stream Completely",

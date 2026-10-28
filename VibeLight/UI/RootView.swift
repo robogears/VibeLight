@@ -207,6 +207,9 @@ struct RootView: View {
                         .frame(width: 0, height: 0)
                         .allowsHitTesting(false)
                     }
+                    // The Link Governor's pill and the Rejoin card (the TV
+                    // draws them too, under its Frame Trace).
+                    .overlay { StreamNotices(showsPill: !dimmedOnTV) }
                     // Hold Start+Select+L1+R1 → the fade + ring. The TV draws
                     // the same view over its video (ExternalDisplay's stream
                     // overlay), so the exit plays on both screens.

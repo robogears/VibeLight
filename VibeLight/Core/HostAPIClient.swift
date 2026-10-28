@@ -213,6 +213,22 @@ final class HostAPIClient: HostAPIProviding, @unchecked Sendable {
         }
     }
 
+    /// The runtime bitrate (Apollo/Vibepollo `GET /bitrate?bitrate=<kbps>` on
+    /// 47984, `src/nvhttp.cpp setBitrate`): retunes the live encoder of THIS
+    /// client's session — the host finds the session by our certificate.
+    /// Returns what the host applied (it clamps to its own ceiling). XML 404 =
+    /// no active session for us, or a host without the route (plain Sunshine);
+    /// 403 = this device lacks the "View stream" permission.
+    func setBitrate(kbps: Int, for host: StreamHost, at address: String) async throws -> Int {
+        let root = try await xmlRoot(for: host, at: address, path: "/bitrate",
+                                     extraQuery: [URLQueryItem(name: "bitrate", value: String(kbps))],
+                                     context: "bitrate")
+        guard let applied = root.child("bitrate").flatMap({ Int($0.text.trimmed) }), applied > 0 else {
+            throw HostAPIError.malformedResponse("bitrate: no applied value in the reply")
+        }
+        return applied
+    }
+
     /// Starts a game on the host over mTLS 47984 and returns its RTSP session URL
     /// (`<sessionUrl0>`) for `LiStartConnection`. `rikeyHex`/`rikeyId` are the
     /// remote-input AES key/iv the caller also feeds to the stream engine;

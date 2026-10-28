@@ -166,6 +166,20 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
 - Host busy (`currentgame != 0`) → `/resume`, never `/launch`.
 - iOS termination path must finish < 5 s or iOS SIGKILLs (0x8BADF00D):
   the quit-on-exit /cancel runs with a 2.5 s budget inside a background task.
+  Leaving the app mid-stream ends the stream at once but the GAME waits on the
+  PC for the background window (`appExitGrace`, ≤ 25 s): back in time → the
+  still-running card on "Rejoin Stream"; not back → the /cancel. A kill inside
+  the window leaves `vibelight.pendingAppExit`, and the next launch offers the
+  card again (`presentPendingAppExitIfAny`).
+- Rejoin: a mid-stream drop (`shouldRejoin`) keeps the phase `.streaming` and
+  the layer's last frame (flush, never flushAndRemoveImage; the TV keeps the
+  stream) while `/resume` is retried at 2/5/10 s; only then `.failed` → the
+  still-running card. B routes to `stopRejoining`; nothing else reaches the
+  hidden launcher meanwhile.
+- Link Governor (`Core/LinkGovernor.swift`, Settings ▸ Video ▸ Adaptive
+  Bitrate, global): steps the live bitrate with Vibepollo's `GET /bitrate`
+  (47984, retunes the running encoder). The preset's bitrate is the ceiling
+  and is never edited; a host that answers no (404/403) ends it for the stream.
 
 **UI/input:**
 - Custom spatial focus engine is mandatory — macOS SwiftUI focus ignores game

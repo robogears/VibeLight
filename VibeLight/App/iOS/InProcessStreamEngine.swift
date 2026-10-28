@@ -163,6 +163,7 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     func launch(app: StreamApp, on host: StreamHost, settings: StreamSettings) async {
+        endRejoin()   // a launch supersedes a rejoin still in progress
         // Tear down any prior connection FIRST — moonlight-common-c is
         // single-connection, and a second LiStartConnection over a live one
         // double-frees + scrambles the per-session AES keys (observed on-device as
@@ -172,6 +173,12 @@ final class InProcessStreamEngine: StreamEngine {
             session = nil
             proxy = nil
         }
+        streamGeneration += 1
+        streamNotice = nil
+        let effectiveSettings = Self.settingsForStream(settings)
+        governor = adaptiveBitrate ? LinkGovernor(ceilingKbps: effectiveSettings.bitrateKbps,
+                                                  fps: effectiveSettings.fps) : nil
+        linkRequestInFlight = false
         connectedOnce = false
         remoteQuitRequested = false
         streamQuitProgress = nil   // never start a new stream pre-blacked (ON-7 pin)
@@ -197,83 +204,22 @@ final class InProcessStreamEngine: StreamEngine {
             resolvedAddress = address
             launchStep = .starting(resume: info.runningAppID != nil)
 
-            let effective = Self.settingsForStream(settings)
+            let effective = effectiveSettings
             NSLog("[VibeLight] requested stream: \(effective.width)×\(effective.height)@\(effective.fps) \(effective.bitrateKbps)kbps tv=\(effective.externalDisplay)")
-
-            // Remote-input AES material: rikey = 16 random bytes (hex), rikeyid =
-            // a positive 31-bit int whose big-endian bytes seed the IV.
-            let key = GameStreamCrypto.randomBytes(16)
-            let rikeyId = Int(UInt32.random(in: 1...0x7FFF_FFFF))
-            var iv = Data(count: 16)
-            iv[0] = UInt8((rikeyId >> 24) & 0xFF); iv[1] = UInt8((rikeyId >> 16) & 0xFF)
-            iv[2] = UInt8((rikeyId >> 8) & 0xFF);  iv[3] = UInt8(rikeyId & 0xFF)
-
-            // Host already streaming → /resume (Sunshine rejects /launch while
-            // any session is active; a DIFFERENT running app is reconciled
-            // upstream in AppState before we're called).
-            //
-            // Use the model's own rule (`runningAppID`, which requires state ==
-            // .busy) rather than reading currentGameID alone. A host that is
-            // FREE can still report a non-zero currentgame — it's the last app
-            // it ran, and Sunshine doesn't always clear it — so `!= 0` on its
-            // own sent /resume to a host with nothing to resume, which fails
-            // instead of just launching the game.
-            let extraParams = MoonlightSession.launchUrlQueryParameters()
-            let sessionUrl: String?
-            if info.runningAppID != nil {
-                sessionUrl = try await api.resume(
-                    app: app, on: host, at: address, settings: effective,
-                    rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
-            } else {
-                launchedOnFreeHost = true
-                sessionUrl = try await api.launch(
-                    app: app, on: host, at: address, settings: effective,
-                    rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
-            }
-
-            await takeAudioSession()
-            let proxy = SessionDelegateProxy()
-            proxy.engine = self
-            self.proxy = proxy
-            let session = MoonlightSession(
-                address: address,
-                appVersion: info.appVersion.isEmpty ? "7.1.431.0" : info.appVersion,
-                gfeVersion: nil,
-                rtspUrl: sessionUrl,
-                // Every one of these crosses into int32_t. `Int32(x)` traps on
-                // overflow, so nothing that came off the wire or out of
-                // persisted settings gets converted that way — clamp instead.
-                // (HostAPIClient already narrows serverCodecModeSupport at the
-                // parse boundary; this is the second line of defence.)
-                codecModeSupport: Int32(clamping: info.serverCodecModeSupport),
-                width: Int32(clamping: effective.width), height: Int32(clamping: effective.height),
-                fps: Int32(clamping: effective.fps), bitrateKbps: Int32(clamping: effective.bitrateKbps),
-                // Hardcoded H.264 SDR: the iOS in-process decode path only
-                // handles H.264 today. HEVC/HDR are on the roadmap
-                // (docs/STREAMING-STATUS.md) and NOT wired to the
-                // AVSampleBufferDisplayLayer yet — `settings.hdr` is deliberately
-                // ignored here rather than promised to a decoder that can't honor
-                // it. Flip these only when the HEVC/HDR decode path ships.
-                enableHevc: false, enableHdr: false,
-                aesKey: key, aesIv: iv)
-            session.delegate = proxy
-            displayLayer.flush()
-            session.attach(displayLayer)
-            // Route the video to the TV if one is attached (else it stays on the
-            // iPad's StreamView). Safe when no display is connected — no-op.
-            if settings.externalDisplay { ExternalDisplay.shared.present(displayLayer) }
-            tvOutputRequested = settings.externalDisplay
-            self.session = session
-            self.launchingApp = app
-            session.start()
+            // Set before the /launch request: a /launch that fails may still
+            // have started the host capturing (see the catch).
+            if info.runningAppID == nil { launchedOnFreeHost = true }
+            try await connect(app: app, host: host, info: info, address: address,
+                              settings: effective, rejoining: false)
             launchStep = .connecting
         } catch is CancellationError {
             // Deliberately DON'T deactivate audio here: a CancellationError almost
             // always means a newer launch() superseded us and has already
             // re-grabbed the audio session, so deactivating would stomp the new
             // stream's audio. A genuine user-abort is cleaned up by the next
-            // launch/teardown.
-            phase = .idle
+            // launch/teardown. Only this launch's own phase goes back to idle:
+            // the still-running card a left app put up keeps its .ending.
+            if phase == .launching(app) { phase = .idle }
         } catch {
             // Hand the audio session back on a real launch failure (host asleep/
             // busy): we may have grabbed it (takeAudioSession) but no stream started,
@@ -293,9 +239,100 @@ final class InProcessStreamEngine: StreamEngine {
         }
     }
 
+    /// `/resume` (host busy) or `/launch`, then the connection. Shared by a
+    /// launch and by Rejoin, which keeps the picture: the layer still holds
+    /// the last frame, the TV keeps the stream on screen, and it reconnects at
+    /// the Link Governor's current bitrate rather than the preset's.
+    private func connect(app: StreamApp, host: StreamHost, info: ServerInfo, address: String,
+                         settings effective: StreamSettings, rejoining: Bool) async throws {
+        // Remote-input AES material: rikey = 16 random bytes (hex), rikeyid =
+        // a positive 31-bit int whose big-endian bytes seed the IV.
+        let key = GameStreamCrypto.randomBytes(16)
+        let rikeyId = Int(UInt32.random(in: 1...0x7FFF_FFFF))
+        var iv = Data(count: 16)
+        iv[0] = UInt8((rikeyId >> 24) & 0xFF); iv[1] = UInt8((rikeyId >> 16) & 0xFF)
+        iv[2] = UInt8((rikeyId >> 8) & 0xFF);  iv[3] = UInt8(rikeyId & 0xFF)
+
+        // Host already streaming → /resume (Sunshine rejects /launch while
+        // any session is active; a DIFFERENT running app is reconciled
+        // upstream in AppState before we're called).
+        //
+        // Use the model's own rule (`runningAppID`, which requires state ==
+        // .busy) rather than reading currentGameID alone. A host that is
+        // FREE can still report a non-zero currentgame — it's the last app
+        // it ran, and Sunshine doesn't always clear it — so `!= 0` on its
+        // own sent /resume to a host with nothing to resume, which fails
+        // instead of just launching the game.
+        let extraParams = MoonlightSession.launchUrlQueryParameters()
+        let sessionUrl: String?
+        if info.runningAppID != nil {
+            sessionUrl = try await api.resume(
+                app: app, on: host, at: address, settings: effective,
+                rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
+        } else {
+            sessionUrl = try await api.launch(
+                app: app, on: host, at: address, settings: effective,
+                rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
+        }
+
+        // Stopped while the host answered (the app was left, ✕, B on the
+        // rejoin card, a newer launch): don't connect behind the user's back.
+        let stopped = rejoining ? rejoin == nil : phase != .launching(app)
+        if stopped { throw CancellationError() }
+
+        await takeAudioSession()
+        let proxy = SessionDelegateProxy()
+        proxy.engine = self
+        self.proxy = proxy
+        let bitrateKbps = rejoining ? (governor?.currentKbps ?? effective.bitrateKbps) : effective.bitrateKbps
+        let session = MoonlightSession(
+            address: address,
+            appVersion: info.appVersion.isEmpty ? "7.1.431.0" : info.appVersion,
+            gfeVersion: nil,
+            rtspUrl: sessionUrl,
+            // Every one of these crosses into int32_t. `Int32(x)` traps on
+            // overflow, so nothing that came off the wire or out of
+            // persisted settings gets converted that way — clamp instead.
+            // (HostAPIClient already narrows serverCodecModeSupport at the
+            // parse boundary; this is the second line of defence.)
+            codecModeSupport: Int32(clamping: info.serverCodecModeSupport),
+            width: Int32(clamping: effective.width), height: Int32(clamping: effective.height),
+            fps: Int32(clamping: effective.fps), bitrateKbps: Int32(clamping: bitrateKbps),
+            // Hardcoded H.264 SDR: the iOS in-process decode path only
+            // handles H.264 today. HEVC/HDR are on the roadmap
+            // (docs/STREAMING-STATUS.md) and NOT wired to the
+            // AVSampleBufferDisplayLayer yet — `settings.hdr` is deliberately
+            // ignored here rather than promised to a decoder that can't honor
+            // it. Flip these only when the HEVC/HDR decode path ships.
+            enableHevc: false, enableHdr: false,
+            aesKey: key, aesIv: iv)
+        session.delegate = proxy
+        // flush() drops queued frames but keeps the one on screen — the held
+        // frame a rejoin carries on from (flushAndRemoveImage would clear it).
+        displayLayer.flush()
+        session.attach(displayLayer)
+        if rejoining {
+            // The iPad was showing the game beside a TV: the new connection
+            // feeds its copy too.
+            if companionView == .stream { session.attachMirror(mirrorLayer) }
+        } else {
+            // Route the video to the TV if one is attached (else it stays on the
+            // iPad's StreamView). Safe when no display is connected — no-op.
+            if effective.externalDisplay { ExternalDisplay.shared.present(displayLayer) }
+            tvOutputRequested = effective.externalDisplay
+        }
+        self.session = session
+        self.launchingApp = app
+        streamHost = host
+        streamAddress = address
+        streamSettings = effective
+        session.start()
+    }
+
     func disconnect() {
+        endRejoin()
         setStreamInput(active: false)
-        setStatsHUD(active: false)
+        setStatsLoop(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
@@ -956,15 +993,17 @@ final class InProcessStreamEngine: StreamEngine {
     /// come back to what the preset says.
     func togglePerformanceStats() {
         showPerfOverlay.toggle()
-        if case .streaming = phase { setStatsHUD(active: true) }
+        if case .streaming = phase { setStatsLoop(active: true) }
     }
 
-    private func setStatsHUD(active: Bool) {
+    /// The 1 Hz read of the stream's counters: the perf HUD when it's on, and
+    /// the Link Governor whenever it's governing (so it runs with the HUD off).
+    private func setStatsLoop(active: Bool) {
         statsTask?.cancel()
         statsTask = nil
         perfStats = nil
         ExternalDisplay.shared.setPerfHUD(nil)   // clear the TV mirror too
-        guard active, showPerfOverlay, let session else { return }
+        guard active, showPerfOverlay || governor != nil, let session else { return }
         statsTask = Task { [weak self, weak session] in
             var last = VLStreamStats()
             var lastTime = ContinuousClock.now
@@ -999,6 +1038,13 @@ final class InProcessStreamEngine: StreamEngine {
                 let rxAvgMs = frames > 0
                     ? Double(s.receiveDurationSumUs - last.receiveDurationSumUs) / frames / 1000 : 0
 
+                if self.governor != nil, !self.linkRequestInFlight {
+                    let sample = LinkGovernor.Sample(framesReceived: Int(received), framesDropped: Int(dropped),
+                                                     assemblyMs: rxAvgMs)
+                    if let step = self.governor?.observe(sample) { self.applyLinkStep(step) }
+                }
+                guard self.showPerfOverlay else { continue }
+
                 var lines: [String] = []
                 lines.append(String(format: "%d×%d  H.264  %.0f fps  %.1f Mbps",
                                     session.videoWidth(), session.videoHeight(), fps, mbps))
@@ -1013,10 +1059,225 @@ final class InProcessStreamEngine: StreamEngine {
                                         hlAvgMs, Double(s.hostLatencyMaxTenthMs) / 10))
                 }
                 lines.append(String(format: "Dropped: %.1f%% (%d total)", dropPct, s.networkDroppedFrames))
+                if let governor = self.governor, governor.currentKbps < governor.ceilingKbps {
+                    lines.append("Link: \(LinkGovernor.mbps(governor.currentKbps)) of "
+                                 + "\(LinkGovernor.mbps(governor.ceilingKbps)) Mbps (adaptive)")
+                }
                 self.perfStats = lines.joined(separator: "\n")
                 ExternalDisplay.shared.setPerfHUD(self.perfStats)   // mirror to the TV
             }
         }
+    }
+
+    // MARK: - Link Governor
+
+    /// Settings ▸ Video ▸ Adaptive Bitrate (AppState keeps it in step; read at
+    /// each launch). Global, not part of a preset.
+    @ObservationIgnored var adaptiveBitrate = true
+    /// This stream's governor (nil = off, or the host can't change bitrate live).
+    @ObservationIgnored private var governor: LinkGovernor?
+    @ObservationIgnored private var linkRequestInFlight = false
+    /// Bumped per launch, so a reply from an earlier stream's request is dropped.
+    @ObservationIgnored private var streamGeneration = 0
+    /// What this stream was started with, for the governor's requests and Rejoin.
+    @ObservationIgnored private var streamHost: StreamHost?
+    @ObservationIgnored private var streamAddress: String?
+    @ObservationIgnored private var streamSettings: StreamSettings?
+
+    /// Asks the host for the step's bitrate. The governor already counts it as
+    /// current; what the host applied (it clamps) is recorded when it answers.
+    /// A host that says no — plain Sunshine has no `/bitrate`, or this device
+    /// lacks the permission — ends governing for this stream; a request that
+    /// didn't get through puts the old rate back so the next bad stretch
+    /// tries again.
+    private func applyLinkStep(_ step: LinkGovernor.Step) {
+        guard let host = streamHost, let address = streamAddress else { return }
+        linkRequestInFlight = true
+        let api = self.api, generation = streamGeneration
+        Task { [weak self] in
+            do {
+                let applied = try await api.setBitrate(kbps: step.to, for: host, at: address)
+                guard let self, self.streamGeneration == generation else { return }
+                self.linkRequestInFlight = false
+                guard self.governor != nil else { return }
+                self.governor?.settle(at: applied)
+                let ceiling = self.governor?.ceilingKbps ?? applied
+                let text = LinkGovernor.notice(for: step, ceilingKbps: ceiling)
+                let warn: Bool
+                if case .down = step { warn = true } else { warn = false }
+                self.showNotice(title: text.title, detail: text.detail, warn: warn)
+            } catch {
+                guard let self, self.streamGeneration == generation else { return }
+                self.linkRequestInFlight = false
+                if Self.hostRefusesBitrate(error) {
+                    NSLog("[VibeLight] adaptive bitrate off for this stream: \(error.localizedDescription)")
+                    self.governor = nil
+                } else {
+                    self.governor?.settle(at: step.from)
+                }
+            }
+        }
+    }
+
+    /// The host answered and said no (vs. not getting through at all).
+    nonisolated static func hostRefusesBitrate(_ error: Error) -> Bool {
+        switch error as? HostAPIError {
+        case .xmlStatus, .notAuthorized, .malformedResponse: return true
+        default: return false
+        }
+    }
+
+    /// A short line over the stream on the iPad and the TV (`StreamNotices`):
+    /// the governor's steps and "Rejoined".
+    struct StreamNotice: Equatable, Sendable {
+        var id: Int
+        var title: String
+        var detail: String
+        var warn: Bool
+    }
+    private(set) var streamNotice: StreamNotice?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    @ObservationIgnored private var noticeCount = 0
+
+    private func showNotice(title: String, detail: String, warn: Bool) {
+        noticeCount += 1
+        let id = noticeCount
+        streamNotice = StreamNotice(id: id, title: title, detail: detail, warn: warn)
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3.5))
+            guard let self, !Task.isCancelled, self.streamNotice?.id == id else { return }
+            self.streamNotice = nil
+        }
+    }
+
+    // MARK: - Rejoin
+
+    /// A dropped stream being rejoined (nil otherwise). Owner's pick from "the
+    /// next five": when the connection drops but the PC is still running the
+    /// game, the picture holds its last frame, dims, and VibeLight rejoins by
+    /// itself — three tries — before falling back to the still-running card
+    /// with the reason. The phase STAYS `.streaming` meanwhile, so the stream
+    /// view (and the TV) keep the held frame instead of cutting to the
+    /// launcher. B stops it (AppState routes .back here).
+    struct Rejoin: Equatable, Sendable {
+        var app: StreamApp
+        var attempt: Int
+        var droppedAt: Date
+    }
+    private(set) var rejoin: Rejoin?
+    @ObservationIgnored private var rejoinTask: Task<Void, Never>?
+    /// What the drop was, for the still-running card if rejoining gives up.
+    @ObservationIgnored private var rejoinDropMessage: String?
+    /// Wait before each try: the first is cheap, the host may still be holding
+    /// the dead session; the later ones are the ones expected to land.
+    nonisolated static let rejoinDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(10)]
+
+    /// A drop worth rejoining: the connection failed (not the PC ending the
+    /// game, not our own quit), for a reason a fresh connection can fix.
+    /// Protected content (-103) and frame-conversion failures (-104) are the
+    /// PC's own problems and would only drop again.
+    nonisolated static func shouldRejoin(error: Int, remoteQuitRequested: Bool) -> Bool {
+        error != 0 && !remoteQuitRequested && error != -103 && error != -104
+    }
+
+    private func beginRejoin(app: StreamApp, error: Int) {
+        // Freeze the picture: input and stats stop, the connection goes, but
+        // the layer keeps its frame, the TV stays on the stream and the audio
+        // session stays ours (reactivating it between tries is how sound goes
+        // missing after a reconnect).
+        setStreamInput(active: false)
+        setStatsLoop(active: false)
+        session?.stop()
+        session = nil
+        proxy = nil
+        if case .failed(let message) = Self.terminationPhase(error: error, remoteQuitRequested: false, app: app) {
+            rejoinDropMessage = message
+        }
+        rejoin = Rejoin(app: app, attempt: 1, droppedAt: Date())
+        scheduleRejoinAttempt()
+    }
+
+    private func scheduleRejoinAttempt() {
+        guard let rejoin else { return }
+        let delay = Self.rejoinDelays[min(rejoin.attempt - 1, Self.rejoinDelays.count - 1)]
+        rejoinTask?.cancel()
+        rejoinTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled, self.rejoin != nil else { return }
+            await self.attemptRejoin()
+        }
+    }
+
+    /// One try: is the game still running? Then /resume and connect. The
+    /// connection's own stages decide it from there (handleStage /
+    /// handleFail / handleTerminated).
+    private func attemptRejoin() async {
+        guard let rejoin, let host = streamHost, let settings = streamSettings else {
+            giveUpRejoin(closedOnHost: false)
+            return
+        }
+        connectedOnce = false
+        do {
+            let (info, address) = try await api.serverInfo(for: host)
+            guard self.rejoin != nil, !Task.isCancelled else { return }   // stopped meanwhile
+            guard info.runningAppID == rejoin.app.id else {
+                giveUpRejoin(closedOnHost: true)
+                return
+            }
+            try await connect(app: rejoin.app, host: host, info: info, address: address,
+                              settings: settings, rejoining: true)
+            // A connection that goes quiet — no stage, no failure — counts as a miss.
+            let attempt = rejoin.attempt
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, self.rejoin?.attempt == attempt, !connectedOnce else { return }
+            rejoinAttemptFailed()
+        } catch {
+            guard self.rejoin != nil, !Task.isCancelled else { return }
+            rejoinAttemptFailed()
+        }
+    }
+
+    private func rejoinAttemptFailed() {
+        guard var next = rejoin else { return }
+        session?.stop()
+        session = nil
+        proxy = nil
+        guard next.attempt < Self.rejoinDelays.count else {
+            giveUpRejoin(closedOnHost: false)
+            return
+        }
+        next.attempt += 1
+        rejoin = next
+        scheduleRejoinAttempt()
+    }
+
+    /// Three misses, B, or the game gone: the stream ends the way a drop
+    /// always did — the still-running card, with the reason.
+    private func giveUpRejoin(closedOnHost: Bool) {
+        guard let given = rejoin else { return }
+        endRejoin()
+        session?.stop()
+        session = nil
+        proxy = nil
+        cancelCompanionIdle()
+        ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
+        deactivateAudioSession()
+        phase = .failed(closedOnHost
+            ? "The connection dropped, and \(given.app.name) has since closed on the PC."
+            : rejoinDropMessage ?? "The stream connection ended unexpectedly.")
+        onStreamDidEnd?(false)
+    }
+
+    /// B on the rejoin card: stop trying and show the still-running card.
+    func stopRejoining() {
+        giveUpRejoin(closedOnHost: false)
+    }
+
+    private func endRejoin() {
+        rejoinTask?.cancel()
+        rejoinTask = nil
+        if rejoin != nil { rejoin = nil }
     }
 
     // MARK: - Companion (iPad) while a TV shows the game
@@ -1126,9 +1387,10 @@ final class InProcessStreamEngine: StreamEngine {
     }
 
     func quitCompletely(host: StreamHost) async {
+        endRejoin()
         remoteQuitRequested = true
         setStreamInput(active: false)
-        setStatsHUD(active: false)
+        setStatsLoop(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         session?.stop()
@@ -1163,12 +1425,23 @@ final class InProcessStreamEngine: StreamEngine {
         // "Connected" (or reaching the video-start stage) means the stream is live.
         if !connectedOnce, stage == .connected || stage.rawValue >= MoonlightStage.videoStart.rawValue {
             connectedOnce = true
-            phase = .streaming(app)
-            ExternalDisplay.shared.showStream()   // TV: launcher + starting card → the stream
-            setStreamInput(active: true)
-            setStatsHUD(active: true)
-            armCompanionIdle()   // the iPad companion's panel / dim / show-the-game timers
-            onStreamDidStart?(nil)
+            if let rejoined = rejoin {
+                // Back: the picture carries on from the held frame. Nothing
+                // else moves — the phase never left .streaming, the TV never
+                // left the stream, the iPad keeps whatever it was showing.
+                endRejoin()
+                setStreamInput(active: true)
+                setStatsLoop(active: true)
+                let offline = max(1, Int(Date().timeIntervalSince(rejoined.droppedAt).rounded()))
+                showNotice(title: "Rejoined", detail: "\(offline) s offline · same game, same settings", warn: false)
+            } else {
+                phase = .streaming(app)
+                ExternalDisplay.shared.showStream()   // TV: launcher + starting card → the stream
+                setStreamInput(active: true)
+                setStatsLoop(active: true)
+                armCompanionIdle()   // the iPad companion's panel / dim / show-the-game timers
+                onStreamDidStart?(nil)
+            }
         }
         // Announce every attached pad — with its REAL family — so the host
         // materializes matching virtual controllers before first input
@@ -1192,8 +1465,12 @@ final class InProcessStreamEngine: StreamEngine {
 
     fileprivate func handleFail(stage: MoonlightStage, error: Int) {
         NSLog("[VibeLight] stream failed: stage=\(stage.rawValue) error=\(error)")
+        if rejoin != nil {   // a rejoin try that didn't connect: the next try, or the card
+            rejoinAttemptFailed()
+            return
+        }
         setStreamInput(active: false)
-        setStatsHUD(active: false)
+        setStatsLoop(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         // Clear the dead connection like handleTerminated does: LiStopConnection is
@@ -1210,8 +1487,19 @@ final class InProcessStreamEngine: StreamEngine {
 
     fileprivate func handleTerminated(error: Int) {
         NSLog("[VibeLight] stream terminated: error=\(error) requestedQuit=\(remoteQuitRequested)")
+        if rejoin != nil {   // a rejoin try that ended before it connected
+            rejoinAttemptFailed()
+            return
+        }
+        // Dropped mid-game with the game still to rejoin: hold the picture
+        // and rejoin instead of ending (attemptRejoin checks the PC first).
+        if case .streaming(let app) = phase, streamHost != nil,
+           Self.shouldRejoin(error: error, remoteQuitRequested: remoteQuitRequested) {
+            beginRejoin(app: app, error: error)
+            return
+        }
         setStreamInput(active: false)
-        setStatsHUD(active: false)
+        setStatsLoop(active: false)
         cancelCompanionIdle()
         ExternalDisplay.shared.dismiss()   // hand the video layer back to the iPad
         // Remote termination only DELIVERS the callback — the connection's

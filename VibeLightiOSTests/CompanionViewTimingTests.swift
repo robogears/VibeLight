@@ -29,6 +29,52 @@ final class CompanionViewTimingTests: XCTestCase {
         XCTAssertNil(Engine.companionNext(.dimmed, idle: .seconds(3600), keyboardUp: false))
     }
 }
+/// Rejoin (owner's pick from "the next five", plus: swiping up by accident
+/// shouldn't cost the game).
+final class RejoinRulesTests: XCTestCase {
+    private typealias Engine = InProcessStreamEngine
+
+    /// A failed connection is rejoined; the PC ending the game, our own quit,
+    /// and the PC's own capture problems are not.
+    func testWhichDropsAreRejoined() {
+        XCTAssertTrue(Engine.shouldRejoin(error: -100, remoteQuitRequested: false))
+        XCTAssertTrue(Engine.shouldRejoin(error: -101, remoteQuitRequested: false))
+        XCTAssertTrue(Engine.shouldRejoin(error: 5, remoteQuitRequested: false))
+        XCTAssertFalse(Engine.shouldRejoin(error: 0, remoteQuitRequested: false))
+        XCTAssertFalse(Engine.shouldRejoin(error: -100, remoteQuitRequested: true))
+        XCTAssertFalse(Engine.shouldRejoin(error: -103, remoteQuitRequested: false))
+        XCTAssertFalse(Engine.shouldRejoin(error: -104, remoteQuitRequested: false))
+    }
+
+    func testThreeTriesAtTwoFiveAndTenSeconds() {
+        XCTAssertEqual(Engine.rejoinDelays, [.seconds(2), .seconds(5), .seconds(10)])
+    }
+
+    /// A host that answers "no" to /bitrate ends governing for the stream; one
+    /// that couldn't be reached is tried again later.
+    func testWhichBitrateErrorsEndGoverning() {
+        XCTAssertTrue(Engine.hostRefusesBitrate(HostAPIError.xmlStatus(code: 404, message: "")))
+        XCTAssertTrue(Engine.hostRefusesBitrate(HostAPIError.notAuthorized))
+        XCTAssertFalse(Engine.hostRefusesBitrate(HostAPIError.unreachable("PC")))
+        XCTAssertFalse(Engine.hostRefusesBitrate(HostAPIError.notResponding("PC")))
+    }
+
+    /// The game waits for VibeLight as long as iOS lets it run in the
+    /// background, minus room for the /cancel to land, at most 25 s.
+    func testAppExitGrace() {
+        XCTAssertEqual(AppState.appExitGrace(backgroundTimeRemaining: 30), .seconds(25))
+        XCTAssertEqual(AppState.appExitGrace(backgroundTimeRemaining: 20), .seconds(15))
+        XCTAssertEqual(AppState.appExitGrace(backgroundTimeRemaining: 3), .zero)
+        XCTAssertEqual(AppState.appExitGrace(backgroundTimeRemaining: .infinity), .seconds(25))
+    }
+
+    /// After a kill, a relaunch inside 30 s offers Rejoin first.
+    func testRelaunchWindow() {
+        XCTAssertTrue(AppState.appExitWindowOpen(age: 20))
+        XCTAssertFalse(AppState.appExitWindowOpen(age: 45))
+    }
+}
+
 /// The tucked controls' corner (owner: tapping by the grey line "can't do it,
 /// and sometimes the menu opens"): a tap there is the game's; only a swipe
 /// left pulls the controls out.
