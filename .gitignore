@@ -67,3 +67,8 @@ VibeLightiOSTests/**/* copy [0-9]*.swift
 
 # Agent worktrees (local scratch checkouts)
 .claude/worktrees/
+
+# Windows helper (.NET) build output
+WindowsHelper/**/bin/
+WindowsHelper/**/obj/
+WindowsHelper/out/
