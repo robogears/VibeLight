@@ -10,12 +10,15 @@ namespace VibeLightHelper;
 /// The whole UI: an icon by the clock (owner: "just a bottom task bar icon,
 /// kind of like MoonDeckBuddy"). Everything else is controlled from the iPad.
 /// The menu says whether it's working and who may use it, and can start it
-/// with Windows, put the display back, or quit. Plain Win32: a hidden window
-/// owns the icon and receives its clicks.
+/// with Windows or quit (owner: no display option — VibeLight puts the display
+/// back itself, and so does Quit). Plain Win32: a hidden window owns the icon
+/// and receives its clicks.
 /// </summary>
 sealed class TrayApp
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    /// Windows' own on/off for startup apps (Settings ▸ Startup apps).
+    const string StartupApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     const string RunValue = "VibeLight Helper";
     const string Title = "VibeLight Helper";
     /// "0.1.1", from the project's Version: the menu's heading says which build this is.
@@ -26,7 +29,7 @@ sealed class TrayApp
     const uint RestartCancelledMessage = WM_APP + 3;
     const uint IconId = 1;
 
-    enum Command : uint { None, Header, StartWithWindows = 10, PutDisplayBack, CancelRestart, Quit }
+    enum Command : uint { None, Header, StartWithWindows = 10, CancelRestart = 12, Quit }
 
     readonly Win32Platform platform = new();
     readonly PcStateHandler power;
@@ -68,15 +71,18 @@ sealed class TrayApp
             status = $"Port {Protocol.DefaultPort} is in use. Is it already running?";
         }
 
-        // First run: start with Windows, so it's there whenever the iPad is.
+        // Start with Windows: on from the first run, so it's there whenever
+        // the iPad is — and kept pointing at THIS exe, whose name changes
+        // with every version (StartWithWindows explains).
         var firstRunMarker = Path.Combine(dataDir, "first-run-done");
         firstRun = !File.Exists(firstRunMarker);
+        KeepStartingWithWindows(firstRun);
         if (firstRun)
         {
-            SetStartWithWindows(true);
             Directory.CreateDirectory(dataDir);
             File.WriteAllText(firstRunMarker, DateTime.UtcNow.ToString("O"));
         }
+        Unblock();
 
         wndProc = WindowProc;
         // Explorer announces a restart with this; the icon has to be added again.
@@ -197,7 +203,6 @@ sealed class TrayApp
         AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenuW(menu, MF_STRING | (StartsWithWindows() ? MF_CHECKED : 0),
                     (UIntPtr)(uint)Command.StartWithWindows, "Start with Windows");
-        AppendMenuW(menu, MF_STRING, (UIntPtr)(uint)Command.PutDisplayBack, "Put the Display Back");
         if (power.State == PcStateHandler.PcState.Restarting)
         {
             AppendMenuW(menu, MF_STRING, (UIntPtr)(uint)Command.CancelRestart, "Cancel Restart");
@@ -218,9 +223,6 @@ sealed class TrayApp
             case Command.StartWithWindows:
                 SetStartWithWindows(!StartsWithWindows());
                 break;
-            case Command.PutDisplayBack:
-                Notify(platform.Restore().Message);
-                break;
             case Command.CancelRestart:
                 power.Cancel();   // its event says "Restart cancelled."
                 break;
@@ -238,17 +240,55 @@ sealed class TrayApp
             : $"{allowed} devices paired with Vibepollo can use it";
     }
 
+    /// On means both: our Run value is there, and Windows' own startup
+    /// switch (Settings ▸ Startup apps, Task Manager) hasn't turned it off.
     static bool StartsWithWindows()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-        return key?.GetValue(RunValue) is string;
+        using var run = Registry.CurrentUser.OpenSubKey(RunKey);
+        if (run?.GetValue(RunValue) is not string) return false;
+        using var approved = Registry.CurrentUser.OpenSubKey(StartupApprovedKey);
+        return !StartWithWindows.IsDisabledByWindows(approved?.GetValue(RunValue) as byte[]);
     }
 
     static void SetStartWithWindows(bool on)
     {
         using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (on && Environment.ProcessPath is { } path) key.SetValue(RunValue, $"\"{path}\"");
-        else key.DeleteValue(RunValue, throwOnMissingValue: false);
+        if (on && Environment.ProcessPath is { } path)
+        {
+            key.SetValue(RunValue, StartWithWindows.Command(path));
+            // Ticking it means on: clear an "off" Windows' Startup apps set.
+            using var approved = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, writable: true);
+            approved?.DeleteValue(RunValue, throwOnMissingValue: false);
+        }
+        else
+        {
+            key.DeleteValue(RunValue, throwOnMissingValue: false);
+        }
+    }
+
+    /// At every start: on for the first run, and re-pointed at this exe when
+    /// it's on but names another (an older version, or the exe was moved).
+    static void KeepStartingWithWindows(bool firstRun)
+    {
+        if (Environment.ProcessPath is not { } path) return;
+        try
+        {
+            using var run = Registry.CurrentUser.CreateSubKey(RunKey);
+            var current = run.GetValue(RunValue) as string;
+            // Only our Run value: an "off" set in Windows' Startup apps is the
+            // person's choice and survives an update (the menu tick clears it).
+            if (StartWithWindows.Heal(current, path, firstRun) is { } command) run.SetValue(RunValue, command);
+        }
+        catch (Exception error) when (error is System.Security.SecurityException or UnauthorizedAccessException
+                                      or IOException) { }
+    }
+
+    /// Drops the "downloaded from the internet" mark from our own exe (what
+    /// Properties ▸ Unblock does). The person already chose to run it; left
+    /// on, Windows can stop a startup launch at a security prompt nobody sees.
+    static void Unblock()
+    {
+        if (Environment.ProcessPath is { } path) DeleteFileW(path + ":Zone.Identifier");
     }
 
     void Quit()

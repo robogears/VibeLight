@@ -148,8 +148,10 @@ Win32 (no WinForms) so it builds from any OS: `dotnet test
 WindowsHelper/VibeLightHelper.Tests`, `dotnet publish
 WindowsHelper/VibeLightHelper -c Release` → one self-contained exe. It never
 touches exclusive-fullscreen games' resolution (says why instead) and its
-display changes are dynamic (never saved; reboot/Quit/Put the Display Back
-undo them).
+display changes are dynamic (never saved; VibeLight's `/restore`, the tray's
+Quit and a reboot undo them — the tray has no display item, owner). Start with
+Windows is re-pointed at the running exe on every start (`StartWithWindows`:
+the exe's name changes with each version).
 
 **Bump the helper's version with every helper change (standing instruction).**
 Any change under `WindowsHelper/` that ships in the exe goes out as a new

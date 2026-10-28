@@ -311,6 +311,37 @@ public class HelperApiTests
     }
 }
 
+public class StartWithWindowsTests
+{
+    const string Now = @"C:\Users\me\Apps\VibeLightHelperV0.1.4.exe";
+
+    /// The bug: an update renamed the exe, the Run value still named the old
+    /// one, and the helper stopped starting with Windows.
+    [Fact]
+    public void AnUpdateRepointsItAtTheNewExe()
+    {
+        Assert.Equal($"\"{Now}\"", StartWithWindows.Heal(@"""C:\Users\me\Apps\VibeLightHelperV0.1.1.exe""", Now, firstRun: false));
+        Assert.Null(StartWithWindows.Heal($"\"{Now}\"", Now, firstRun: false));               // already right
+        Assert.Null(StartWithWindows.Heal($"\"{Now.ToUpperInvariant()}\"", Now, firstRun: false));
+    }
+
+    [Fact]
+    public void OnForTheFirstRunAndOffStaysOff()
+    {
+        Assert.Equal($"\"{Now}\"", StartWithWindows.Heal(null, Now, firstRun: true));
+        Assert.Null(StartWithWindows.Heal(null, Now, firstRun: false));   // turned off: stays off
+    }
+
+    [Fact]
+    public void ReadsWindowsOwnStartupSwitch()
+    {
+        Assert.False(StartWithWindows.IsDisabledByWindows(null));
+        Assert.False(StartWithWindows.IsDisabledByWindows(new byte[] { 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
+        Assert.True(StartWithWindows.IsDisabledByWindows(new byte[] { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
+        Assert.True(StartWithWindows.IsDisabledByWindows(new byte[] { 7, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }));
+    }
+}
+
 public class PcStateHandlerTests
 {
     /// The grace runs out, the native restart is called once, and the state

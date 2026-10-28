@@ -47,14 +47,16 @@ out.
 
 ## Install
 
-1. Copy `VibeLightHelperV0.1.3.exe` (in this folder) anywhere on the PC (for
+1. Copy `VibeLightHelperV0.1.4.exe` (in this folder) anywhere on the PC (for
    example `%LOCALAPPDATA%\Programs\VibeLight Helper\`) and run it. It runs
    as you, and doesn't need administrator rights. Its menu heading shows the
    version that's running.
 2. Windows Firewall asks once. Allow it on **private networks**: that is how
    the iPad reaches it (TCP port 47333).
 3. That's it. On first run it starts with Windows (you can untick
-   **Start with Windows** in its menu). If your iPad can stream from this PC,
+   **Start with Windows** in its menu). Updating keeps that working: each
+   start points Windows at the exe that's running, so a new version's file
+   name doesn't break it. If your iPad can stream from this PC,
    it can use the helper. No PIN, no pairing.
 
 ## Who may use it
@@ -80,8 +82,9 @@ first time it connects and refuses a different one after that.
 - **Games running as administrator** can't be ended by a helper running as
   you. Quit Game tells you this; run the helper as administrator too if you
   need it.
-- Display changes are temporary, never saved. **Put the Display Back** in the
-  menu, quitting the helper, or restarting Windows all undo them.
+- Display changes are temporary, never saved. VibeLight puts the display back
+  when the stream ends or the TV is unplugged, and quitting the helper or
+  restarting Windows undoes them too.
 
 ## Build
 
@@ -96,7 +99,7 @@ dotnet publish VibeLightHelper -c Release -o out     # → VibeLightHelperV<vers
 The result is one self-contained exe (win-x64, about 35 MB). It needs no .NET
 installed on the PC. Each publish also copies it to this folder, named with
 the `Version` in `VibeLightHelper/VibeLightHelper.csproj`
-(`VibeLightHelperV0.1.3.exe`), and that copy is the one committed.
+(`VibeLightHelperV0.1.4.exe`), and that copy is the one committed.
 
 **Every change to the helper gets a new version.** Bump `Version` (patch by
 default, 0.1.1 → 0.1.2), run the tests, publish, delete the old exe, update

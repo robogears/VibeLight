@@ -142,4 +142,8 @@ static class NativeTray
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     public static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATA lpData);
+
+    /// Also deletes an NTFS stream ("file:Zone.Identifier").
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool DeleteFileW(string lpFileName);
 }
