@@ -1164,6 +1164,15 @@ final class InProcessStreamEngine: StreamEngine {
         var app: StreamApp
         var attempt: Int
         var droppedAt: Date
+        /// Set when this isn't a drop but a Match TV restart at a new size.
+        var resize: Resize? = nil
+    }
+    /// A restart at a new size (`resize`): what to show while it happens.
+    struct Resize: Equatable, Sendable {
+        var width: Int
+        var height: Int
+        /// "Matching the TV" / "Back to your preset".
+        var reason: String
     }
     private(set) var rejoin: Rejoin?
     @ObservationIgnored private var rejoinTask: Task<Void, Never>?
@@ -1172,6 +1181,9 @@ final class InProcessStreamEngine: StreamEngine {
     /// Wait before each try: the first is cheap, the host may still be holding
     /// the dead session; the later ones are the ones expected to land.
     nonisolated static let rejoinDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(10)]
+    /// A restart we asked for ended the old connection cleanly, so the first
+    /// try can go almost at once.
+    nonisolated static let resizeDelays: [Duration] = [.milliseconds(600), .seconds(3), .seconds(8)]
 
     /// A drop worth rejoining: the connection failed (not the PC ending the
     /// game, not our own quit), for a reason a fresh connection can fix.
@@ -1200,7 +1212,8 @@ final class InProcessStreamEngine: StreamEngine {
 
     private func scheduleRejoinAttempt() {
         guard let rejoin else { return }
-        let delay = Self.rejoinDelays[min(rejoin.attempt - 1, Self.rejoinDelays.count - 1)]
+        let delays = rejoin.resize == nil ? Self.rejoinDelays : Self.resizeDelays
+        let delay = delays[min(rejoin.attempt - 1, delays.count - 1)]
         rejoinTask?.cancel()
         rejoinTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
@@ -1278,6 +1291,55 @@ final class InProcessStreamEngine: StreamEngine {
         rejoinTask?.cancel()
         rejoinTask = nil
         if rejoin != nil { rejoin = nil }
+    }
+
+    // MARK: - Match TV (the stream restarts at a new size)
+
+    /// The size the running stream was asked for.
+    var streamResolution: (width: Int, height: Int)? {
+        streamSettings.map { (width: $0.width, height: $0.height) }
+    }
+
+    /// A `resize` restart is up at its new size (AppState: the PC follows).
+    @ObservationIgnored var onResized: (() -> Void)?
+
+    /// Restarts the running stream at `width`×`height` — Match TV, when a TV
+    /// is plugged in or pulled out (AppState decides the size; the engine
+    /// never reads the display). The same game, frame rate and bitrate; only
+    /// the size changes, so the host's encoder (and the PC, via the helper)
+    /// can take it. It runs on Rejoin's machinery: the picture holds its last
+    /// frame under a "Switching to …" card, /resume is tried up to three
+    /// times, and B stops it on the still-running card. False when there's
+    /// nothing to restart (no stream, already that size).
+    func resize(width: Int, height: Int, reason: String) -> Bool {
+        guard case .streaming(let app) = phase, var settings = streamSettings,
+              settings.width != width || settings.height != height else { return false }
+        settings.width = width
+        settings.height = height
+        streamSettings = settings   // every try from here asks for the new size
+        let resize = Resize(width: width, height: height, reason: reason)
+        rejoinDropMessage = "The stream couldn't restart at \(width)×\(height)."
+        if var current = rejoin {
+            // Already reconnecting (a drop, or the TV changed again): the
+            // next try asks for the new size.
+            current.resize = resize
+            rejoin = current
+            return true
+        }
+        setStreamInput(active: false)
+        setStatsLoop(active: false)
+        session?.stop()
+        session = nil
+        proxy = nil
+        rejoin = Rejoin(app: app, attempt: 1, droppedAt: Date(), resize: resize)
+        scheduleRejoinAttempt()
+        return true
+    }
+
+    /// A line in the notice pill (AppState: what the PC did for Match TV).
+    func announce(title: String, detail: String, warn: Bool) {
+        guard case .streaming = phase else { return }
+        showNotice(title: title, detail: detail, warn: warn)
     }
 
     // MARK: - Companion (iPad) while a TV shows the game
@@ -1432,8 +1494,14 @@ final class InProcessStreamEngine: StreamEngine {
                 endRejoin()
                 setStreamInput(active: true)
                 setStatsLoop(active: true)
-                let offline = max(1, Int(Date().timeIntervalSince(rejoined.droppedAt).rounded()))
-                showNotice(title: "Rejoined", detail: "\(offline) s offline · same game, same settings", warn: false)
+                if let resize = rejoined.resize {
+                    showNotice(title: "Now \(resize.width)×\(resize.height)",
+                               detail: "\(resize.reason) · same game, same frame rate", warn: false)
+                    onResized?()
+                } else {
+                    let offline = max(1, Int(Date().timeIntervalSince(rejoined.droppedAt).rounded()))
+                    showNotice(title: "Rejoined", detail: "\(offline) s offline · same game, same settings", warn: false)
+                }
             } else {
                 phase = .streaming(app)
                 ExternalDisplay.shared.showStream()   // TV: launcher + starting card → the stream

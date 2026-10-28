@@ -275,6 +275,8 @@ final class AppState {
         var leaving = false
         /// Quit has fired: the card holds its "closing" look and fades out.
         var quitting = false
+        /// …and it was Quit Stream and Game (that button stays full).
+        var closingGame = false
         /// Put up by leaving the app mid-stream (iPad): it opens on Rejoin and
         /// says so (see handleAppDidEnterBackground).
         var fromAppExit = false
@@ -521,6 +523,84 @@ final class AppState {
         defaults.object(forKey: adaptiveBitrateKey) as? Bool ?? true
     }
 
+    // MARK: Windows Helper (VibeLight Helper on the PC)
+
+    /// Settings ▸ Windows Helper. VibeLight Helper is the small tray app on
+    /// the gaming PC (`WindowsHelper/`, `WindowsHelperClient`); it does what
+    /// the stream can't: Match TV and Quit Game. It needs no pairing — a
+    /// device the PC's host has paired gets in — and everything it controls
+    /// is greyed out until it's found on the selected PC (owner: "blank out
+    /// all of the features that the helper will control if the user doesn't
+    /// have the app installed").
+    enum WindowsHelperState: Equatable, Sendable {
+        case unknown, checking
+        case ready(pcName: String)
+        /// Running, but the PC's host hasn't paired this device.
+        case notAllowed(pcName: String)
+        case notFound
+        /// A different helper certificate than the one trusted before.
+        case certChanged
+    }
+    private(set) var windowsHelper: WindowsHelperState = .unknown {
+        didSet {
+            // Quit Stream and Game takes focus only while the helper is ready.
+            guard Self.helperReady(oldValue) != windowsHelperReady else { return }
+            if case .sessionEnded = overlay { rebuildFocus() }
+        }
+    }
+    var windowsHelperReady: Bool { Self.helperReady(windowsHelper) }
+    nonisolated static func helperReady(_ state: WindowsHelperState) -> Bool {
+        if case .ready = state { return true }
+        return false
+    }
+    @ObservationIgnored let windowsHelperClient: WindowsHelperClient
+    /// Which host `windowsHelper` describes, and when it last answered.
+    @ObservationIgnored private var windowsHelperHostID: String?
+    @ObservationIgnored private var windowsHelperCheckedAt: Date?
+    @ObservationIgnored private var windowsHelperCheck: Task<Void, Never>?
+    /// The helper certificate trusted per host (by host id): pinned on the
+    /// first good check, required from then on.
+    @ObservationIgnored private var windowsHelperPins: [String: Data] = [:]
+    static let windowsHelperPinsKey = "vibelight.windowsHelper.pins"
+    /// How long an answer stands before the host refresh asks again.
+    nonisolated static let windowsHelperRecheck: TimeInterval = 60
+
+    /// Settings ▸ Windows Helper ▸ Match TV (on by default; needs the helper):
+    /// with a TV attached, the stream restarts at the TV's size (TV
+    /// Resolution) and the PC's display and game follow; unplugged, all of it
+    /// goes back. The frame rate never changes.
+    var matchTV: Bool = true {
+        didSet {
+            guard oldValue != matchTV else { return }
+            UserDefaults.standard.set(matchTV, forKey: Self.matchTVKey)
+        }
+    }
+    static let matchTVKey = "vibelight.matchTV"
+
+    /// Settings ▸ Windows Helper ▸ TV Resolution: Quarter (4K → 1080p, the
+    /// default), Half (4K → 1440p) or Full.
+    var tvMatchScale: TVMatchScale = .quarter {
+        didSet {
+            guard oldValue != tvMatchScale else { return }
+            UserDefaults.standard.set(tvMatchScale.rawValue, forKey: Self.tvMatchScaleKey)
+        }
+    }
+    static let tvMatchScaleKey = "vibelight.tvMatchScale"
+
+    /// The saved Match TV choice; missing or unreadable reads as On.
+    static func storedMatchTV(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: matchTVKey) as? Bool ?? true
+    }
+
+    /// The saved TV Resolution; missing or unreadable reads as Quarter.
+    static func storedTVMatchScale(in defaults: UserDefaults) -> TVMatchScale {
+        defaults.string(forKey: tvMatchScaleKey).flatMap(TVMatchScale.init(rawValue:)) ?? .quarter
+    }
+
+    static func storedWindowsHelperPins(in defaults: UserDefaults) -> [String: Data] {
+        (defaults.dictionary(forKey: windowsHelperPinsKey) ?? [:]).compactMapValues { $0 as? Data }
+    }
+
     // MARK: First-run setup wizard
 
     /// The current setup-wizard step, or nil when the launcher is live. Non-nil
@@ -631,6 +711,7 @@ final class AppState {
         self.clientUniqueID = identity.uniqueID
         let client = HostAPIClient(identityProvider: identityProvider)
         api = client
+        windowsHelperClient = WindowsHelperClient(identityProvider: identityProvider)
         artwork = ArtworkStore(api: client)
         #if os(macOS)
         session = StreamSessionManager(api: client)
@@ -676,6 +757,9 @@ final class AppState {
         #if os(iOS)
         session.adaptiveBitrate = adaptiveBitrate
         #endif
+        matchTV = Self.storedMatchTV(in: .standard)
+        tvMatchScale = Self.storedTVMatchScale(in: .standard)
+        windowsHelperPins = Self.storedWindowsHelperPins(in: .standard)
         // Show the setup wizard when the user hasn't completed the CURRENT
         // required version (fresh install → 0; a bump forces a redo for all).
         let completedSetup = UserDefaults.standard.integer(forKey: Self.setupVersionKey)
@@ -1104,10 +1188,15 @@ final class AppState {
                 Task { [weak self] in self?.presentLaunchUpdateCardIfDue() }
             }
         }
+        #if os(iOS)
+        // A Match TV restart is up at its new size: the PC follows.
+        session.onResized = { [weak self] in self?.syncPCToStream() }
+        #endif
         session.onStreamDidStart = { [weak self] helperPID in
             guard let self else { return }
             chrome?.beginStreamPresentation(helperPID: helperPID)
             #if os(iOS)
+            syncPCToStream()   // Match TV: the PC takes the stream's size
             // The starting card's exit (the poster growing into the picture)
             // plays under the stream's 0.45 s fade-in, so keep it until that
             // fade is done. (macOS: the helper's window covers us at once.)
@@ -1131,6 +1220,9 @@ final class AppState {
             // beginStreamPresentation, so an unconditional call here would
             // spuriously re-activate + restore immersive chrome. (SEV-07)
             chrome?.endStreamPresentationIfActive()
+            #if os(iOS)
+            restorePC()   // Match TV: the PC goes back to normal
+            #endif
             if case .ending(let app) = session.phase {
                 if session.remoteQuitRequested {
                     // The user explicitly quit the game — no "still running"
@@ -1713,6 +1805,191 @@ final class AppState {
     }
     #endif
 
+    // MARK: - Windows Helper (Match TV, Quit Game)
+
+    /// Asks the selected PC whether VibeLight Helper is there and lets this
+    /// device in. `force`: now (opening the Windows Helper tab, its status
+    /// row); otherwise at most once a minute, from the host refresh.
+    func checkWindowsHelper(force: Bool = false) {
+        guard let host = selectedHost, let address = hostAddress else {
+            windowsHelperCheck?.cancel()
+            windowsHelperCheck = nil
+            windowsHelperHostID = nil
+            windowsHelper = .unknown
+            return
+        }
+        let sameHost = windowsHelperHostID == host.id
+        if !force, sameHost {
+            if windowsHelperCheck != nil { return }   // one already out
+            if let at = windowsHelperCheckedAt, Date().timeIntervalSince(at) < Self.windowsHelperRecheck { return }
+        }
+        if !sameHost {
+            windowsHelperHostID = host.id
+            windowsHelperCheckedAt = nil
+            windowsHelper = .unknown
+        }
+        // A helper already found stays usable while it's asked again.
+        if !windowsHelperReady { windowsHelper = .checking }
+        let pinned = windowsHelperPins[host.id]
+        let client = windowsHelperClient
+        windowsHelperCheck?.cancel()
+        windowsHelperCheck = Task { [weak self] in
+            let probe = await client.probe(at: address, pinned: pinned)
+            guard let self, !Task.isCancelled, windowsHelperHostID == host.id else { return }
+            windowsHelperCheck = nil
+            windowsHelperCheckedAt = Date()
+            switch probe {
+            case .ready(let pcName, let certificate):
+                if pinned == nil { setWindowsHelperPin(certificate, for: host.id) }
+                windowsHelper = .ready(pcName: pcName)
+            case .notAllowed(let pcName):
+                windowsHelper = .notAllowed(pcName: pcName)
+            case .notRunning:
+                windowsHelper = .notFound
+            case .certChanged:
+                windowsHelper = .certChanged
+            }
+        }
+    }
+
+    /// The status row: ask again — and after a reinstall on the PC (a new
+    /// certificate), trust the new one, like pairing MoonDeckBuddy again.
+    func windowsHelperStatusSelected() {
+        if windowsHelper == .certChanged, let id = selectedHost?.id {
+            setWindowsHelperPin(nil, for: id)
+        }
+        checkWindowsHelper(force: true)
+    }
+
+    private func setWindowsHelperPin(_ certificate: Data?, for hostID: String) {
+        windowsHelperPins[hostID] = certificate
+        UserDefaults.standard.set(windowsHelperPins, forKey: Self.windowsHelperPinsKey)
+    }
+
+    /// Where to reach the selected PC's helper, when it's ready.
+    private var windowsHelperTarget: (address: String, pinned: Data)? {
+        guard windowsHelperReady, let host = selectedHost, windowsHelperHostID == host.id,
+              let address = hostAddress, let pinned = windowsHelperPins[host.id] else { return nil }
+        return (address, pinned)
+    }
+
+    /// The still-running card's "Quit Stream and Game" (owner: "quit stream
+    /// completely and quit game, which basically force quits any active
+    /// game"). The helper closes the game in front on the PC — WM_CLOSE, then
+    /// by force after `quitGameGrace` — while the stream ends as Quit Stream
+    /// Completely does. Only the helper can reach a game the host didn't
+    /// start itself (one launched from Steam or Playnite, say).
+    func quitStreamAndGame() {
+        guard let target = windowsHelperTarget else { return }
+        if case .sessionEnded = overlay, endedSession?.quitting == true { return }
+        endedSession?.closingGame = true
+        let client = windowsHelperClient
+        Task { [weak self] in
+            let problem: String?
+            do {
+                let result = try await client.quitGame(graceSeconds: Self.quitGameGrace,
+                                                       at: target.address, pinned: target.pinned)
+                // No game in front isn't a failure: the stream still ends.
+                problem = result.ok || result.title == nil ? nil : result.message
+            } catch {
+                problem = error.localizedDescription
+            }
+            guard let problem else { return }
+            // Once the card has faded out (quitRemoteGameCompletely below).
+            try? await Task.sleep(for: .seconds(Self.endedQuitFade))
+            guard let self, overlay == nil else { return }
+            presentOverlay(.error("The stream has ended, but the game may still be open on the PC. \(problem)"))
+        }
+        quitRemoteGameCompletely()
+    }
+
+    /// Seconds a game gets to close itself before the helper ends it.
+    nonisolated static let quitGameGrace = 5
+
+    /// Quit Stream and Game's focus id on the still-running card.
+    nonisolated static let quitGameButtonID = "ended:quitGame"
+
+    #if os(iOS)
+    /// The TV's pixels, when one is attached.
+    var attachedTVSize: (width: Int, height: Int)? {
+        guard ExternalDisplay.shared.isConnected, let pixels = ExternalDisplay.shared.pixelSize else { return nil }
+        return (Int(pixels.width), Int(pixels.height))
+    }
+
+    /// The stream size Match TV wants right now, or nil when the preset's own
+    /// size applies (Match TV off, no helper, no TV).
+    var matchTVSize: (width: Int, height: Int)? {
+        guard matchTV, windowsHelperReady, let tv = attachedTVSize else { return nil }
+        return TVMatchScale.streamSize(tv: tv, scale: tvMatchScale)
+    }
+
+    /// The settings a launch streams with: the preset's, at the TV's size
+    /// when Match TV applies. Only the size: the frame rate and bitrate stay
+    /// the preset's (owner: "don't change fps at all").
+    var launchSettings: StreamSettings {
+        var launch = settings
+        if let size = matchTVSize {
+            launch.width = size.width
+            launch.height = size.height
+        }
+        return launch
+    }
+
+    /// The PC was matched for this stream, so it is put back afterwards.
+    @ObservationIgnored private var pcMatched = false
+
+    /// A TV plugged in or pulled out (ExternalDisplay). Mid-stream with Match
+    /// TV: the stream restarts at the TV's size — or back at the preset's
+    /// once it's unplugged — and the PC follows when the new stream is up
+    /// (`syncPCToStream`, from the engine's `onResized`).
+    func tvConnectionChanged() {
+        guard case .streaming = session.phase, let live = session.streamResolution else { return }
+        let target: (width: Int, height: Int)
+        let reason: String
+        if let size = matchTVSize {
+            target = size
+            reason = "Matching the TV"
+        } else if live.width != settings.width || live.height != settings.height {
+            target = (settings.width, settings.height)
+            reason = "Back to your preset"
+        } else {
+            return
+        }
+        if !session.resize(width: target.width, height: target.height, reason: reason) {
+            syncPCToStream()   // already that size: just the PC
+        }
+    }
+
+    /// The PC follows the stream: matched when Match TV put the stream at the
+    /// TV's size, put back when it didn't. When a stream starts and after
+    /// every Match TV restart.
+    func syncPCToStream() {
+        guard let target = windowsHelperTarget else { return }
+        let client = windowsHelperClient
+        if let size = matchTVSize, let live = session.streamResolution,
+           live.width == size.width, live.height == size.height {
+            pcMatched = true
+            Task { [weak self] in
+                guard let result = try? await client.match(width: size.width, height: size.height,
+                                                           at: target.address, pinned: target.pinned) else { return }
+                self?.session.announce(title: result.ok ? "PC matched" : "PC unchanged",
+                                       detail: result.message, warn: !result.ok)
+            }
+        } else {
+            restorePC()
+        }
+    }
+
+    /// Puts the PC's display and game window back (stream over, TV gone).
+    func restorePC() {
+        guard pcMatched else { return }
+        pcMatched = false
+        guard let target = windowsHelperTarget else { return }
+        let client = windowsHelperClient
+        Task { _ = try? await client.restore(at: target.address, pinned: target.pinned) }
+    }
+    #endif
+
     // MARK: - MoonDeckBuddy (force-restart the host PC)
 
     /// Stable key for per-host MoonDeckBuddy config: the host's primary address.
@@ -2020,6 +2297,9 @@ final class AppState {
             unreadableMoonDeckConfigs[candidate.host] = nil
         }
         persistMoonDeckConfigs()
+        // And its VibeLight Helper certificate (under either id it had).
+        setWindowsHelperPin(nil, for: host.id)
+        if let ip = host.manualAddress { setWindowsHelperPin(nil, for: "added:\(ip)") }
         let wasSelected = selectedHostID == host.id
         rebuildHosts()
         if wasSelected {
@@ -2165,6 +2445,7 @@ final class AppState {
             #if os(iOS)
             presentPendingAppExitIfAny()
             #endif
+            checkWindowsHelper()
         } catch let error as HostAPIError {
             // The host is reachable but refuses our identity — remember it so
             // selecting this computer offers PAIRING again instead of just
@@ -2403,9 +2684,13 @@ final class AppState {
         switch overlay {
         case .sessionEnded:
             // Quit leaves once the PC has closed the game — nothing to quit.
+            // Quit Stream and Game is drawn greyed without the helper, and
+            // takes focus only with it.
             let ids = endedSession?.closedOnHost == true
                 ? ["ended:resume", "ended:home"]
-                : ["ended:resume", "ended:quit", "ended:home"]
+                : windowsHelperReady
+                    ? ["ended:resume", "ended:quit", Self.quitGameButtonID, "ended:home"]
+                    : ["ended:resume", "ended:quit", "ended:home"]
             sections = [FocusSection(id: "ended", kind: .vList, itemIDs: ids)]
         case .error:
             sections = [FocusSection(id: "error", kind: .vList, itemIDs: ["error:ok"])]
@@ -2805,9 +3090,15 @@ final class AppState {
         default:
             break
         }
-        // Global chord: hold Menu → quit the remote game completely.
+        // Global chord: hold Menu → quit the remote game completely. The
+        // still-running card's held Quit Stream and Game fires the same
+        // event, from its own button.
         if event == .quitChord {
-            quitRemoteGameCompletely()
+            if case .sessionEnded = overlay, focus.focusedItemID == Self.quitGameButtonID {
+                quitStreamAndGame()
+            } else {
+                quitRemoteGameCompletely()
+            }
             return
         }
 
@@ -2945,6 +3236,7 @@ final class AppState {
         settingsTab = tab
         rebuildFocus()
         focusFirstSettingRow()
+        if tab == .windowsHelper { checkWindowsHelper(force: true) }
     }
 
     private func routeOverlay(_ event: NavigationEvent, overlay: Overlay) {
@@ -2972,7 +3264,7 @@ final class AppState {
                     session.acknowledgeEnd()
                     dismissOverlay()
                     launch(app, liftFrom: Self.endedPosterID)
-                case "ended:quit":
+                case "ended:quit", Self.quitGameButtonID:
                     // A tap. Quit only fires from a hold (A held on it, or
                     // a press-and-hold), which arrives as .quitChord.
                     endedQuitNudges += 1
@@ -3240,8 +3532,13 @@ final class AppState {
         launchTarget = app   // the starting card lifts this tile (set before it appears)
         liftSourceID = sourceID ?? "app:\(appKey(app))"
         presentOverlay(.sessionHUD)
+        #if os(iOS)
+        let streamSettings = launchSettings   // Match TV: the TV's size
+        #else
+        let streamSettings = settings
+        #endif
         Task {
-            await session.launch(app: app, on: host, settings: settings)
+            await session.launch(app: app, on: host, settings: streamSettings)
             // No post-await phase check needed: every .failed transition —
             // including the asynchronous ones from the startup watchdog and
             // the child's termination handler — lands via onPhaseChange.
@@ -3370,7 +3667,9 @@ final class AppState {
     /// Focus is on the card's Quit and it may be held now — A / Return /
     /// a press start the hold instead of selecting (ControllerManager).
     var focusedHoldButton: Bool {
-        endedCardOffersQuit && focus.focusedItemID == "ended:quit" && endedAcceptsInput
+        let onQuit = focus.focusedItemID == "ended:quit"
+            || (focus.focusedItemID == Self.quitGameButtonID && windowsHelperReady)
+        return endedCardOffersQuit && onQuit && endedAcceptsInput
     }
 
     /// Back to Library: the poster flies back into its tile and the scrim
@@ -3484,6 +3783,7 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, keepAwake, performanceOverlay
+        case helperStatus, matchTV, tvResolution
         case background, interfaceSize
         case appVersion, checkUpdates, restartSetup
 
@@ -3491,7 +3791,7 @@ final class AppState {
 
         /// Action/readonly rows don't adjust with left/right and render without
         /// value chevrons (they respond to select instead).
-        var isAction: Bool { self == .checkUpdates || self == .restartSetup }
+        var isAction: Bool { self == .checkUpdates || self == .restartSetup || self == .helperStatus }
         var isReadonly: Bool { self == .appVersion }
 
         var title: String {
@@ -3520,6 +3820,9 @@ final class AppState {
             case .framePacing: "Frame Pacing"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
+            case .helperStatus: "VibeLight Helper"
+            case .matchTV: "Match TV"
+            case .tvResolution: "TV Resolution"
             case .background: "Background"
             case .interfaceSize: "Interface Size"
             case .appVersion: "Version"
@@ -3531,11 +3834,12 @@ final class AppState {
 
     /// Settings groups, switched with L1/R1 so each screen stays short.
     enum SettingsTab: String, CaseIterable {
-        case video, audio, input, advanced, themes, about
+        case video, audio, input, advanced, windowsHelper, themes, about
         var title: String {
             switch self {
             case .video: "Video"; case .audio: "Audio"; case .input: "Input"
-            case .advanced: "Advanced"; case .themes: "Themes"; case .about: "About"
+            case .advanced: "Advanced"; case .windowsHelper: "Windows Helper"
+            case .themes: "Themes"; case .about: "About"
             }
         }
         var rows: [SettingsRow] {
@@ -3568,6 +3872,14 @@ final class AppState {
                 [.keepAwake, .performanceOverlay]
                 #else
                 [.vsync, .framePacing, .keepAwake, .performanceOverlay]
+                #endif
+            case .windowsHelper:
+                #if os(iOS)
+                [.helperStatus, .matchTV, .tvResolution]
+                #else
+                // Match TV is the iPad's (a TV on its adapter); the Mac gets
+                // Quit Stream and Game.
+                [.helperStatus]
                 #endif
             case .themes: [.background, .interfaceSize]
             }
@@ -3691,6 +4003,9 @@ final class AppState {
         case .framePacing: settings.framePacing ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
+        case .helperStatus: windowsHelperStatusText
+        case .matchTV: matchTV ? "On" : "Off"
+        case .tvResolution: tvMatchScale.label(tv: tvSizeForLabel)
         case .background: backgroundTheme.title
         case .interfaceSize: interfaceSize.label
         case .appVersion: "v\(updateService.currentVersion)"
@@ -3705,8 +4020,40 @@ final class AppState {
         switch row {
         case .checkUpdates: checkForUpdates()
         case .restartSetup: restartSetup()
+        case .helperStatus: windowsHelperStatusSelected()
         default: break
         }
+    }
+
+    /// Rows a missing VibeLight Helper controls: drawn greyed, deaf to
+    /// left/right. TV Resolution also waits on Match TV.
+    func isUnavailable(_ row: SettingsRow) -> Bool {
+        switch row {
+        case .matchTV: !windowsHelperReady
+        case .tvResolution: !windowsHelperReady || !matchTV
+        default: false
+        }
+    }
+
+    /// The VibeLight Helper row's value.
+    var windowsHelperStatusText: String {
+        guard selectedHost != nil else { return "No PC selected" }
+        switch windowsHelper {
+        case .unknown, .checking: return "Checking…"
+        case .ready(let pcName): return "Ready on \(pcName)"
+        case .notAllowed: return "Not allowed"
+        case .notFound: return "Not found"
+        case .certChanged: return "Changed — select to trust"
+        }
+    }
+
+    /// The attached TV's size for the TV Resolution row (nil on the Mac).
+    private var tvSizeForLabel: (width: Int, height: Int)? {
+        #if os(iOS)
+        return attachedTVSize
+        #else
+        return nil
+        #endif
     }
 
     /// Right-hand status for the "Software Update" row.
@@ -3723,6 +4070,7 @@ final class AppState {
     }
 
     func adjust(row: SettingsRow, forward: Bool) {
+        if isUnavailable(row) { return }   // greyed: needs VibeLight Helper
         sfx.play(.move)   // value change ticks like a focus move
         switch row {
         case .resolution:
@@ -3769,9 +4117,11 @@ final class AppState {
         case .framePacing: settings.framePacing.toggle()
         case .keepAwake: settings.keepAwake.toggle(); refreshKeepAwake()
         case .performanceOverlay: settings.performanceOverlay.toggle()
+        case .matchTV: matchTV.toggle()
+        case .tvResolution: tvMatchScale = Self.cycle(tvMatchScale, forward: forward)
         case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
         case .interfaceSize: interfaceSize = Self.cycle(interfaceSize, forward: forward)
-        case .appVersion, .checkUpdates, .restartSetup: break  // not value rows
+        case .appVersion, .checkUpdates, .restartSetup, .helperStatus: break  // not value rows
         }
     }
 

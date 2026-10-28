@@ -133,6 +133,22 @@ HTTPS :59999, Basic auth = base64(clientId), TOFU cert pinning, PIN pairing.
 v8; restart = `POST /restartHost {"delay": 1-30}`, with fallbacks for older
 buddies. See the header comments for the version-compat matrix.
 
+**VibeLight Helper** (`WindowsHelper/`, C# .NET 8; client
+`Core/WindowsHelperClient.swift`, Settings ▸ Windows Helper): our own tray app
+on the PC for what the stream can't do — Match TV and Quit Stream and Game.
+HTTPS :47333, JSON. **No pairing of its own**: VibeLight presents its
+GameStream client identity in TLS and the helper admits it only if the PC's
+Vibepollo/Apollo/Sunshine paired that certificate with launch permission
+(`sunshine_state.json`); `GET /info` is the only open route. The iPad TOFU-pins
+the helper's self-signed cert per host id. Everything it controls is greyed
+out until it's found on the selected PC (owner rule). The tray app is plain
+Win32 (no WinForms) so it builds from any OS: `dotnet test
+WindowsHelper/VibeLightHelper.Tests`, `dotnet publish
+WindowsHelper/VibeLightHelper -c Release` → one self-contained exe. It never
+touches exclusive-fullscreen games' resolution (says why instead) and its
+display changes are dynamic (never saved; reboot/Quit/Put the Display Back
+undo them).
+
 **Load-bearing invariants (macOS helper path):**
 1. App names from the host may carry zero-width padding (U+200B/U+200C binary
    index prefixes, `zwpad.h`). Strip for display/matching; NEVER persist as
@@ -180,6 +196,14 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   Bitrate, global): steps the live bitrate with Vibepollo's `GET /bitrate`
   (47984, retunes the running encoder). The preset's bitrate is the ceiling
   and is never edited; a host that answers no (404/403) ends it for the stream.
+- Match TV (Settings ▸ Windows Helper, needs VibeLight Helper): the ONLY way
+  a display's size reaches the stream — AppState's `launchSettings` /
+  `tvConnectionChanged`; the engine never reads the display. TV size × TV
+  Resolution (Quarter 4K→1080p default, Half 4K→1440p, Full; ≥720p), never
+  the fps or bitrate. A TV plugged in or out mid-stream restarts the stream
+  via `resize` on Rejoin's machinery (held frame, "Switching to …"), then
+  the helper `/match`es the PC; the stream ending or the TV leaving
+  `/restore`s it.
 
 **UI/input:**
 - Custom spatial focus engine is mandatory — macOS SwiftUI focus ignores game
@@ -232,6 +256,8 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   haptics), keyboard routing, focus engine
 - `VibeLight/UI/` — theme, screens, components, menu SFX (consumes Core/Input
   only through contracts in `Core/Contracts.swift`)
+- `WindowsHelper/` — VibeLight Helper, the PC-side tray app (.NET 8: `Core`
+  library + xunit tests that run on any OS, and the Win32 tray exe)
 - `ThirdParty/` (gitignored, vendored by `scripts/ios/build-deps.sh`) —
   moonlight-common-c sources + iOS xcframeworks
 - `docs/STREAMING-STATUS.md` — iOS streaming architecture + hard-won invariants

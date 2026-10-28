@@ -22,6 +22,9 @@ final class ExternalDisplay {
 
     /// True while a TV / monitor is connected.
     private(set) var isConnected = false
+    /// A TV plugged in or pulled out (after the change). Set once by the
+    /// app: Match TV restarts the stream at the TV's size, or back.
+    @ObservationIgnored var onConnectionChange: (() -> Void)?
     /// Name for the iPad placeholder.
     private(set) var name = "the display"
     /// Current output pixels for display diagnostics. Encoded stream quality
@@ -182,6 +185,7 @@ final class ExternalDisplay {
             showLauncher()
         }
         window.isHidden = false
+        onConnectionChange?()
     }
 
     func sceneDisconnected(_ ws: UIWindowScene) {
@@ -196,6 +200,7 @@ final class ExternalDisplay {
         launcherVC = nil
         geometrySummary = nil
         isConnected = false
+        onConnectionChange?()
     }
 
     // MARK: - Engine hand-off

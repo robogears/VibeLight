@@ -174,7 +174,10 @@ background window — a return lands on the still-running card on Rejoin; no
 return → /cancel in the UIKit background task, which also prevents host-side
 stale-session poisoning on relaunch), Rejoin after a mid-stream drop (held
 frame, /resume at 2/5/10 s), the Link Governor (live bitrate via Vibepollo's
-`/bitrate`), and PS/Home-button
+`/bitrate`), Match TV (with VibeLight Helper on the PC: a TV plugged in or out
+restarts the stream at the TV's size — Rejoin's machinery, first try at
+0.6 s — and the helper matches the PC's display and fits the game; fps and
+bitrate never change), and PS/Home-button
 delivery in-stream (disable system gestures on the pad while streaming).
 
 ## QoL roadmap (from deep-research, ranked by demand × solo-app feasibility)

@@ -368,7 +368,19 @@ private struct PosterRestCard: View {
                 if !closed {
                     OverlayButton(id: "ended:quit", title: "Quit Stream Completely",
                                   symbol: "xmark.octagon.fill", destructive: true, holdEvent: .quitChord,
-                                  held: quitting)
+                                  held: quitting && ended?.closingGame != true)
+                    // The stream AND the game itself, through VibeLight Helper
+                    // on the PC; greyed without it.
+                    OverlayButton(id: AppState.quitGameButtonID, title: "Quit Stream and Game",
+                                  symbol: "power", destructive: true, holdEvent: .quitChord,
+                                  held: quitting && ended?.closingGame == true,
+                                  disabled: !state.windowsHelperReady)
+                    if !state.windowsHelperReady {
+                        Text("Quit Stream and Game needs VibeLight Helper on \(hostName)")
+                            .font(.system(size: Theme.labelSize(12), weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.leading, 4)
+                    }
                 }
                 OverlayButton(id: "ended:home", title: "Back to Library", symbol: "square.grid.2x2")
             }
@@ -564,6 +576,8 @@ struct OverlayButton: View {
     var holdEvent: NavigationEvent? = nil
     /// The hold already fired: stay full while the card fades out.
     var held = false
+    /// Drawn greyed and takes no input (its card leaves it out of focus).
+    var disabled = false
 
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
@@ -614,19 +628,25 @@ struct OverlayButton: View {
         }
         // Hover brightens; only focus scales (owner rule: nothing zooms on hover).
         .scaleEffect(isFocused ? 1.04 : 1.0)
+        .opacity(disabled ? 0.4 : 1)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: hoverActive)
+        .animation(Theme.focusSpring, value: disabled)
         .onHover { hovering = $0
-            if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) }
+            if $0 && state.inputMode == .pointer && !disabled { state.focus.focus(itemID: id) }
         }
         .modifier(Activation(id: id, holdEvent: holdEvent, pressing: $pressing))
+        .allowsHitTesting(!disabled)
         // A tap-gesture stack, not a Button: tell VoiceOver what it is and
         // what activating it does. VoiceOver's activation is deliberate, so a
         // hold button fires outright there.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isFocused ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction {
-            if let holdEvent { state.route(holdEvent) } else { state.pointerSelect(id) }
+            guard !disabled else { return }
+            // Focused first: the card's two held quits fire the same event
+            // and tell themselves apart by focus.
+            if let holdEvent { state.focus.focus(itemID: id); state.route(holdEvent) } else { state.pointerSelect(id) }
         }
     }
 

@@ -4,7 +4,8 @@ import SwiftUI
 /// What the stream says about itself, over the video on the iPad and on the
 /// TV (the TV hosts it under Frame Trace — see VibeLightApp's stream overlay
 /// builder): the Link Governor's pill ("Connection busy · 60 → 45 Mbps"),
-/// "Rejoined", and the Rejoin card over the held last frame.
+/// "Rejoined", Match TV's "Now 1920×1080" and "PC matched", and the Rejoin
+/// card over the held last frame (also "Switching to …" for Match TV).
 struct StreamNotices: View {
     @Environment(AppState.self) private var state
     /// False on the TV: its window takes no touches, so the card shows only
@@ -83,10 +84,10 @@ private struct RejoinCard: View {
         HStack(alignment: .center, spacing: 22) {
             spinner
             VStack(alignment: .leading, spacing: 6) {
-                Text("Connection dropped")
+                Text(title)
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
-                Text("Rejoining \(rejoin.app.name) · try \(rejoin.attempt) of \(InProcessStreamEngine.rejoinDelays.count)")
+                Text(subtitle)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 8) {
@@ -98,7 +99,7 @@ private struct RejoinCard: View {
                 .padding(.top, 4)
                 if interactive {
                     Button(action: onStop) {
-                        Text("Stop Rejoining")
+                        Text(rejoin.resize == nil ? "Stop Rejoining" : "Stop")
                             .font(.system(size: 15, weight: .bold, design: .rounded))
                             .foregroundStyle(Theme.textPrimary)
                             .padding(.horizontal, 16)
@@ -116,6 +117,18 @@ private struct RejoinCard: View {
         .shadow(color: .black.opacity(0.5), radius: 24, y: 8)
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: Text("Stop Rejoining")) { onStop() }
+    }
+
+    /// A drop, or a Match TV restart at a new size (same card, same tries).
+    private var title: String {
+        guard let resize = rejoin.resize else { return "Connection dropped" }
+        return "Switching to \(resize.width)×\(resize.height)"
+    }
+
+    private var subtitle: String {
+        let tries = "try \(rejoin.attempt) of \(InProcessStreamEngine.rejoinDelays.count)"
+        guard let resize = rejoin.resize else { return "Rejoining \(rejoin.app.name) · \(tries)" }
+        return "\(resize.reason) · \(rejoin.app.name) · \(tries)"
     }
 
     /// A turning arc while it works; still under Reduce Motion.

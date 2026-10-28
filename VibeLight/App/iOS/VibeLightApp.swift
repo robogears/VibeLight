@@ -113,6 +113,9 @@ struct VibeLightApp: App {
                         vc.view.traitOverrides.displayScale = renderScale
                         return vc
                     }
+                    // Match TV: a TV plugged in or pulled out mid-stream
+                    // restarts the stream at its size, or back.
+                    ExternalDisplay.shared.onConnectionChange = { state.tvConnectionChanged() }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Runaway-repeat guard: controller button releases are

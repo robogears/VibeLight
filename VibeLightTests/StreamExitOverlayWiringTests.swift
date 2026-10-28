@@ -185,11 +185,16 @@ final class TVHandOffTests: XCTestCase {
         XCTAssertTrue(engine.contains("if companionView != .panel { setCompanionView(.panel) }\n                    lastCompanionActivity = .now\n                    continue"))
     }
 
-    /// Stream quality never depends on the display: nothing feeds the TV's
-    /// size into the stream settings.
-    func testDisplaySizeNeverReachesStreamSettings() throws {
+    /// The engine never reads the display: its size reaches the stream only
+    /// through Match TV, which the owner opted into (Settings ▸ Windows
+    /// Helper; needs VibeLight Helper on the PC) — AppState's launchSettings
+    /// and resize. See WindowsHelperTests.
+    func testDisplaySizeReachesTheStreamOnlyThroughMatchTV() throws {
         let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
         XCTAssertFalse(engine.contains("pixelSize"))
+        let state = try source("VibeLight/App/AppState.swift")
+        XCTAssertEqual(state.components(separatedBy: "ExternalDisplay.shared.pixelSize").count - 1, 1)
+        XCTAssertTrue(state.contains("guard matchTV, windowsHelperReady, let tv = attachedTVSize else { return nil }"))
     }
 }
 

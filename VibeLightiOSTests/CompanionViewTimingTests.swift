@@ -50,6 +50,14 @@ final class RejoinRulesTests: XCTestCase {
         XCTAssertEqual(Engine.rejoinDelays, [.seconds(2), .seconds(5), .seconds(10)])
     }
 
+    /// A Match TV restart ended the old connection itself, so its first try
+    /// goes almost at once; it gets as many tries as a drop.
+    func testAResizeTriesSoonerAsOften() {
+        XCTAssertEqual(Engine.resizeDelays.count, Engine.rejoinDelays.count)
+        XCTAssertLessThan(Engine.resizeDelays[0], Engine.rejoinDelays[0])
+        XCTAssertEqual(Engine.resizeDelays[0], .milliseconds(600))
+    }
+
     /// A host that answers "no" to /bitrate ends governing for the stream; one
     /// that couldn't be reached is tried again later.
     func testWhichBitrateErrorsEndGoverning() {

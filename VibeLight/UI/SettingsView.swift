@@ -41,6 +41,10 @@ struct SettingsView: View {
                             SettingsRowView(row: row)
                                 .id(row.focusID)
                         }
+                        if state.settingsTab == .windowsHelper {
+                            WindowsHelperNote()
+                                .padding(.top, 14)
+                        }
                     }
                     .padding(.horizontal, 96)
                     .padding(.bottom, 40)
@@ -193,6 +197,8 @@ private struct SettingsRowView: View {
     let row: AppState.SettingsRow
 
     private var isFocused: Bool { state.focus.focusedItemID == row.focusID }
+    /// Greyed: VibeLight Helper isn't on the PC (or Match TV is off).
+    private var unavailable: Bool { state.isUnavailable(row) }
 
     var body: some View {
         HStack {
@@ -206,7 +212,7 @@ private struct SettingsRowView: View {
                 // Adjustable rows get ◀ ▶ — always visible and DIRECTLY tappable
                 // (fingers adjust values without a controller); action/readonly
                 // rows don't.
-                let showChevrons = !(row.isAction || row.isReadonly)
+                let showChevrons = !(row.isAction || row.isReadonly || unavailable)
                 Button { state.adjust(row: row, forward: false) } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .bold))
@@ -250,9 +256,11 @@ private struct SettingsRowView: View {
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
         }
+        .opacity(unavailable ? 0.4 : 1)
         .scaleEffect(isFocused ? 1.015 : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: state.value(for: row))
+        .animation(Theme.focusSpring, value: unavailable)
         .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: row.focusID) } }
         .onTapGesture {
             // Rows that OPEN something (Software Update, and Resolution -> the
@@ -267,6 +275,45 @@ private struct SettingsRowView: View {
                 state.pointerSelect(row.focusID)
             }
         }
+    }
+}
+
+/// Under Settings ▸ Windows Helper: what VibeLight Helper does, and — until
+/// it's found — how to get it, which is why the rows above are greyed.
+private struct WindowsHelperNote: View {
+    @Environment(AppState.self) private var state
+
+    private var pc: String { state.selectedHost?.name ?? "the PC" }
+
+    private var text: String {
+        let what = "VibeLight Helper is a small app that sits by the clock on the PC. With it, VibeLight can set the PC's resolution to match your TV (and fit the game to it), and Quit Stream and Game can close a game for you."
+        switch state.windowsHelper {
+        case .ready:
+            return what + " Match TV only changes the size: the frame rate stays your preset's."
+        case .notFound:
+            return what + " It isn't running on \(pc). Copy VibeLightHelper.exe to the PC and run it, then let Windows allow it on private networks. There's no pairing: if this device can stream from \(pc), it can use the helper."
+        case .notAllowed:
+            return "VibeLight Helper is running on \(pc), but it only lets in devices that the PC's Vibepollo has paired and allowed to launch apps."
+        case .certChanged:
+            return "VibeLight Helper on \(pc) has a new certificate, probably because it was reinstalled. Select VibeLight Helper above to trust it."
+        case .unknown, .checking:
+            return state.selectedHost == nil ? "Select a PC first." : "Looking for VibeLight Helper on \(pc)…"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: state.windowsHelperReady ? "checkmark.seal.fill" : "info.circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(state.windowsHelperReady ? Color.green : Theme.textSecondary)
+            Text(text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .animation(Theme.focusSpring, value: state.windowsHelper)
     }
 }
 
