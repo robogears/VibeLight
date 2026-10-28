@@ -684,6 +684,15 @@ final class InProcessStreamEngine: StreamEngine {
     nonisolated static let leaveHoldSeconds = 1.7
     /// Nothing is drawn for this long, so a brushed chord never flashes.
     nonisolated static let leaveHoldGrace = 0.15
+    /// How muffled the game is `elapsed` seconds into the leave hold: clearly
+    /// muffled at once (owner: "as soon as the user starts holding"), deepest
+    /// by the time the hold fires.
+    nonisolated static func leaveMuffle(elapsed: Double) -> Double {
+        0.45 + 0.55 * min(max(elapsed / leaveHoldSeconds, 0), 1)
+    }
+    /// The volume fade when the hold fires — inside the exit overlay's 1 s
+    /// fire, so the game is silent before its black ends and the stream stops.
+    nonisolated static let leaveAudioFade = 0.8
 
     /// When the current hold began (nil = not holding). `StreamExitOverlay`
     /// computes its progress from this on every display refresh, so Frame
@@ -712,6 +721,9 @@ final class InProcessStreamEngine: StreamEngine {
         guard quitHoldTask == nil else { return }
         let start = ContinuousClock.now
         quitHoldStartedAt = Date()
+        // Owner: the game goes muffled the moment the chord is held, deeper
+        // as the hold fills (MoonlightSession glides it, so no clicks).
+        session?.setAudioMuffle(Self.leaveMuffle(elapsed: 0))
         quitHoldTask = Task { @MainActor [weak self] in
             let grace = Self.leaveHoldGrace, total = Self.leaveHoldSeconds
             while !Task.isCancelled {
@@ -740,6 +752,10 @@ final class InProcessStreamEngine: StreamEngine {
                     // stream only stops (and freezes) under black. Disconnecting
                     // in the same turn removed the stream view mid-fire.
                     setStreamInput(active: false)
+                    // Sound follows the picture: fully muffled, then faded out
+                    // to silence before the fire's black ends.
+                    session?.setAudioMuffle(1)
+                    session?.fadeOutAudio(over: Self.leaveAudioFade)
                     try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(120))
                     guard case .streaming = phase else { return }   // it already ended on its own
                     // The screen is black under the swell now; the curtain
@@ -751,6 +767,7 @@ final class InProcessStreamEngine: StreamEngine {
                     exitCurtain = 0                       // ExitCurtain fades this out slowly
                     return
                 }
+                session?.setAudioMuffle(Self.leaveMuffle(elapsed: elapsed))
                 if elapsed >= grace {
                     streamQuitProgress = min(max((elapsed - grace) / (total - grace), 0), 1)
                 }
@@ -767,6 +784,7 @@ final class InProcessStreamEngine: StreamEngine {
         guard quitHoldTask != nil else { return }
         quitHoldTask?.cancel()
         quitHoldTask = nil
+        session?.setAudioMuffle(0)   // let go early: the game opens back up
         quitHoldPad = nil
         quitHoldStartedAt = nil
         if streamQuitProgress != nil { streamQuitProgress = nil }

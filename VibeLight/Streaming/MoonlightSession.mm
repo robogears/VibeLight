@@ -697,6 +697,54 @@ static uint8_t sAudioRing[kAudioRingCapacity];
 static std::atomic<uint64_t> sRingHead{0};   // producer-owned
 static std::atomic<uint64_t> sRingTail{0};   // consumer-owned
 
+// Leaving the stream (owner): the moment the leave chord is held the game
+// goes muffled — a low-pass that deepens with the hold — and when it fires
+// the volume fades out under the fire's black. The main thread only sets
+// TARGETS; the render thread glides to them sample by sample, so nothing
+// clicks or zippers. Bypassed (untouched PCM) whenever both are at rest.
+static std::atomic<float> sMuffleTarget{0.0f};     // 0 = clear … 1 = heavy low-pass
+static std::atomic<float> sGainTarget{1.0f};       // output volume, 0…1
+static std::atomic<float> sGainStep{1.0f};         // per frame, toward the target
+static float sMuffle = 0.0f;                       // render-thread owned from here down
+static float sGain = 1.0f;
+static float sLowpass[2][AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];   // two one-pole stages
+static const float kMuffleStep = 1.0f / (0.08f * 48000.0f);       // glide: ~80 ms end to end
+
+/// Low-pass then volume on interleaved 16-bit PCM, in place.
+static void ArApplyLeaveEffects(int16_t *pcm, UInt32 frames, int channels, float sampleRate) {
+    const float muffleTarget = sMuffleTarget.load(std::memory_order_relaxed);
+    const float gainTarget = sGainTarget.load(std::memory_order_relaxed);
+    if (sMuffle == 0.0f && muffleTarget == 0.0f && sGain == 1.0f && gainTarget == 1.0f) return;
+    const float gainStep = sGainStep.load(std::memory_order_relaxed);
+    const int ch = MIN(MAX(channels, 1), AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT);
+    for (UInt32 f = 0; f < frames; f++) {
+        if (sMuffle < muffleTarget) sMuffle = MIN(muffleTarget, sMuffle + kMuffleStep);
+        else if (sMuffle > muffleTarget) sMuffle = MAX(muffleTarget, sMuffle - kMuffleStep);
+        if (sGain > gainTarget) sGain = MAX(gainTarget, sGain - gainStep);
+        else if (sGain < gainTarget) sGain = MIN(gainTarget, sGain + gainStep);
+        // Cutoff glides 18 kHz → 350 Hz (exponential, so it sounds even).
+        // Per frame is cheap at these rates; one exp per frame, not per sample.
+        const float cutoff = 18000.0f * powf(350.0f / 18000.0f, sMuffle);
+        const float alpha = 1.0f - expf(-2.0f * (float)M_PI * cutoff / sampleRate);
+        // Volume on a squared curve: a linear fade sounds like it holds,
+        // then drops off a cliff at the end.
+        const float volume = sGain * sGain;
+        for (int c = 0; c < ch; c++) {
+            const int i = (int)f * channels + c;
+            float x = (float)pcm[i];
+            if (sMuffle > 0.0f) {
+                sLowpass[0][c] += alpha * (x - sLowpass[0][c]);
+                sLowpass[1][c] += alpha * (sLowpass[0][c] - sLowpass[1][c]);
+                x = sLowpass[1][c];
+            } else {
+                sLowpass[0][c] = sLowpass[1][c] = x;   // stays primed, so engaging never clicks
+            }
+            x *= volume;
+            pcm[i] = (int16_t)MAX(-32768.0f, MIN(32767.0f, x));
+        }
+    }
+}
+
 static OSStatus ArRender(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags,
                          const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber,
                          UInt32 inNumberFrames, AudioBufferList *ioData) {
@@ -711,6 +759,9 @@ static OSStatus ArRender(void *inRefCon, AudioUnitRenderActionFlags *ioActionFla
     memcpy(out + first, &sAudioRing[0], take - first);
     if (take < want) memset(out + take, 0, want - take);   // underrun → silence
     sRingTail.store(tail + take, std::memory_order_release);
+    const int channels = MAX(sOpusCfg.channelCount, 1);
+    ArApplyLeaveEffects((int16_t *)out, (UInt32)(want / (sizeof(int16_t) * (size_t)channels)),
+                        channels, (float)(sOpusCfg.sampleRate > 0 ? sOpusCfg.sampleRate : 48000));
     return noErr;
 }
 
@@ -764,6 +815,11 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
         return -1;
     }
     sRingHead.store(0); sRingTail.store(0);
+    // Every stream starts clear and at full volume, whatever the last one's
+    // leave did (the render thread isn't running yet).
+    sMuffleTarget.store(0.0f); sGainTarget.store(1.0f); sGainStep.store(1.0f);
+    sMuffle = 0.0f; sGain = 1.0f;
+    memset(sLowpass, 0, sizeof(sLowpass));
     // 60 ms latency bound at the negotiated rate/channels (16-bit samples).
     sMaxAudioBacklogBytes = (size_t)opusConfig->sampleRate * (size_t)opusConfig->channelCount * 2 * 60 / 1000;
     NSLog(@"[VibeLight] audio: %d Hz, %d ch, %d samples/frame",
@@ -816,6 +872,20 @@ static void ArDecode(char *sampleData, int sampleLength) {
     memcpy(&sAudioRing[start], src, first);
     memcpy(&sAudioRing[0], src + first, bytes - first);
     sRingHead.store(head + bytes, std::memory_order_release);
+}
+
+// MARK: Leave effects (targets only; ArApplyLeaveEffects glides to them)
+
+- (void)setAudioMuffle:(double)amount {
+    if (sActive != self) return;
+    sMuffleTarget.store((float)MIN(MAX(amount, 0.0), 1.0), std::memory_order_relaxed);
+}
+
+- (void)fadeOutAudioOver:(double)seconds {
+    if (sActive != self) return;
+    const double rate = sOpusCfg.sampleRate > 0 ? sOpusCfg.sampleRate : 48000;
+    sGainStep.store((float)(1.0 / MAX(seconds * rate, 1.0)), std::memory_order_relaxed);
+    sGainTarget.store(0.0f, std::memory_order_relaxed);
 }
 
 @end

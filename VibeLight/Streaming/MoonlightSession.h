@@ -73,6 +73,14 @@ typedef NS_ENUM(NSInteger, MoonlightStage) {
 /// screen taking it starts from a clean frame.
 - (void)requestKeyframe;
 
+/// Leaving the stream: muffle the game (a low-pass, 0 = clear … 1 = heavy)
+/// while the leave chord is held — 0 lets it open back up — and fade the
+/// volume to silence over `seconds` when it fires. Glided per sample on the
+/// audio thread (no clicks); every new stream starts clear and at full
+/// volume. No-ops unless this is the live connection.
+- (void)setAudioMuffle:(double)amount NS_SWIFT_NAME(setAudioMuffle(_:));
+- (void)fadeOutAudioOver:(double)seconds NS_SWIFT_NAME(fadeOutAudio(over:));
+
 /// Starts the connection on a background thread. Stage callbacks arrive on the
 /// main queue. Non-blocking.
 - (void)start;

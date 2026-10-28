@@ -55,6 +55,14 @@ final class ExitFireTests: XCTestCase {
         XCTAssertEqual(d.midX, screen.width / 2, accuracy: 0.5)
     }
 
+    /// Muffled at once when the hold starts, fully when it fires; silent
+    /// before the fire's black ends.
+    func testLeaveAudioCurve() {
+        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: 0), 0.45, accuracy: 0.001)
+        XCTAssertEqual(InProcessStreamEngine.leaveMuffle(elapsed: InProcessStreamEngine.leaveHoldSeconds), 1, accuracy: 0.001)
+        XCTAssertLessThan(InProcessStreamEngine.leaveAudioFade, 0.95)   // fireWindow is black from 95 % of 1 s
+    }
+
     /// The whole last stretch is solid black — the engine waits past it.
     func testEndsBlack() {
         for f in stride(from: 0.95, through: 1.0, by: 0.01) { XCTAssertNil(window(f), "f = \(f)") }

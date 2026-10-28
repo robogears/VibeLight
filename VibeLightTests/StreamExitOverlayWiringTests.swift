@@ -64,6 +64,30 @@ final class StreamExitOverlayWiringTests: XCTestCase {
     }
 }
 
+/// Leaving the stream, audio (owner): the game goes muffled the moment the
+/// chord is held, deeper as it fills, opens back up if let go, and fades to
+/// silence during the fire — glided per sample in MoonlightSession.
+final class LeaveAudioTests: XCTestCase {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    func testMuffleFollowsTheHoldAndFadeFollowsTheFire() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("quitHoldStartedAt = Date()\n        // Owner: the game goes muffled"))
+        XCTAssertTrue(engine.contains("session?.setAudioMuffle(Self.leaveMuffle(elapsed: elapsed))"))
+        XCTAssertTrue(engine.contains("session?.setAudioMuffle(0)   // let go early"))
+        XCTAssertTrue(engine.contains("session?.fadeOutAudio(over: Self.leaveAudioFade)"))
+    }
+
+    func testEffectsRunOnTheRenderThreadAndResetPerStream() throws {
+        let audio = try source("VibeLight/Streaming/MoonlightSession.mm")
+        XCTAssertTrue(audio.contains("ArApplyLeaveEffects((int16_t *)out"))
+        XCTAssertTrue(audio.contains("sMuffleTarget.store(0.0f); sGainTarget.store(1.0f); sGainStep.store(1.0f);"))
+    }
+}
+
 /// Plugging a TV in or out mid-stream (owner: perfect continuity).
 final class TVHandOffTests: XCTestCase {
     private func source(_ path: String) throws -> String {
