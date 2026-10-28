@@ -149,6 +149,15 @@ touches exclusive-fullscreen games' resolution (says why instead) and its
 display changes are dynamic (never saved; reboot/Quit/Put the Display Back
 undo them).
 
+**Bump the helper's version with every helper change (standing instruction).**
+Any change under `WindowsHelper/` that ships in the exe goes out as a new
+version: bump `<Version>` in `WindowsHelper/VibeLightHelper/VibeLightHelper.csproj`
+(patch by default, 0.1.1 → 0.1.2), run the tests, `dotnet publish
+WindowsHelper/VibeLightHelper -c Release -o <scratch dir>` (it copies
+`WindowsHelper/VibeLightHelperV<version>.exe` into place), delete the previous
+`VibeLightHelperV*.exe`, update the file name in `WindowsHelper/README.md`, and
+commit the new exe with the change. Tell William the new version number.
+
 **Load-bearing invariants (macOS helper path):**
 1. App names from the host may carry zero-width padding (U+200B/U+200C binary
    index prefixes, `zwpad.h`). Strip for display/matching; NEVER persist as

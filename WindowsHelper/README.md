@@ -67,8 +67,11 @@ dotnet publish VibeLightHelper -c Release -o out     # → VibeLightHelperV<vers
 The result is one self-contained exe (win-x64, about 35 MB). It needs no .NET
 installed on the PC. Each publish also copies it to this folder, named with
 the `Version` in `VibeLightHelper/VibeLightHelper.csproj`
-(`VibeLightHelperV0.1.1.exe`), and that copy is the one committed. To release
-a new version, bump `Version`, publish, and delete the old exe.
+(`VibeLightHelperV0.1.1.exe`), and that copy is the one committed.
+
+**Every change to the helper gets a new version.** Bump `Version` (patch by
+default, 0.1.1 → 0.1.2), run the tests, publish, delete the old exe, update
+the file name above, and commit the new exe with the change.
 
 ## Layout
 
