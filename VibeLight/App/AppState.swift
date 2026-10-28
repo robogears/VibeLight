@@ -581,7 +581,7 @@ final class AppState {
 
     // MARK: TV Presets (one remembered preset per TV, iPad)
 
-    /// Settings ▸ Video ▸ TV Presets (off by default). With it on, plugging
+    /// Settings ▸ Video ▸ TV Presets (on by default — owner). With it on, plugging
     /// into a TV swaps the presets row for that TV's one preset — made the
     /// first time from what the TV can do (`TVPreset.starting`), changed in
     /// place by Settings while it's plugged in — and unplugging brings the
@@ -589,7 +589,7 @@ final class AppState {
     /// with Match TV on, the stream restarts at the TV preset's size, frame
     /// rate and bitrate and the PC follows (`tvConnectionChanged`). It takes
     /// over from Windows Helper ▸ TV Resolution, which is greyed while it's on.
-    var tvPresetsEnabled: Bool = false {
+    var tvPresetsEnabled: Bool = true {
         didSet {
             guard oldValue != tvPresetsEnabled else { return }
             UserDefaults.standard.set(tvPresetsEnabled, forKey: Self.tvPresetsEnabledKey)
@@ -599,6 +599,11 @@ final class AppState {
         }
     }
     static let tvPresetsEnabledKey = "vibelight.tvPresets"
+
+    /// The saved TV Presets choice; missing or unreadable reads as On.
+    static func storedTVPresetsEnabled(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: tvPresetsEnabledKey) as? Bool ?? true
+    }
     static let tvPresetsKey = "vibelight.tvPresets.v1"
 
     /// Every TV's preset, by `TVIdentity.key`.
@@ -786,7 +791,7 @@ final class AppState {
         #endif
         matchTV = Self.storedMatchTV(in: .standard)
         tvMatchScale = Self.storedTVMatchScale(in: .standard)
-        tvPresetsEnabled = UserDefaults.standard.bool(forKey: Self.tvPresetsEnabledKey)
+        tvPresetsEnabled = Self.storedTVPresetsEnabled(in: .standard)
         tvPresets = Self.storedTVPresets(in: .standard)
         windowsHelperPins = Self.storedWindowsHelperPins(in: .standard)
         // Show the setup wizard when the user hasn't completed the CURRENT

@@ -79,6 +79,15 @@ final class TVPresetsTests: XCTestCase {
         XCTAssertEqual(AppState.storedTVPresets(in: defaults), [good])
     }
 
+    /// On by default (owner); a saved Off stays off.
+    func testOnByDefault() {
+        XCTAssertTrue(AppState.storedTVPresetsEnabled(in: defaults))
+        defaults.set(false, forKey: AppState.tvPresetsEnabledKey)
+        XCTAssertFalse(AppState.storedTVPresetsEnabled(in: defaults))
+        defaults.set("garbage", forKey: AppState.tvPresetsEnabledKey)
+        XCTAssertTrue(AppState.storedTVPresetsEnabled(in: defaults))
+    }
+
     // MARK: - Wiring
 
     /// Its own row on the iPad's Video tab; TV Resolution steps aside while

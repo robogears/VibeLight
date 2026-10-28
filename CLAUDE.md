@@ -215,7 +215,7 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   via `resize` on Rejoin's machinery (held frame, "Switching to …"), then
   the helper `/match`es the PC; the stream ending or the TV leaving
   `/restore`s it.
-- TV Presets (Settings ▸ Video, `vibelight.tvPresets`, off by default): one
+- TV Presets (Settings ▸ Video, `vibelight.tvPresets`, on by default): one
   preset per TV, keyed by its resolution + top refresh + mode list
   (`Core/TVPresets.swift` `TVIdentity`; iOS has no TV serial, and the HDMI
   name only labels the chip — it can arrive late). Plugged in, that TV's
