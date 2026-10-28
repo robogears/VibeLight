@@ -219,9 +219,15 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   passthrough while streaming (launcher hears nothing), and back.
 - Reset all input repeat state on `didBecomeActiveNotification` — releases are
   dropped while backgrounded (runaway-repeat bug otherwise).
-- One focus spring animation everywhere: `Theme.focusSpring`. Menu SFX
-  (`UI/MenuSFX.swift`, mostly synthesized PCM; the setup quack is the one
-  bundled asset, `VibeLight/Resources/quack.mp3`) tick alongside haptics.
+- One focus animation everywhere: `Theme.focusSpring` (one curve per theme).
+  Menu SFX (`UI/MenuSFX.swift`, mostly synthesized PCM; the setup quack is the
+  one bundled sound, `VibeLight/Resources/quack.mp3`) tick alongside haptics.
+- Themes (Settings ▸ Themes ▸ Theme, `AppTheme`, global `vibelight.appTheme`,
+  never in presets; it replaced the Background picker): Default (today's look,
+  always Parallax Deep), Night Edition, Grid 72, Grid 72 Dark, Kabuki Cut. UI
+  reads colour/type/shape only via `UI/Theme.swift` tokens (`Theme.ink`, not
+  `.white` — Grid 72 is a light page); Default branches stay pixel-identical.
+  OFL fonts in `Resources/Fonts` (`scripts/fonts/build-theme-fonts.py`).
 - iOS is landscape-only (Info.plist + `UIApplicationDelegateAdaptor`); the
   hint bar becomes tappable label buttons when no controller is driving.
 - Presets are "Live Loadout": a named list (≤ 6, `vibelight.presets.v3`,

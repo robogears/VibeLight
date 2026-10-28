@@ -14,12 +14,12 @@ struct UpdateCard: View {
                     .font(.system(size: 40))
                     .foregroundStyle(Theme.accent)
                 Text(title)
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(Theme.display(28))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
                 if let sub = subtitle {
                     Text(sub)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(Theme.ui(15, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -28,7 +28,7 @@ struct UpdateCard: View {
         }
         .padding(48)
         .frame(width: 480)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 
     @ViewBuilder
@@ -40,14 +40,14 @@ struct UpdateCard: View {
                     .tint(Theme.accent)
                     .frame(width: 320)
                 Text("Downloading… \(Int(fraction * 100))%")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(Theme.ui(13, .semibold))
                     .foregroundStyle(Theme.textSecondary)
             }
         case .installing:
             VStack(spacing: 12) {
                 ProgressView().controlSize(.large).tint(Theme.accent)
                 Text("Verifying update…")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
             }
         case .readyToInstall:
@@ -58,8 +58,8 @@ struct UpdateCard: View {
         case .failed(let message):
             VStack(spacing: 16) {
                 Text(message)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .font(Theme.ui(14, .medium, design: .default))
+                    .foregroundStyle(Theme.warning)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 380)
                 OverlayButton(id: "update:now", title: "Try Again", symbol: "arrow.clockwise")
@@ -70,19 +70,19 @@ struct UpdateCard: View {
                 if let notes = cleanedNotes {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("What's New")
-                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .font(Theme.ui(12, .heavy))
                             .tracking(1.2)
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.accentText)
                         ScrollView {
                             Text(notes)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(Theme.ui(13, .medium, design: .default))
                                 .foregroundStyle(Theme.textSecondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: 150)
                     }
                     .padding(14)
-                    .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                    .background(Theme.background.opacity(0.5), in: Theme.plate(12))
                 }
                 VStack(spacing: 12) {
                     OverlayButton(id: "update:now",

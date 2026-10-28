@@ -116,55 +116,54 @@ enum CaptureSystemKeys: String, Codable, CaseIterable, Sendable {
     var cliValue: String { rawValue }
 }
 
-/// Full streaming configuration — mirrors the meaningful Moonlight settings so
-/// the couch UI has the same control the desktop app does. Defaults are
-/// VibeLight's own (nothing is read from Moonlight); everything is persisted
-/// by VibeLight.
-///
-/// Codable is DECODE-lenient (custom `init(from:)` with `decodeIfPresent`) so
-/// adding a field never invalidates a user's saved settings — missing keys just
-/// take the fallback default.
-/// The launcher's background style (Settings ▸ Themes). A GLOBAL app appearance
-/// preference — deliberately NOT part of `StreamSettings`, so it's never captured
-/// into a per-session stream preset.
-enum BackgroundTheme: String, Codable, CaseIterable, Sendable {
-    // Order here IS the picker/cycle order — STATIC themes first, then ANIMATED
-    // ones (see `isAnimated`). Raw values are frozen (they persist in
-    // UserDefaults) — never rename an existing case; reordering cases is fine.
-    case nightfallSheen, inkPool,                                      // static
-         livingGlass, parallaxDeep, constellation, ambient, diagonal,  // animated
-         gaslight, searchlightCity, swingingBulb                       // animated — the noir set
+/// Settings ▸ Themes ▸ Theme: the launcher's whole look — colours, type,
+/// shapes, focus, motion and background together (the tokens live in
+/// `UI/Theme.swift`). A GLOBAL appearance preference on its own key, never
+/// part of `StreamSettings`, so a stream preset can't change it. It replaced
+/// the Background picker: Default always draws Parallax Deep, and a choice
+/// saved by that picker reads as Default. Raw values persist in UserDefaults —
+/// never rename one; the case order is the Settings cycle order.
+enum AppTheme: String, Codable, CaseIterable, Sendable {
+    case `default`, nightEdition, grid72, grid72Dark, kabukiCut
+
+    static let storageKey = "vibelight.appTheme"
+    /// Where the retired Background picker kept its choice.
+    static let legacyBackgroundKey = "vibelight.backgroundTheme"
 
     var title: String {
         switch self {
-        case .nightfallSheen:  "Nightfall Sheen"
-        case .inkPool:         "Ink Pool"
-        case .livingGlass:     "Living Glass"
-        case .parallaxDeep:    "Parallax Deep"
-        case .constellation:   "Constellation"
-        case .ambient:         "Ambient"
-        case .diagonal:        "Diagonal Drift"
-        case .gaslight:        "Gaslight"
-        case .searchlightCity: "Searchlight City"
-        case .swingingBulb:    "Swinging Bulb"
+        case .default:      "Default"
+        case .nightEdition: "Night Edition"
+        case .grid72:       "Grid 72"
+        case .grid72Dark:   "Grid 72 Dark"
+        case .kabukiCut:    "Kabuki Cut"
         }
     }
 
-    /// Whether the theme moves — drives the "Static"/"Animated" tag on each
-    /// preview card and the static-first ordering above.
-    var isAnimated: Bool {
-        switch self {
-        case .nightfallSheen, .inkPool: false
-        default:                        true
-        }
+    /// Grid 72 and its ink inversion share every shape and type rule.
+    var isGrid: Bool { self == .grid72 || self == .grid72Dark }
+
+    /// The saved theme. Nothing saved — every install from before themes,
+    /// whatever background it had picked — or a value this build doesn't know
+    /// reads as Default.
+    static func stored(in defaults: UserDefaults) -> AppTheme {
+        defaults.string(forKey: storageKey).flatMap(AppTheme.init(rawValue:)) ?? .default
+    }
+
+    /// The theme to boot with. A background the old picker saved means
+    /// nothing now (Default draws Parallax Deep), so its key is dropped; it
+    /// never chooses a theme.
+    static func migrated(in defaults: UserDefaults) -> AppTheme {
+        defaults.removeObject(forKey: legacyBackgroundKey)
+        return stored(in: defaults)
     }
 }
 
 /// Settings ▸ Themes ▸ Interface Size: multiplies the launcher's canvas scale
 /// (`RootView.uiScale`), the custom-UI way to enlarge text Apple accepts in
 /// place of Dynamic Type (UX-ios-scale-shrinks-text-targets). A GLOBAL
-/// appearance preference like `BackgroundTheme`, so loading a stream preset
-/// never changes it. Raw values persist in UserDefaults — never rename.
+/// appearance preference like `AppTheme`, so loading a stream preset never
+/// changes it. Raw values persist in UserDefaults — never rename.
 enum InterfaceSize: String, Codable, CaseIterable, Sendable {
     case `default`, large
 
@@ -178,6 +177,14 @@ enum InterfaceSize: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Full streaming configuration — mirrors the meaningful Moonlight settings so
+/// the couch UI has the same control the desktop app does. Defaults are
+/// VibeLight's own (nothing is read from Moonlight); everything is persisted
+/// by VibeLight.
+///
+/// Codable is DECODE-lenient (custom `init(from:)` with `decodeIfPresent`) so
+/// adding a field never invalidates a user's saved settings — missing keys just
+/// take the fallback default.
 struct StreamSettings: Sendable, Codable, Equatable {
     // Video
     var width: Int

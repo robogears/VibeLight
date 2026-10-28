@@ -131,14 +131,18 @@ final class ThemeContrastTests: XCTestCase {
     // MARK: - No hover zoom (UX-hover-zoom-settings-tabs)
 
     /// Hover only brightens: a Settings tab never scales, and a card button
-    /// scales for focus alone (a hover on the Mac focuses it, so it still grows).
+    /// scales for focus alone (a hover on the Mac focuses it, so it still grows
+    /// — in the themes that scale at all; see `AppTheme.focusScale`). The
+    /// hover tint is the theme's ink: white in Default, as before.
     func testHoverBrightensButNeverScales() throws {
         let tab = try source(of: "private struct TabChip: View {", in: "VibeLight/UI/SettingsView.swift")
         XCTAssertFalse(tab.contains(".scaleEffect"))
-        XCTAssertTrue(tab.contains("Color.white.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06)"))
+        XCTAssertTrue(tab.contains("Theme.ink.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06)"))
         let button = try source(of: "struct OverlayButton: View {", in: "VibeLight/UI/OverlayViews.swift")
-        XCTAssertTrue(button.contains(".scaleEffect(isFocused ? 1.04 : 1.0)"))
-        XCTAssertEqual(button.components(separatedBy: ".scaleEffect").count, 2)   // exactly one
+        XCTAssertTrue(button.contains(".scaleEffect(isFocused ? Theme.focusScale(1.04) : 1.0)"))
+        // Exactly one focus scale (the hold's fill has its own x-scale).
+        XCTAssertEqual(button.components(separatedBy: ".scaleEffect(isFocused").count, 2)
+        XCTAssertEqual(AppTheme.default.focusScale(1.04), 1.04)
     }
 
     /// The body of one view struct, from its declaration to the closing brace

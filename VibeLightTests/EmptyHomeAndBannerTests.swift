@@ -213,7 +213,8 @@ final class EmptyHomeAndBannerTests: XCTestCase {
     }
 
     /// The saved-computers warning on the no-computer panel is chosen by
-    /// savedHostsWarning and drawn in warning orange.
+    /// savedHostsWarning and drawn in the theme's warning colour (orange in
+    /// Default).
     func testLaunchWarningUsesTheRuleAndPanelDrawsItOrange() throws {
         let app = try source("VibeLight/App/AppState.swift")
         let load = try body(of: "let savedHosts = Self.loadAddedHosts()", until: "let savedPresets = Self.loadPresets()", in: app)
@@ -223,7 +224,7 @@ final class EmptyHomeAndBannerTests: XCTestCase {
         let home = try source("VibeLight/UI/HomeView.swift")
         let panel = try body(of: "private struct EmptyShelfPanel: View {", until: "\n}\n", in: home)
         XCTAssertTrue(panel.contains("private var isWarning: Bool { shelf == .noComputer && state.hostError != nil }"))
-        XCTAssertTrue(panel.contains(".foregroundStyle(isWarning ? Color.orange"), String(panel))
+        XCTAssertTrue(panel.contains(".foregroundStyle(isWarning ? Theme.warning"), String(panel))
     }
 
     /// The "answered yet" flag belongs to one computer: switching or removing

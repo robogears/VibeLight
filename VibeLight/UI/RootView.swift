@@ -75,8 +75,8 @@ struct RootView: View {
         GeometryReader { geo in
             let scale = Self.uiScale(for: geo.size, interfaceSize: state.interfaceSize)
             // On iOS the stream is an OVERLAY, so the launcher underneath is
-            // never unmounted — and seven of the ten background themes
-            // (including the default) animate every display frame. That kept a
+            // never unmounted — and most themes' backgrounds (Default's
+            // starfield among them) animate every display frame. That kept a
             // full-screen animation compositing at 120 Hz behind an opaque
             // stream, burning GPU and battery for pixels nobody can see.
             // Rendering an empty placeholder instead keeps the view identity
@@ -327,7 +327,7 @@ struct LauncherContent: View {
 
     var body: some View {
         ZStack {
-            AppBackground(theme: state.backgroundTheme)
+            AppBackground(theme: state.appTheme)
 
             switch state.screen {
             case .home:
@@ -359,6 +359,9 @@ struct LauncherContent: View {
         // exactly over the tile that was pressed.
         .coordinateSpace(.named(LiftGeometry.space))
         .environment(\.liftGeometry, lift)
+        // Grid 72's paper is a light page: system controls, materials and
+        // spinners follow it. Every other theme is dark, as the app is.
+        .environment(\.colorScheme, Theme.palette.isLight ? .light : .dark)
         .animation(Theme.focusSpring, value: state.screen)
         .animation(.easeOut(duration: 0.18), value: state.overlay)
         .animation(.easeOut(duration: 0.15), value: state.controller.holdProgress == nil)

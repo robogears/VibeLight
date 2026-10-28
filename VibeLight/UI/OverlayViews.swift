@@ -13,7 +13,7 @@ struct OverlayHost: View {
             // in a popup with no controller/keyboard to back out with. Overlays
             // that lock input (e.g. the launching HUD) ignore Back, so they stay.
             Rectangle()
-                .fill(.black.opacity(0.55))
+                .fill(Theme.veil.opacity(0.55))
                 .background(.ultraThinMaterial)
                 .contentShape(Rectangle())
                 .onTapGesture { state.route(.back) }
@@ -113,29 +113,33 @@ private struct PosterLiftCard: View {
         return false
     }
 
+    /// The stream's numbers and which preset they are — the hero's badges.
+    private var badges: [BadgeItem] {
+        var items = [BadgeItem(id: "res", text: state.value(for: .resolution)),
+                     BadgeItem(id: "fps", text: "\(state.settings.fps) FPS"),
+                     BadgeItem(id: "rate", text: "\(state.settings.bitrateKbps / 1000) MBPS")]
+        if let preset = state.activePreset {
+            items.append(BadgeItem(id: "preset", text: preset.name.uppercased(),
+                                   kind: .preset(edited: state.isActivePresetEdited)))
+        }
+        return items
+    }
+
     var body: some View {
         VStack(spacing: 26) {
             if let app {
                 poster(app)
                 VStack(spacing: 10) {
                     Text(app.name)
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(Theme.display(34))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Text(statusLine)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(Theme.ui(15, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                         .contentTransition(.opacity)
                         .animation(.easeInOut(duration: 0.3), value: statusLine)
-                    HStack(spacing: 12) {
-                        Badge(text: state.value(for: .resolution))
-                        Badge(text: "\(state.settings.fps) FPS")
-                        Badge(text: "\(state.settings.bitrateKbps / 1000) MBPS")
-                        if let preset = state.activePreset {
-                            Badge(text: preset.name.uppercased(),
-                                  tint: state.isActivePresetEdited ? .orange : .white)
-                        }
-                    }
+                    BadgeRow(items: badges)
                 }
                 .opacity(landed && !streamingNow ? 1 : 0)
                 .animation(.easeOut(duration: streamingNow ? 0.2 : 0.25), value: landed && !streamingNow)
@@ -151,13 +155,14 @@ private struct PosterLiftCard: View {
         let lifting = !landed && start != nil
         return PosterArt(app: app)
             .frame(width: Self.size.width, height: Self.size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.accent, lineWidth: 4))
+            .clipShape(Theme.plate(20))
+            .overlay(Theme.plate(20).strokeBorder(Theme.accent, lineWidth: 4))
             .background {
-                RoundedRectangle(cornerRadius: 20)
+                // The breathing glow — none on Grid 72, where nothing glows.
+                Theme.plate(20)
                     .fill(Theme.accent)
                     .blur(radius: 36)
-                    .opacity(landed ? (breathe ? 0.75 : 0.25) : 0)
+                    .opacity(Theme.current.isGrid ? 0 : landed ? (breathe ? 0.75 : 0.25) : 0)
             }
             // The lift: begin exactly over the pressed tile, spring to here.
             .scaleEffect(lifting ? start!.scale : CGSize(width: 1, height: 1))
@@ -311,17 +316,17 @@ private struct PosterRestCard: View {
             // Holding Quit drains the colour; a game the PC closed is grey.
             .saturation(closed ? 0 : 1 - 0.8 * hold)
             .brightness(closed ? -0.15 : 0)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(closed ? Color.white.opacity(0.3) : .green, lineWidth: 4))
+            .clipShape(Theme.plate(20))
+            .overlay(Theme.plate(20)
+                .strokeBorder(closed ? Theme.ink.opacity(0.3) : Theme.live, lineWidth: 4))
             .overlay(alignment: .topLeading) {
                 LiveBadge(mode: closed ? .closed : hold > 0 ? .closing : .live).padding(14)
             }
             .background {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.green)
+                Theme.plate(20)
+                    .fill(Theme.live)
                     .blur(radius: 36)
-                    .opacity(closed || leaving ? 0 : (breathe ? 0.55 : 0.2))
+                    .opacity(closed || leaving || Theme.current.isGrid ? 0 : (breathe ? 0.55 : 0.2))
             }
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(LiftGeometry.space)) }) { frame in
                 guard !leaving else { return }
@@ -339,16 +344,16 @@ private struct PosterRestCard: View {
     private var column: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(app.name)
-                .font(.system(size: 34, weight: .black, design: .rounded))
+                .font(Theme.display(34))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(2)
             if let reason = ended?.dropReason, !closed {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("The stream dropped")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.orange)
+                        .font(Theme.ui(15, .bold, design: .default))
+                        .foregroundStyle(Theme.warning)
                     Text(reason)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Theme.ui(13, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -358,7 +363,7 @@ private struct PosterRestCard: View {
                           : AppState.endedStatusLine(game: app.name, host: hostName, closed: closed,
                                                      played: ended?.played,
                                                      leftApp: ended?.fromAppExit == true))
-                .font(.system(size: 15, weight: .medium))
+                .font(Theme.ui(15, .medium, design: .default))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 12) {
@@ -377,7 +382,7 @@ private struct PosterRestCard: View {
                                   disabled: !state.windowsHelperReady)
                     if !state.windowsHelperReady {
                         Text("Quit Stream and Game needs VibeLight Helper on \(hostName)")
-                            .font(.system(size: Theme.labelSize(12), weight: .semibold))
+                            .font(Theme.ui(Theme.labelSize(12), .semibold, design: .default))
                             .foregroundStyle(Theme.textSecondary)
                             .padding(.leading, 4)
                     }
@@ -405,7 +410,7 @@ private struct PosterRestCard: View {
                 }
             }
         }
-        .font(.system(size: Theme.labelSize(12), weight: .semibold))
+        .font(Theme.ui(Theme.labelSize(12), .semibold, design: .default))
         .foregroundStyle(ink)
         .scaleEffect(nudged && !reduceMotion ? 1.06 : 1, anchor: .leading)
         .animation(Theme.focusSpring, value: nudged)
@@ -452,16 +457,16 @@ private struct ErrorCard: View {
         VStack(spacing: 24) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 40))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.warning)
             Text(message)
-                .font(.system(size: 16, weight: .medium))
+                .font(Theme.ui(16, .medium, design: .default))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 520)
             OverlayButton(id: "error:ok", title: "OK", symbol: "checkmark")
         }
         .padding(52)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
 
@@ -473,8 +478,7 @@ private struct CheatSheetCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
             Text("SHORTCUTS")
-                .font(.system(size: 22, weight: .black, design: .rounded))
-                .tracking(4)
+                .themeText(.sheetTitle)
                 .foregroundStyle(Theme.textPrimary)
 
             Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 14) {
@@ -514,20 +518,20 @@ private struct CheatSheetCard: View {
             }
 
             Text("Press any button to close")
-                .font(.system(size: Theme.labelSize(12), weight: .medium))
+                .font(Theme.ui(Theme.labelSize(12), .medium, design: .default))
                 .foregroundStyle(Theme.textSecondary)
         }
         .padding(48)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 
     @ViewBuilder
     private func sheetSection(_ title: String) -> some View {
         GridRow {
             Text(title)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(Theme.ui(13, .heavy))
                 .tracking(1.5)
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
                 .padding(.top, 10)
                 .gridCellColumns(2)
         }
@@ -540,11 +544,11 @@ private struct CheatSheetCard: View {
             HStack(spacing: 6) {
                 GlyphBadge(glyph: glyph)
                 Text(glyph.label)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(Theme.ui(13, .semibold))
             }
             .foregroundStyle(Theme.textPrimary)
             Text(text)
-                .font(.system(size: 14, weight: .medium))
+                .font(Theme.ui(14, .medium, design: .default))
                 .foregroundStyle(Theme.textSecondary)
         }
     }
@@ -556,7 +560,7 @@ private struct CheatSheetCard: View {
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.textPrimary)
             Text(text)
-                .font(.system(size: 14, weight: .medium))
+                .font(Theme.ui(14, .medium, design: .default))
                 .foregroundStyle(Theme.textSecondary)
         }
     }
@@ -599,7 +603,7 @@ struct OverlayButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
             Text(title)
-                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .font(Theme.ui(17, .bold))
             Spacer()
         }
         // Navy on the blue, white on the red (UX-white-on-accent-contrast).
@@ -610,24 +614,26 @@ struct OverlayButton: View {
         .contentShape(Rectangle())   // whole button (incl. padding) is clickable
         .background {
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 13)
+                Theme.plate(13)
                     .fill(isFocused ? (destructive ? Color.red.opacity(0.85) : Theme.accent)
-                                    : (hoverActive ? Color.white.opacity(0.12) : Theme.surface))
+                                    : (hoverActive ? Theme.ink.opacity(0.12) : Theme.surface))
                 // The hold, filling from the leading edge.
                 if holdEvent != nil {
-                    RoundedRectangle(cornerRadius: 13)
+                    Theme.plate(13)
                         .fill(.white.opacity(0.3))
                         .scaleEffect(x: holdFraction, anchor: .leading)
                 }
             }
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast),
-                              lineWidth: 1)
+            // Grid 72 rules a resting button in ink.
+            Theme.plate(13)
+                .strokeBorder(Theme.current.isGrid && !isFocused
+                                  ? Theme.ink : Theme.hairline(isFocused ? 0.35 : (hoverActive ? 0.22 : 0.08), contrast),
+                              lineWidth: Theme.current.isGrid && !isFocused ? 1.5 : 1)
         }
         // Hover brightens; only focus scales (owner rule: nothing zooms on hover).
-        .scaleEffect(isFocused ? 1.04 : 1.0)
+        .scaleEffect(isFocused ? Theme.focusScale(1.04) : 1.0)
         .opacity(disabled ? 0.4 : 1)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: hoverActive)
@@ -698,12 +704,12 @@ private struct ConfirmRemoveHostCard: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Image(systemName: "desktopcomputer.trianglebadge.exclamationmark")
-                    .font(.system(size: 34)).foregroundStyle(.orange)
+                    .font(.system(size: 34)).foregroundStyle(Theme.warning)
                 Text("Forget \(name)?")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                 Text("Its pairing will be lost — you'll need to enter a new PIN on the PC to use it again. Saved box art is removed too.")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
@@ -715,7 +721,7 @@ private struct ConfirmRemoveHostCard: View {
             }
         }
         .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
 
@@ -734,11 +740,11 @@ private struct PresetMenuCard: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Text(preset?.name ?? "Preset")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Text(preset?.summary ?? "")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
             }
             VStack(spacing: 12) {
@@ -759,7 +765,7 @@ private struct PresetMenuCard: View {
             }
         }
         .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
 
@@ -781,11 +787,11 @@ private struct NamePresetCard: View {
         VStack(spacing: 20) {
             VStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                 if case .new = target {
                     Text("Saved from your current settings · \(StreamPreset.summary(of: state.settings))")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Theme.ui(13, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
@@ -799,20 +805,20 @@ private struct NamePresetCard: View {
             let draft = Binding(get: { state.presetNameDraft }, set: { state.presetNameDraft = $0 })
             TextField("Name", text: draft)
                 .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(Theme.ui(22, .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .focused($fieldFocused)
                 .onSubmit { state.commitPresetName(target) }
                 .padding(.horizontal, 18).padding(.vertical, 12).frame(width: 320)
-                .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+                .background(Theme.background.opacity(0.6), in: Theme.plate(13))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 13)
-                        .strokeBorder(.white.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
+                    Theme.plate(13)
+                        .strokeBorder(Theme.ink.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
                 }
                 .onTapGesture { fieldFocused = true }
             Text("◀ ▶ pick a name · or tap to type your own")
-                .font(.system(size: Theme.labelSize(12), weight: .medium))
+                .font(Theme.ui(Theme.labelSize(12), .medium, design: .default))
                 .foregroundStyle(Theme.textSecondary)
             VStack(spacing: 12) {
                 OverlayButton(id: "name:save", title: target == .new ? "Save Preset" : "Save Name",
@@ -821,7 +827,7 @@ private struct NamePresetCard: View {
             }
         }
         .padding(44).frame(width: 480)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
         .onChange(of: fieldFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }
@@ -839,15 +845,15 @@ private struct SuggestionPill: View {
 
     var body: some View {
         Text(name)
-            .font(.system(size: 15, weight: .bold, design: .rounded))
+            .font(Theme.ui(15, .bold))
             .foregroundStyle(isFocused ? Theme.onAccent : Theme.textPrimary.opacity(0.85))
             .lineLimit(1)
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(isFocused ? Theme.accent : Color.white.opacity(0.08), in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(isFocused ? 0.4 : 0.1), lineWidth: 1))
-            .scaleEffect(isFocused ? 1.05 : 1)
+            .background(isFocused ? Theme.accent : Theme.ink.opacity(0.08), in: Theme.pill)
+            .overlay(Theme.pill.strokeBorder(Theme.ink.opacity(isFocused ? 0.4 : 0.1), lineWidth: 1))
+            .scaleEffect(isFocused ? Theme.focusScale(1.05) : 1)
             .animation(Theme.focusSpring, value: isFocused)
-            .contentShape(Capsule())
+            .contentShape(Theme.pill)
             .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: id) } }
             .onTapGesture { state.pointerSelect(id) }
             .accessibilityAddTraits(.isButton)
@@ -903,7 +909,7 @@ struct PresetToastView: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(toast.verb).foregroundStyle(Theme.textSecondary)
-            Text(toast.name).foregroundStyle(Theme.accent).fontWeight(.heavy)
+            Text(toast.name).foregroundStyle(Theme.accentText).fontWeight(.heavy)
             if let detail = toast.detail {
                 Text("· \(detail)").foregroundStyle(Theme.textSecondary)
             }
@@ -917,13 +923,14 @@ struct PresetToastView: View {
                 .padding(.leading, 6)
             }
         }
-        .font(.system(size: 15, weight: .semibold, design: .rounded))
+        .font(Theme.ui(15, .semibold))
         .lineLimit(1)
         .padding(.horizontal, 18).padding(.vertical, 10)
-        .background(Theme.surface.opacity(0.95), in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 1))
-        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
-        .contentShape(Capsule())
+        .background(Theme.surface.opacity(0.95), in: Theme.pill)
+        .overlay(Theme.pill.strokeBorder(Theme.current.isGrid ? Theme.ink : Theme.ink.opacity(0.1),
+                                         lineWidth: Theme.current.isGrid ? 1.5 : 1))
+        .shadow(color: Theme.restShadow(0.4), radius: 16, y: 6)
+        .contentShape(Theme.pill)
         .onTapGesture { if toast.canUndo { state.undoPresetChange() } }
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: "Undo") { state.undoPresetChange() }
@@ -944,11 +951,11 @@ private struct ConfirmSwitchStreamCard: View {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 34)).foregroundStyle(Theme.accent)
                 Text("\(runningName) is running")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
                 Text("Switching closes \(runningName) on the PC and starts \(target.name).")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
@@ -960,7 +967,7 @@ private struct ConfirmSwitchStreamCard: View {
             }
         }
         .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
 
@@ -973,13 +980,13 @@ private struct ConfirmRestartCard: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Image(systemName: "restart")
-                    .font(.system(size: 34)).foregroundStyle(.orange)
+                    .font(.system(size: 34)).foregroundStyle(Theme.warning)
                 Text("Restart \(hostName)?")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
                 Text("Windows will reboot right away, closing anything that's running.")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
@@ -994,7 +1001,7 @@ private struct ConfirmRestartCard: View {
             }
         }
         .padding(48).frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
 
@@ -1012,14 +1019,14 @@ private struct MoonDeckSetupCard: View {
                 Image(systemName: "restart.circle")
                     .font(.system(size: 34)).foregroundStyle(Theme.accent)
                 Text("Restart via MoonDeckBuddy")
-                    .font(.system(size: 23, weight: .black, design: .rounded))
+                    .font(Theme.display(23))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
             }
             content
         }
         .padding(44).frame(width: 480)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
         .onChange(of: portFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }
@@ -1032,7 +1039,7 @@ private struct MoonDeckSetupCard: View {
             VStack(spacing: 12) {
                 ProgressView().tint(Theme.accent)
                 Text("Connecting to MoonDeckBuddy…")
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(14, .medium, design: .default)).foregroundStyle(Theme.textSecondary)
             }
             .frame(height: 90)
             OverlayButton(id: "moondeck:cancel", title: "Cancel", symbol: "xmark")
@@ -1040,10 +1047,10 @@ private struct MoonDeckSetupCard: View {
         case .some(.waiting):
             VStack(spacing: 10) {
                 Text("Type this PIN into the MoonDeckBuddy pop-up on \(hostName):")
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(14, .medium, design: .default)).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 360)
                 Text(state.moonDeckPairing?.pin ?? "")
-                    .font(.system(size: 46, weight: .black, design: .rounded))
+                    .font(Theme.display(46))
                     .tracking(10).foregroundStyle(Theme.textPrimary)
                 ProgressView().tint(Theme.accent)
             }
@@ -1052,9 +1059,9 @@ private struct MoonDeckSetupCard: View {
         case .some(.paired):
             VStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 30)).foregroundStyle(.green)
+                    .font(.system(size: 30)).foregroundStyle(Theme.live)
                 Text("Paired! You can restart \(hostName) from VibeLight any time.")
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(14, .medium, design: .default)).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 360)
             }
             // Same in-flight treatment the confirm card gives: two cards written
@@ -1073,22 +1080,22 @@ private struct MoonDeckSetupCard: View {
         default:   // initial / failed / offline
             VStack(spacing: 14) {
                 Text("Install MoonDeckBuddy on \(hostName) and start it, then pair once. VibeLight will show a PIN to enter on the PC.")
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(13, .medium, design: .default)).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 390)
                 HStack(spacing: 10) {
-                    Text("Port").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    Text("Port").font(Theme.ui(14, .semibold, design: .default)).foregroundStyle(Theme.textSecondary)
                     TextField("59999", text: portBinding)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(Theme.ui(16, .bold))
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.center)
                         .frame(width: 96)
                         .focused($portFocused)
                         .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                        .background(Theme.background.opacity(0.6), in: Theme.plate(10))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(.white.opacity(portFocused ? 0.3 : 0.08), lineWidth: 1)
+                            Theme.plate(10)
+                                .strokeBorder(Theme.ink.opacity(portFocused ? 0.3 : 0.08), lineWidth: 1)
                         }
                         .onTapGesture { portFocused = true }
                     #if os(iOS)
@@ -1097,7 +1104,7 @@ private struct MoonDeckSetupCard: View {
                 }
                 if let msg = errorMessage {
                     Text(msg)
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.orange)
+                        .font(Theme.ui(13, .medium, design: .default)).foregroundStyle(Theme.warning)
                         .multilineTextAlignment(.center).frame(maxWidth: 390)
                 }
             }
@@ -1133,11 +1140,11 @@ struct CustomResolutionCard: View {
                 Image(systemName: "aspectratio")
                     .font(.system(size: 34)).foregroundStyle(Theme.accent)
                 Text("Custom Resolution")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                 if let native = state.nativeResolution {
                     Text("Your display is \(native.w)×\(native.h)")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Theme.ui(13, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -1145,7 +1152,7 @@ struct CustomResolutionCard: View {
             let text = Binding(get: { state.customResText }, set: { state.customResText = $0 })
             TextField("2560x1440", text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(Theme.ui(22, .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .focused($fieldFocused)
@@ -1153,15 +1160,15 @@ struct CustomResolutionCard: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(width: 260)
-                .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+                .background(Theme.background.opacity(0.6), in: Theme.plate(13))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 13)
-                        .strokeBorder(.white.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
+                    Theme.plate(13)
+                        .strokeBorder(Theme.ink.opacity(fieldFocused ? 0.3 : 0.08), lineWidth: 1)
                 }
                 .onTapGesture { fieldFocused = true }
 
             if let error = state.customResError {
-                Text(error).font(.system(size: 13, weight: .medium)).foregroundStyle(.orange)
+                Text(error).font(Theme.ui(13, .medium, design: .default)).foregroundStyle(Theme.warning)
             }
 
             VStack(spacing: 12) {
@@ -1171,7 +1178,7 @@ struct CustomResolutionCard: View {
         }
         .padding(48)
         .frame(width: 460)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
         .onChange(of: fieldFocused) { _, focused in
             state.controller.keyboardCaptureEnabled = !focused
         }

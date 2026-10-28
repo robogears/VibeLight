@@ -24,7 +24,7 @@ struct HostMenuCard: View {
         }
         .padding(48)
         .frame(width: 520)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
         // While the IP field has keyboard focus, stop the nav key monitor from
         // swallowing what the user types.
         .onChange(of: ipFieldFocused) { _, focused in
@@ -50,17 +50,17 @@ struct HostMenuCard: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Text("Computers")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(Theme.display(28))
                     .foregroundStyle(Theme.textPrimary)
                 Text("\(state.hosts.count) of \(AppState.maxHosts)")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Theme.ui(14, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
                 // The header chip shows at most two lines of a problem; this is
                 // where it can always be read in full (UX-host-banner-truncates).
                 if let error = state.hostError {
                     Text(error)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .font(Theme.ui(13, .medium, design: .default))
+                        .foregroundStyle(Theme.warning)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 420)
@@ -79,7 +79,7 @@ struct HostMenuCard: View {
                     HostRow(host: host)
                     if divided && index == 0 {
                         Rectangle()
-                            .fill(.white.opacity(0.08))
+                            .fill(Theme.ink.opacity(0.08))
                             .frame(height: 1)
                             .padding(.horizontal, 18)   // aligns with the rows' content inset
                             .accessibilityHidden(true)
@@ -94,8 +94,8 @@ struct HostMenuCard: View {
 
             if let error = state.addHostError {
                 Text(error)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .font(Theme.ui(13, .medium, design: .default))
+                    .foregroundStyle(Theme.warning)
                     .multilineTextAlignment(.center)
             }
         }
@@ -109,7 +109,7 @@ struct HostMenuCard: View {
                 .foregroundStyle(Theme.accent)
             TextField("Add computer by IP address", text: ip)
                 .textFieldStyle(.plain)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .font(Theme.ui(16, .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .disabled(!ipFieldActive)   // the keyboard gate — see ipFieldActive
                 .focused($ipFieldFocused)
@@ -122,22 +122,22 @@ struct HostMenuCard: View {
                 state.addHost()
             } label: {
                 Text("Add")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(Theme.ui(15, .bold))
                     .foregroundStyle(state.focus.focusedItemID == "hostmenu:add" ? Theme.onAccent : Theme.accent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, Theme.perPlatform(iOS: 10, macOS: 8))
                     .background(
                         state.focus.focusedItemID == "hostmenu:add" ? Theme.accent : Theme.accent.opacity(0.15),
-                        in: Capsule())
+                        in: Theme.pill)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+        .background(Theme.background.opacity(0.6), in: Theme.plate(13))
         .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(.white.opacity(ipFieldFocused ? 0.3 : 0.08), lineWidth: 1)
+            Theme.plate(13)
+                .strokeBorder(Theme.ink.opacity(ipFieldFocused ? 0.3 : 0.08), lineWidth: 1)
         }
         .onTapGesture {
             // Explicit tap = the ONLY way the keyboard appears. Align the
@@ -169,10 +169,10 @@ private struct HostRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(host.name)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(Theme.ui(17, .bold))
                     .foregroundStyle(isFocused ? Theme.onAccent : Theme.textPrimary)
                 Text(statusText)
-                    .font(.system(size: Theme.labelSize(12), weight: .medium))
+                    .font(Theme.ui(Theme.labelSize(12), .medium, design: .default))
                     .foregroundStyle(isFocused ? Theme.onAccent.opacity(0.8) : Theme.textSecondary)
             }
             Spacer()
@@ -208,12 +208,15 @@ private struct HostRow: View {
         .contentShape(Rectangle())
         .background(
             isFocused ? Theme.accent : Theme.background.opacity(0.5),
-            in: RoundedRectangle(cornerRadius: 13))
+            in: Theme.plate(13))
         .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
+            // Grid 72 rules a resting row in ink.
+            Theme.plate(13)
+                .strokeBorder(Theme.current.isGrid && !isFocused ? Theme.ink
+                                                                 : Theme.hairline(isFocused ? 0.3 : 0.06, contrast),
+                              lineWidth: Theme.current.isGrid && !isFocused ? 1.5 : 1)
         }
-        .scaleEffect(isFocused ? 1.02 : 1.0)
+        .scaleEffect(isFocused ? Theme.focusScale(1.02) : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: focusID) } }
         .onTapGesture { state.pointerSelect(focusID) }
@@ -221,7 +224,7 @@ private struct HostRow: View {
 
     private var statusColor: Color {
         if isSelected { return state.selectedHostDot.color }   // same dot as the header chip
-        if !host.isPaired { return .orange }
+        if !host.isPaired { return Theme.warning }
         return .gray
     }
 
@@ -245,7 +248,7 @@ private struct PairingPanel: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Text("Pair \(pairing.hostName)")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(Theme.display(26))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
             }
@@ -254,7 +257,7 @@ private struct PairingPanel: View {
             case .waiting:
                 VStack(spacing: 14) {
                     Text("Enter this PIN on your PC")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(Theme.ui(14, .semibold, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                     HStack(spacing: 12) {
                         // Identity = position, not the digit: `id: \.self` over
@@ -262,28 +265,28 @@ private struct PairingPanel: View {
                         // (duplicate-ID warnings, collapsed/mis-animated tiles).
                         ForEach(Array(pairing.pin.enumerated()), id: \.offset) { _, digit in
                             Text(String(digit))
-                                .font(.system(size: 40, weight: .black, design: .rounded))
+                                .font(Theme.display(40))
                                 .foregroundStyle(Theme.onAccent)
                                 .frame(width: 62, height: 78)
-                                .background(Theme.accent.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
+                                .background(Theme.accent.opacity(0.9), in: Theme.plate(14))
                         }
                     }
                     Text(AppState.pairingInstructions(webUIURL: pairing.webUIURL))
-                        .font(.system(size: Theme.labelSize(12), weight: .medium))
+                        .font(Theme.ui(Theme.labelSize(12), .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small).tint(Theme.accent)
                         Text("Waiting for pairing…")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(Theme.ui(13, .medium, design: .default))
                             .foregroundStyle(Theme.textSecondary)
                     }
                     // Vibepollo refuses a PIN ("Pairing Failed") while more than
                     // one device has a pairing request open — they last ten
                     // minutes — and this screen never hears about it.
                     Text(AppState.pairingFailedOnHostHint)
-                        .font(.system(size: Theme.labelSize(12), weight: .medium))
+                        .font(Theme.ui(Theme.labelSize(12), .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
@@ -292,9 +295,9 @@ private struct PairingPanel: View {
             case .success:
                 VStack(spacing: 14) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 44)).foregroundStyle(.green)
+                        .font(.system(size: 44)).foregroundStyle(Theme.live)
                     Text("Paired! You can stream to this computer now.")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(Theme.ui(15, .medium, design: .default))
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.center)
                     OverlayButton(id: "pair:done", title: "Done", symbol: "checkmark")
@@ -302,10 +305,10 @@ private struct PairingPanel: View {
             default:
                 VStack(spacing: 14) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 36)).foregroundStyle(.orange)
+                        .font(.system(size: 36)).foregroundStyle(Theme.warning)
                     Text(errorText)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .font(Theme.ui(14, .medium, design: .default))
+                        .foregroundStyle(Theme.warning)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 380)
                     OverlayButton(id: "pair:retry", title: "Try Again", symbol: "arrow.clockwise")

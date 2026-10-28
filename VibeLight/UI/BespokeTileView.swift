@@ -2,12 +2,24 @@ import SwiftUI
 
 /// Hand-designed tiles for utility apps (Desktop, Steam, Playnite…) where
 /// host box art is either the lying 130×180 placeholder or meaningless.
-/// These should look BETTER than generic box art, not like fallbacks.
+/// These should look BETTER than generic box art, not like fallbacks. Each
+/// theme draws its own: Night Edition's section card, Grid 72's flat plate,
+/// Kabuki Cut's black card under a white wedge. They are drawn on the 210 pt
+/// shelf tile and scale with it (the starting card's poster is bigger).
 struct BespokeTileView: View {
     let kind: TileArtwork.BespokeTile
     let title: String
 
     var body: some View {
+        switch Theme.current {
+        case .default:             defaultTile
+        case .nightEdition:        nightCard
+        case .grid72, .grid72Dark: gridPlate
+        case .kabukiCut:           kabukiCard
+        }
+    }
+
+    private var defaultTile: some View {
         ZStack {
             LinearGradient(
                 colors: palette,
@@ -47,6 +59,109 @@ struct BespokeTileView: View {
                     )
                 )
             }
+        }
+    }
+
+    /// Night Edition: a section card — the theme's surface under a vermilion
+    /// top rule, a huge faint italic initial, then the icon and an uppercase
+    /// title.
+    private var nightCard: some View {
+        GeometryReader { geo in
+            let k = geo.size.width / 210
+            ZStack(alignment: .topLeading) {
+                Theme.surface
+                Text(initial)
+                    .font(ThemeFace.frauncesBlackItalic.font(170 * k))
+                    .foregroundStyle(Theme.ink.opacity(0.1))
+                    .fixedSize()
+                    .offset(x: 10 * k, y: -10 * k)
+                Rectangle()
+                    .fill(Theme.accent)
+                    .frame(height: 4 * k)
+                VStack(alignment: .leading, spacing: 8 * k) {
+                    mark(size: 28 * k)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(title)
+                        .font(ThemeFace.plexBold.font(17 * k))
+                        .tracking(0.34 * k)
+                        .textCase(.uppercase)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(16 * k)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
+        }
+    }
+
+    /// Grid 72: a flat solid plate, its glyph in white at 30 %, an uppercase
+    /// title. No gradient, no icon.
+    private var gridPlate: some View {
+        GeometryReader { geo in
+            let k = geo.size.width / 210
+            ZStack {
+                plate
+                mark(size: 92 * k)
+                    .foregroundStyle(.white.opacity(0.3))
+                    .offset(y: -20 * k)
+                Text(title)
+                    .font(ThemeFace.archivoExtraBold.font(15 * k))
+                    .tracking(1.5 * k)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(14 * k)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
+        }
+    }
+
+    /// Kabuki Cut: black, a white diagonal wedge across the top carrying the
+    /// glyph (and a halftone fading in toward its edge), the title on a
+    /// slanted red slab.
+    private var kabukiCard: some View {
+        GeometryReader { geo in
+            let k = geo.size.width / 210
+            ZStack(alignment: .topLeading) {
+                Color.black
+                UnitPolygon.bespokeWedge.fill(Color.white)
+                BespokeHalftone(scale: k)
+                mark(size: 84 * k)
+                    .foregroundStyle(Color.black)
+                    .frame(width: 110 * k, height: 110 * k)
+                    .rotationEffect(.degrees(-6))
+                    .offset(x: 18 * k, y: 18 * k)
+                Text(title)
+                    .font(ThemeFace.delaGothic.font(17 * k))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(.top, 6 * k)
+                    .padding(.horizontal, 10 * k)
+                    .padding(.bottom, 3 * k)
+                    .background(Theme.accent)
+                    .slanted(-8, pivot: 14 * k)
+                    .padding(14 * k)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
+        }
+    }
+
+    /// Night Edition's big initial: the title's first letter.
+    private var initial: String { title.first.map { String($0).uppercased() } ?? "" }
+
+    /// Grid 72's plates: each app's colour, flat.
+    private var plate: Color {
+        switch kind {
+        case .desktop: Color(hex: 0x111111)
+        case .steam: Color(hex: 0x1B2838)
+        case .playnite: Color(hex: 0x4B2A80)
+        case .moonDeck: Color(hex: 0x22265A)
+        case .virtualDisplay: Color(hex: 0x0D4D4D)
+        case .generic: Color(hex: 0x3A3D45)
         }
     }
 
@@ -103,6 +218,42 @@ struct BespokeTileView: View {
         case .virtualDisplay: [Color(red: 0.05, green: 0.35, blue: 0.35), Color(red: 0.02, green: 0.13, blue: 0.16)]
         case .generic: [Color(red: 0.22, green: 0.24, blue: 0.30), Color(red: 0.09, green: 0.10, blue: 0.14)]
         }
+    }
+}
+
+/// The halftone on a Kabuki bespoke tile's white wedge: black dots on a 7 pt
+/// grid, fading in toward the wedge's lower edge (the spec's 160° mask).
+private struct BespokeHalftone: View {
+    let scale: CGFloat
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width, h = size.height
+            let step = 7 * scale, r = 1.4 * scale
+            guard w > 0, h > 0, step > 1 else { return }
+            let length = w * 0.342 + h * 0.94
+            // Ten strengths, one path each, instead of a fill per dot.
+            var levels = [Path](repeating: Path(), count: 10)
+            var y = step / 2
+            while y < h * 0.7 {
+                var x = step / 2
+                while x < w {
+                    if y < h * (0.7 - 0.3 * x / w) {   // inside the wedge
+                        let t = (x * 0.342 + y * 0.94) / length
+                        let level = Int((min(max((t - 0.4) / 0.6, 0), 1) * 10).rounded())
+                        if level > 0 {
+                            levels[level - 1].addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                        }
+                    }
+                    x += step
+                }
+                y += step
+            }
+            for (i, dots) in levels.enumerated() where !dots.isEmpty {
+                ctx.fill(dots, with: .color(.black.opacity(0.5 * Double(i + 1) / 10)))
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 

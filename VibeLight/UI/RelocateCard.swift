@@ -11,11 +11,11 @@ struct RelocateCard: View {
                     .font(.system(size: 40))
                     .foregroundStyle(Theme.accent)
                 Text("Move to Applications?")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(Theme.display(28))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
                 Text("Keep VibeLight in your Applications folder so it stays\nout of Downloads and can update itself automatically.")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(Theme.ui(15, .medium, design: .default))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -27,6 +27,6 @@ struct RelocateCard: View {
         }
         .padding(48)
         .frame(width: 480)
-        .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+        .themeCard()
     }
 }
