@@ -207,9 +207,11 @@ public class HelperApiTests
         public (int, int)? Matched;
         public TimeSpan? Grace;
         public StatusResponse Status() => new(new DisplayInfo(@"\\.\DISPLAY1", 1920, 1080, 120), null, Matched != null);
-        public MatchResponse Match(int width, int height)
+        public int? MatchedHz;
+        public MatchResponse Match(int width, int height, int? refreshHz)
         {
             Matched = (width, height);
+            MatchedHz = refreshHz;
             return new MatchResponse(true, new DisplayInfo(@"\\.\DISPLAY1", width, height, 120), null, false, "ok");
         }
         public MatchResponse Restore() => new(true, null, null, false, "restored");
@@ -263,6 +265,11 @@ public class HelperApiTests
         Assert.Equal(400, (await Send("POST", "/match", "{\"width\":5,\"height\":5}", paired.RawData)).Status);
         Assert.Equal(200, (await Send("POST", "/match", "{\"width\":1920,\"height\":1080}", paired.RawData)).Status);
         Assert.Equal((1920, 1080), platform.Matched);
+        Assert.Null(platform.MatchedHz);   // the display keeps its own refresh rate
+        // A TV preset's frame rate goes with it (0.1.3+); nonsense is a 400.
+        Assert.Equal(200, (await Send("POST", "/match", "{\"width\":3840,\"height\":2160,\"refreshHz\":120}", paired.RawData)).Status);
+        Assert.Equal(120, platform.MatchedHz);
+        Assert.Equal(400, (await Send("POST", "/match", "{\"width\":3840,\"height\":2160,\"refreshHz\":5000}", paired.RawData)).Status);
     }
 
     [Fact]
@@ -388,7 +395,7 @@ public class HelperServerTests
     sealed class NullPlatform : IPlatform
     {
         public StatusResponse Status() => new(null, null, false);
-        public MatchResponse Match(int width, int height) => new(false, null, null, false, "");
+        public MatchResponse Match(int width, int height, int? refreshHz) => new(false, null, null, false, "");
         public MatchResponse Restore() => new(false, null, null, false, "");
         public Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, int? expectedPid, CancellationToken token) =>
             Task.FromResult(new QuitGameResponse(false, null, false, ""));

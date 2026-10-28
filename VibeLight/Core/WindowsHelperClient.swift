@@ -136,11 +136,16 @@ final class WindowsHelperClient: Sendable {
         try await decode(Status.self, send("GET", "/status", at: address, pinned: pinned, timeout: 4).0)
     }
 
-    /// The PC's display to `width`×`height` (same refresh rate), the game
-    /// fitted to it, borderless.
-    func match(width: Int, height: Int, at address: String, pinned: Data) async throws -> MatchResult {
-        try await decode(MatchResult.self, send("POST", "/match", at: address, pinned: pinned,
-                                               body: ["width": width, "height": height], timeout: 10).0)
+    /// The PC's display to `width`×`height`, the game fitted to it,
+    /// borderless. The refresh rate stays the display's own unless
+    /// `refreshHz` asks for one (a TV preset's frame rate; helper 0.1.3+ —
+    /// older helpers ignore it).
+    func match(width: Int, height: Int, refreshHz: Int? = nil,
+               at address: String, pinned: Data) async throws -> MatchResult {
+        var body = ["width": width, "height": height]
+        if let refreshHz { body["refreshHz"] = refreshHz }
+        return try await decode(MatchResult.self, send("POST", "/match", at: address, pinned: pinned,
+                                                       body: body, timeout: 10).0)
     }
 
     /// Puts back whatever `match` changed.

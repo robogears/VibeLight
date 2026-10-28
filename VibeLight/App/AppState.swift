@@ -418,6 +418,13 @@ final class AppState {
     var overlay: Overlay?
     var settings: StreamSettings {
         didSet {
+            // A TV's own preset is live (TV Presets): the change is that TV's,
+            // saved into its preset — never over the settings and presets
+            // that come back when it's unplugged.
+            if liveTV != nil {
+                saveLiveTVPreset()
+                return
+            }
             persistSettings()
             // A change keeps the loaded preset marked — it reads "edited"
             // (Live Loadout) instead of the marker silently dropping. With
@@ -572,6 +579,56 @@ final class AppState {
         (defaults.dictionary(forKey: windowsHelperPinsKey) ?? [:]).compactMapValues { $0 as? Data }
     }
 
+    // MARK: TV Presets (one remembered preset per TV, iPad)
+
+    /// Settings ▸ Video ▸ TV Presets (off by default). With it on, plugging
+    /// into a TV swaps the presets row for that TV's one preset — made the
+    /// first time from what the TV can do (`TVPreset.starting`), changed in
+    /// place by Settings while it's plugged in — and unplugging brings the
+    /// usual presets and settings back. A different TV gets its own. Mid-game,
+    /// with Match TV on, the stream restarts at the TV preset's size, frame
+    /// rate and bitrate and the PC follows (`tvConnectionChanged`). It takes
+    /// over from Windows Helper ▸ TV Resolution, which is greyed while it's on.
+    var tvPresetsEnabled: Bool = false {
+        didSet {
+            guard oldValue != tvPresetsEnabled else { return }
+            UserDefaults.standard.set(tvPresetsEnabled, forKey: Self.tvPresetsEnabledKey)
+            #if os(iOS)
+            refreshTVPreset()
+            #endif
+        }
+    }
+    static let tvPresetsEnabledKey = "vibelight.tvPresets"
+    static let tvPresetsKey = "vibelight.tvPresets.v1"
+
+    /// Every TV's preset, by `TVIdentity.key`.
+    @ObservationIgnored private var tvPresets: [TVPreset] = []
+    /// The TV whose preset is live now (nil: the usual presets).
+    private(set) var liveTV: TVIdentity?
+    /// What comes back when that TV is unplugged (or TV Presets turned off).
+    @ObservationIgnored private var beforeTV: (settings: StreamSettings, presets: [StreamPreset], activeID: String?)?
+
+    /// The presets row's id for a TV's preset.
+    nonisolated static func tvPresetID(_ key: String) -> String { "tv:\(key)" }
+
+    static func storedTVPresets(in defaults: UserDefaults) -> [TVPreset] {
+        guard let data = defaults.data(forKey: tvPresetsKey),
+              let list = try? JSONDecoder().decode([FailableDecodable<TVPreset>].self, from: data) else { return [] }
+        return list.compactMap(\.value)
+    }
+
+    /// The live TV preset, as the row shows it (renamed, edited), into the TV store.
+    private func saveLiveTVPreset() {
+        guard let tv = liveTV else { return }
+        let row = presets.first { $0.id == Self.tvPresetID(tv.key) }
+        let saved = TVPreset(key: tv.key, name: row?.name ?? tv.name, settings: settings)
+        if let i = tvPresets.firstIndex(where: { $0.key == tv.key }) { tvPresets[i] = saved } else { tvPresets.append(saved) }
+        if let i = presets.firstIndex(where: { $0.id == Self.tvPresetID(tv.key) }) { presets[i].settings = settings }
+        if let data = try? JSONEncoder().encode(tvPresets) {
+            UserDefaults.standard.set(data, forKey: Self.tvPresetsKey)
+        }
+    }
+
     // MARK: First-run setup wizard
 
     /// The current setup-wizard step, or nil when the launcher is live. Non-nil
@@ -625,7 +682,8 @@ final class AppState {
     var activePresetChanges: [String] {
         activePreset.map { StreamPreset.changes(from: $0.settings, to: settings) } ?? []
     }
-    var canSaveNewPreset: Bool { presets.count < Self.maxPresets }
+    /// A TV's own preset stands alone while it's plugged in: nothing to save beside it.
+    var canSaveNewPreset: Bool { liveTV == nil && presets.count < Self.maxPresets }
     /// The row's "+" chip: nothing is loaded (the settings match no preset),
     /// so offer to save them. An edited preset offers Save as New instead.
     var offersSaveCurrentPreset: Bool { activePresetID == nil && canSaveNewPreset }
@@ -728,6 +786,8 @@ final class AppState {
         #endif
         matchTV = Self.storedMatchTV(in: .standard)
         tvMatchScale = Self.storedTVMatchScale(in: .standard)
+        tvPresetsEnabled = UserDefaults.standard.bool(forKey: Self.tvPresetsEnabledKey)
+        tvPresets = Self.storedTVPresets(in: .standard)
         windowsHelperPins = Self.storedWindowsHelperPins(in: .standard)
         // Show the setup wizard when the user hasn't completed the CURRENT
         // required version (fresh install → 0; a bump forces a redo for all).
@@ -873,6 +933,12 @@ final class AppState {
     }
 
     private func persistPresets() {
+        // TV Presets: the row holds the TV's preset (renamed, say) — it goes
+        // to the TV store, never over the presets waiting for the unplug.
+        if liveTV != nil {
+            saveLiveTVPreset()
+            return
+        }
         if let data = SavedDataRecovery.encodeList(presets, preserving: unreadablePresets) {
             UserDefaults.standard.set(data, forKey: Self.presetsKey)
         }
@@ -947,7 +1013,7 @@ final class AppState {
     /// the focus id of its neighbour, so focus doesn't fall off the row.
     @discardableResult
     func deletePreset(_ id: String) -> String? {
-        guard let i = presets.firstIndex(where: { $0.id == id }) else { return nil }
+        guard liveTV == nil, let i = presets.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = presets.remove(at: i)
         let wasActive = activePresetID == id
         if wasActive { activePresetID = nil }
@@ -1024,7 +1090,7 @@ final class AppState {
         if id == activePresetID && isActivePresetEdited { ids.append("presetmenu:revert") }
         ids += ["presetmenu:edit", "presetmenu:rename"]
         if canSaveNewPreset { ids.append("presetmenu:saveas") }
-        ids.append("presetmenu:delete")
+        if liveTV == nil { ids.append("presetmenu:delete") }   // a TV keeps its one preset
         return ids
     }
 
@@ -1935,10 +2001,39 @@ final class AppState {
     }
 
     /// The stream size Match TV wants right now, or nil when the preset's own
-    /// size applies (Match TV off, no helper, no TV).
+    /// size applies (Match TV off, no helper, no TV). With a TV's own preset
+    /// live (TV Presets), that preset already says: TV Resolution steps aside.
     var matchTVSize: (width: Int, height: Int)? {
         guard matchTV, windowsHelperReady, let tv = attachedTVSize else { return nil }
+        if liveTV != nil { return (settings.width, settings.height) }
         return TVMatchScale.streamSize(tv: tv, scale: tvMatchScale)
+    }
+
+    /// TV Presets: the attached TV's preset in, or the usual presets back.
+    /// Runs when a TV comes or goes, when the setting is switched, and once
+    /// at launch. The first time a TV is seen its preset is made from what it
+    /// can do; after that it's whatever it was left at.
+    func refreshTVPreset() {
+        let want = tvPresetsEnabled ? ExternalDisplay.shared.tvIdentity : nil
+        guard want?.key != liveTV?.key else { return }
+        // Leave the TV that was live: its preset is already saved.
+        if liveTV != nil, let before = beforeTV {
+            liveTV = nil
+            beforeTV = nil
+            presets = before.presets
+            activePresetID = before.activeID
+            settings = before.settings
+        }
+        if let tv = want {
+            beforeTV = (settings, presets, activePresetID)
+            let preset = tvPresets.first { $0.key == tv.key } ?? TVPreset.starting(for: tv, from: settings)
+            liveTV = tv
+            presets = [StreamPreset(id: Self.tvPresetID(tv.key), name: preset.name, settings: preset.settings)]
+            activePresetID = presets[0].id
+            settings = preset.settings.clampedToLegalRanges()   // and saved (a new TV's first time)
+            showPresetToast(verb: "Using", name: preset.name, detail: presets[0].summary)
+        }
+        presetsChanged()
     }
 
     /// The settings a launch streams with: the preset's, at the TV's size
@@ -1961,7 +2056,20 @@ final class AppState {
     /// once it's unplugged — and the PC follows when the new stream is up
     /// (`syncPCToStream`, from the engine's `onResized`).
     func tvConnectionChanged() {
+        refreshTVPreset()
         guard case .streaming = session.phase, let live = session.streamResolution else { return }
+        if tvPresetsEnabled {
+            // TV Presets: the whole preset follows the TV — size, frame rate
+            // and bitrate — mid-game only with Match TV on (owner), so the PC
+            // can follow too. `settings` is already the TV's (or back).
+            guard matchTV, windowsHelperReady else { return }
+            let reason = liveTV.map { "\($0.name) preset" } ?? "Back to your preset"
+            if !session.resize(width: settings.width, height: settings.height, fps: settings.fps,
+                               bitrateKbps: settings.bitrateKbps, reason: reason) {
+                syncPCToStream()   // already those numbers: just the PC
+            }
+            return
+        }
         let target: (width: Int, height: Int)
         let reason: String
         if let size = matchTVSize {
@@ -1973,7 +2081,7 @@ final class AppState {
         } else {
             return
         }
-        if !session.resize(width: target.width, height: target.height, reason: reason) {
+        if !session.resize(width: target.width, height: target.height, fps: nil, bitrateKbps: nil, reason: reason) {
             syncPCToStream()   // already that size: just the PC
         }
     }
@@ -1987,8 +2095,12 @@ final class AppState {
         if let size = matchTVSize, let live = session.streamResolution,
            live.width == size.width, live.height == size.height {
             pcMatched = true
+            // A TV's own preset sets the frame rate too: the PC's display
+            // follows it where it can (else, as Match TV always did, it keeps
+            // its own refresh rate).
+            let refreshHz = liveTV != nil ? settings.fps : nil
             Task { [weak self] in
-                guard let result = try? await client.match(width: size.width, height: size.height,
+                guard let result = try? await client.match(width: size.width, height: size.height, refreshHz: refreshHz,
                                                            at: target.address, pinned: target.pinned) else { return }
                 self?.session.announce(title: result.ok ? "PC matched" : "PC unchanged",
                                        detail: result.message, warn: !result.ok)
@@ -3627,7 +3739,7 @@ final class AppState {
     // MARK: - Settings rows
 
     enum SettingsRow: String, CaseIterable {
-        case resolution, fps, bitrate, adaptiveBitrate, codec, hdr, decoder, yuv444
+        case resolution, fps, bitrate, adaptiveBitrate, tvPresets, codec, hdr, decoder, yuv444
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, keepAwake, performanceOverlay
@@ -3648,6 +3760,7 @@ final class AppState {
             case .fps: "Frame Rate"
             case .bitrate: "Bitrate"
             case .adaptiveBitrate: "Adaptive Bitrate"
+            case .tvPresets: "TV Presets"
             case .codec: "Video Codec"
             case .hdr: "HDR"
             case .decoder: "Video Decoder"
@@ -3699,7 +3812,7 @@ final class AppState {
                 // value that never took effect (audit QUA-ios-inert-settings).
                 // Re-add each when its decode path ships — HEVC/HDR/frame-pacing
                 // are on the roadmap (see InProcessStreamEngine + STREAMING-STATUS).
-                [.resolution, .fps, .bitrate, .adaptiveBitrate]
+                [.resolution, .fps, .bitrate, .adaptiveBitrate, .tvPresets]
                 #else
                 [.resolution, .fps, .bitrate, .codec, .hdr, .decoder, .yuv444]
                 #endif
@@ -3831,6 +3944,7 @@ final class AppState {
         // Whole-number Mbps now that bitrate snaps to the 10 Mbps grid.
         case .bitrate: "\(settings.bitrateKbps / 1000) Mbps"
         case .adaptiveBitrate: adaptiveBitrate ? "On" : "Off"
+        case .tvPresets: !tvPresetsEnabled ? "Off" : liveTV.map { "On · \($0.name)" } ?? "On"
         case .codec: settings.codec.label
         case .hdr: settings.hdr ? "On" : "Off"
         case .decoder: settings.decoder.label
@@ -3874,11 +3988,12 @@ final class AppState {
     }
 
     /// Rows a missing VibeLight Helper controls: drawn greyed, deaf to
-    /// left/right. TV Resolution also waits on Match TV.
+    /// left/right. TV Resolution also waits on Match TV, and steps aside for
+    /// TV Presets (owner: each TV's own preset sets the size then).
     func isUnavailable(_ row: SettingsRow) -> Bool {
         switch row {
         case .matchTV: !windowsHelperReady
-        case .tvResolution: !windowsHelperReady || !matchTV
+        case .tvResolution: !windowsHelperReady || !matchTV || tvPresetsEnabled
         default: false
         }
     }
@@ -3943,6 +4058,7 @@ final class AppState {
                               : (forward ? base + step : base)
             settings.bitrateKbps = min(max(next, Self.bitrateMin), Self.bitrateMax)
         case .adaptiveBitrate: adaptiveBitrate.toggle()
+        case .tvPresets: tvPresetsEnabled.toggle()
         case .codec: settings.codec = Self.cycle(settings.codec, forward: forward)
         case .audio: settings.audio = Self.cycle(settings.audio, forward: forward)
         case .decoder: settings.decoder = Self.cycle(settings.decoder, forward: forward)

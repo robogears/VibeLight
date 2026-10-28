@@ -7,6 +7,8 @@ do by itself:
 - **Match TV.** When the iPad is plugged into a TV, VibeLight restarts the
   stream at the TV's size. The helper then sets the PC's display to that size
   (the refresh rate stays the same) and fits the game window to it, borderless.
+  With TV Presets on in VibeLight, each TV's own preset also sets the PC
+  display's refresh rate to its frame rate, where the display supports it.
   Unplugging puts everything back.
 - **Quit Game.** Closes the game that's running. It asks politely first
   (`WM_CLOSE`, the same as clicking ✕). If the game is still open after a few
@@ -45,7 +47,7 @@ out.
 
 ## Install
 
-1. Copy `VibeLightHelperV0.1.2.exe` (in this folder) anywhere on the PC (for
+1. Copy `VibeLightHelperV0.1.3.exe` (in this folder) anywhere on the PC (for
    example `%LOCALAPPDATA%\Programs\VibeLight Helper\`) and run it. It runs
    as you, and doesn't need administrator rights. Its menu heading shows the
    version that's running.
@@ -94,7 +96,7 @@ dotnet publish VibeLightHelper -c Release -o out     # → VibeLightHelperV<vers
 The result is one self-contained exe (win-x64, about 35 MB). It needs no .NET
 installed on the PC. Each publish also copies it to this folder, named with
 the `Version` in `VibeLightHelper/VibeLightHelper.csproj`
-(`VibeLightHelperV0.1.2.exe`), and that copy is the one committed.
+(`VibeLightHelperV0.1.3.exe`), and that copy is the one committed.
 
 **Every change to the helper gets a new version.** Bump `Version` (patch by
 default, 0.1.1 → 0.1.2), run the tests, publish, delete the old exe, update
@@ -115,7 +117,7 @@ The wire contract is in `VibeLightHelper.Core/Protocol.cs`. VibeLight's side is
 | --- | --- |
 | `GET /info` | `{name, version, hostName}`. No certificate needed. |
 | `GET /status` | The display, the game in front (if any), and whether anything is changed. |
-| `POST /match {width, height}` | The display to that size (same Hz), the game fitted borderless. |
+| `POST /match {width, height, refreshHz?}` | The display to that size (its own Hz, or `refreshHz` when given), the game fitted borderless. |
 | `POST /restore` | Puts back whatever `/match` changed. |
 | `POST /quit-game {graceSeconds, pid}` | Closes the game (only `pid`, when given), then ends it after the grace period (1–30 s, 5 by default). |
 | `POST /restart {delaySeconds}` | Restarts the PC after 1–30 s (anything else is a 400), MoonDeckBuddy's way. |

@@ -122,7 +122,7 @@ private struct RejoinCard: View {
     /// A drop, or a Match TV restart at a new size (same card, same tries).
     private var title: String {
         guard let resize = rejoin.resize else { return "Connection dropped" }
-        return "Switching to \(resize.width)×\(resize.height)"
+        return "Switching to \(resize.width)×\(resize.height) · \(resize.fps) fps"
     }
 
     private var subtitle: String {

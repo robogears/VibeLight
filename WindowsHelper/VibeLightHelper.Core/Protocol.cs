@@ -32,8 +32,10 @@ public sealed record GameInfo(string Title, string Process, int Pid, bool Exclus
 public sealed record StatusResponse(DisplayInfo? Display, GameInfo? Game, bool Matched);
 
 /// <summary>POST /match: the size the stream now has, which the PC's display
-/// and the game should take on.</summary>
-public sealed record MatchRequest(int Width, int Height);
+/// and the game should take on. <c>RefreshHz</c> (optional, 0.1.3+): a TV
+/// preset's frame rate for the display too; without it the display keeps
+/// its own.</summary>
+public sealed record MatchRequest(int Width, int Height, int? RefreshHz);
 
 /// <summary>What /match and /restore did. <c>Message</c> is a short human line
 /// VibeLight can show as is.</summary>

@@ -49,11 +49,13 @@ public sealed class HelperApi
             case ("POST", "/match"):
             {
                 var match = Read<MatchRequest>(request);
-                if (match is null || !GameRules.IsSaneSize(match.Width, match.Height))
+                if (match is null || !GameRules.IsSaneSize(match.Width, match.Height) ||
+                    (match.RefreshHz is int hz && !GameRules.IsSaneRefresh(hz)))
                 {
-                    return HttpResponse.Json(400, new ErrorResponse("Send {\"width\": …, \"height\": …} for a real display size."));
+                    return HttpResponse.Json(400, new ErrorResponse(
+                        "Send {\"width\": …, \"height\": …} for a real display size (and an optional \"refreshHz\")."));
                 }
-                return HttpResponse.Json(200, platform.Match(match.Width, match.Height));
+                return HttpResponse.Json(200, platform.Match(match.Width, match.Height, match.RefreshHz));
             }
 
             case ("POST", "/restore"):

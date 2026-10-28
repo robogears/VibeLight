@@ -116,6 +116,8 @@ struct VibeLightApp: App {
                     // Match TV: a TV plugged in or pulled out mid-stream
                     // restarts the stream at its size, or back.
                     ExternalDisplay.shared.onConnectionChange = { state.tvConnectionChanged() }
+                    // A TV already plugged in at launch: its preset (TV Presets).
+                    state.refreshTVPreset()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Runaway-repeat guard: controller button releases are

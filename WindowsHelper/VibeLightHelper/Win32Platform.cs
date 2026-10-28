@@ -69,7 +69,7 @@ sealed class Win32Platform : IPlatform, IDisposable
         }
     }
 
-    public MatchResponse Match(int width, int height)
+    public MatchResponse Match(int width, int height, int? refreshHz)
     {
         lock (gate)
         {
@@ -84,9 +84,12 @@ sealed class Win32Platform : IPlatform, IDisposable
                     "Set it in the game, or switch the game to borderless.");
             }
 
-            if (display.Width != width || display.Height != height)
+            // A TV preset's frame rate, else the display's own (Match TV
+            // never touches it otherwise — owner).
+            int targetHz = refreshHz ?? display.RefreshHz;
+            if (display.Width != width || display.Height != height || display.RefreshHz != targetHz)
             {
-                var pick = GameRules.PickMode(Modes(display.Device), width, height, display.RefreshHz);
+                var pick = GameRules.PickMode(Modes(display.Device), width, height, targetHz);
                 if (pick is null)
                 {
                     return new MatchResponse(false, display, game == null ? null : Info(game), false,

@@ -6,9 +6,11 @@ public interface IPlatform
 {
     StatusResponse Status();
 
-    /// <summary>Sets the game's display to this size (same refresh rate) and
-    /// fits the game window to it, remembering what to put back.</summary>
-    MatchResponse Match(int width, int height);
+    /// <summary>Sets the game's display to this size and fits the game window
+    /// to it, remembering what to put back. The refresh rate stays the
+    /// display's own unless <paramref name="refreshHz"/> asks for one (a TV
+    /// preset's frame rate).</summary>
+    MatchResponse Match(int width, int height, int? refreshHz);
 
     /// <summary>Puts back what <see cref="Match"/> changed.</summary>
     MatchResponse Restore();
@@ -108,6 +110,9 @@ public static class GameRules
         if (below.Count > 0) return below[0];
         return sized.OrderBy(m => m.RefreshHz).First();
     }
+
+    /// The refresh rates VibeLight may ask for.
+    public static bool IsSaneRefresh(int refreshHz) => refreshHz is >= 24 and <= 500;
 
     /// The sizes VibeLight may ask for: anything a TV or monitor might be.
     public static bool IsSaneSize(int width, int height) =>

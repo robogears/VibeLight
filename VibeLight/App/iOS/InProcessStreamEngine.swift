@@ -1171,7 +1171,8 @@ final class InProcessStreamEngine: StreamEngine {
     struct Resize: Equatable, Sendable {
         var width: Int
         var height: Int
-        /// "Matching the TV" / "Back to your preset".
+        var fps: Int
+        /// "Matching the TV" / "Living Room TV preset" / "Back to your preset".
         var reason: String
     }
     private(set) var rejoin: Rejoin?
@@ -1304,20 +1305,30 @@ final class InProcessStreamEngine: StreamEngine {
     @ObservationIgnored var onResized: (() -> Void)?
 
     /// Restarts the running stream at `width`×`height` — Match TV, when a TV
-    /// is plugged in or pulled out (AppState decides the size; the engine
-    /// never reads the display). The same game, frame rate and bitrate; only
-    /// the size changes, so the host's encoder (and the PC, via the helper)
-    /// can take it. It runs on Rejoin's machinery: the picture holds its last
-    /// frame under a "Switching to …" card, /resume is tried up to three
-    /// times, and B stops it on the still-running card. False when there's
-    /// nothing to restart (no stream, already that size).
-    func resize(width: Int, height: Int, reason: String) -> Bool {
-        guard case .streaming(let app) = phase, var settings = streamSettings,
-              settings.width != width || settings.height != height else { return false }
+    /// is plugged in or pulled out (AppState decides; the engine never reads
+    /// the display). The same game; the size changes, and with a TV's own
+    /// preset (TV Presets) the frame rate and bitrate too — nil keeps them.
+    /// It runs on Rejoin's machinery: the picture holds its last frame under
+    /// a "Switching to …" card, /resume is tried up to three times, and B
+    /// stops it on the still-running card. False when there's nothing to
+    /// restart (no stream, nothing different).
+    func resize(width: Int, height: Int, fps: Int?, bitrateKbps: Int?, reason: String) -> Bool {
+        guard case .streaming(let app) = phase, var settings = streamSettings else { return false }
+        let newFPS = fps ?? settings.fps
+        let newBitrate = bitrateKbps ?? settings.bitrateKbps
+        guard settings.width != width || settings.height != height
+              || settings.fps != newFPS || settings.bitrateKbps != newBitrate else { return false }
         settings.width = width
         settings.height = height
-        streamSettings = settings   // every try from here asks for the new size
-        let resize = Resize(width: width, height: height, reason: reason)
+        settings.fps = newFPS
+        if newBitrate != settings.bitrateKbps {
+            // A new ceiling: the Link Governor starts again from it.
+            settings.bitrateKbps = newBitrate
+            governor = adaptiveBitrate ? LinkGovernor(ceilingKbps: newBitrate, fps: newFPS) : nil
+            linkRequestInFlight = false
+        }
+        streamSettings = settings   // every try from here asks for the new numbers
+        let resize = Resize(width: width, height: height, fps: newFPS, reason: reason)
         rejoinDropMessage = "The stream couldn't restart at \(width)×\(height)."
         if var current = rejoin {
             // Already reconnecting (a drop, or the TV changed again): the
@@ -1495,8 +1506,8 @@ final class InProcessStreamEngine: StreamEngine {
                 setStreamInput(active: true)
                 setStatsLoop(active: true)
                 if let resize = rejoined.resize {
-                    showNotice(title: "Now \(resize.width)×\(resize.height)",
-                               detail: "\(resize.reason) · same game, same frame rate", warn: false)
+                    showNotice(title: "Now \(resize.width)×\(resize.height) · \(resize.fps) fps",
+                               detail: "\(resize.reason) · same game", warn: false)
                     onResized?()
                 } else {
                     let offline = max(1, Int(Date().timeIntervalSince(rejoined.droppedAt).rounded()))

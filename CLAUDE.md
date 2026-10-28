@@ -215,6 +215,17 @@ in `docs/STREAMING-STATUS.md`; the ones that WILL regress if forgotten:
   via `resize` on Rejoin's machinery (held frame, "Switching to …"), then
   the helper `/match`es the PC; the stream ending or the TV leaving
   `/restore`s it.
+- TV Presets (Settings ▸ Video, `vibelight.tvPresets`, off by default): one
+  preset per TV, keyed by its resolution + top refresh + mode list
+  (`Core/TVPresets.swift` `TVIdentity`; iOS has no TV serial, and the HDMI
+  name only labels the chip — it can arrive late). Plugged in, that TV's
+  preset REPLACES the presets row (`refreshTVPreset`; `beforeTV` brings the
+  usual settings/presets back on unplug); edits save to
+  `vibelight.tvPresets.v1`, never over the usual presets. A new TV starts at
+  its native res, its Hz as fps, 50 Mbps (owner). Mid-game with Match TV the
+  stream restarts with the preset's size + fps + bitrate (`resize(…fps:
+  bitrateKbps:)`) and `/match` sends `refreshHz` (helper 0.1.3+). TV
+  Resolution is greyed while it's on.
 
 **UI/input:**
 - Custom spatial focus engine is mandatory — macOS SwiftUI focus ignores game

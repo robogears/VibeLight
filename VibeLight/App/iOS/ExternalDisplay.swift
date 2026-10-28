@@ -37,6 +37,18 @@ final class ExternalDisplay {
             sceneBounds: Self.bounds(of: scene).size)
     }
 
+    /// The attached TV as TV Presets remembers it: its pixels, top refresh
+    /// rate and supported modes (the key), and the HDMI output's name for the
+    /// label (iOS reports the TV's own on many setups, else just "HDMI").
+    /// nil with no TV.
+    var tvIdentity: TVIdentity? {
+        guard isConnected, let pixels = pixelSize, let screen = window?.windowScene?.screen else { return nil }
+        let hdmi = AVAudioSession.sharedInstance().currentRoute.outputs.first { $0.portType == .HDMI }?.portName
+        let modes = screen.availableModes.map { (width: Int($0.size.width), height: Int($0.size.height)) }
+        return TVIdentity(hdmiName: hdmi, width: Int(pixels.width), height: Int(pixels.height),
+                          maxFPS: screen.maximumFramesPerSecond, modes: modes)
+    }
+
     private static func bounds(of scene: UIWindowScene) -> CGRect {
         if #available(iOS 26.0, *) {
             return scene.effectiveGeometry.coordinateSpace.bounds
