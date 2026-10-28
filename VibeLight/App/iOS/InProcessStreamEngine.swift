@@ -734,12 +734,13 @@ final class InProcessStreamEngine: StreamEngine {
                     }
                     // Input stops NOW (nothing more reaches the game, and the
                     // still-held chord can't start a second hold), but teardown
-                    // waits for the exit overlay's finish — the frame swelling
-                    // to black (StreamExitOverlay.fireDuration). Disconnecting
-                    // in the same turn removed the stream view mid-swell, so the
-                    // game faded straight into the launcher instead of to black.
+                    // waits for the exit overlay's whole fire — close in, the
+                    // diamond, and its last stretch of solid black
+                    // (StreamExitOverlay.fireDuration) — plus a beat, so the
+                    // stream only stops (and freezes) under black. Disconnecting
+                    // in the same turn removed the stream view mid-fire.
                     setStreamInput(active: false)
-                    try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(60))
+                    try? await Task.sleep(for: StreamExitOverlay.fireDuration + .milliseconds(120))
                     guard case .streaming = phase else { return }   // it already ended on its own
                     // The screen is black under the swell now; the curtain
                     // takes over (no visible change) and outlives the stream

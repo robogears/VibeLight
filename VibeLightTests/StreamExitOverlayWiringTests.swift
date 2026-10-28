@@ -94,7 +94,10 @@ final class ExitOverlaySmoothnessTests: XCTestCase {
     func testOverlayRedrawsEveryFrameFromTheHoldStart() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let view = try String(contentsOf: root.appendingPathComponent("VibeLight/UI/RootView.swift"), encoding: .utf8)
-        XCTAssertTrue(view.contains("TimelineView(.animation(paused: !(p.map { $0 < 1 } ?? false)))"))
+        // Runs through the fire too: the close / diamond / black follows the clock.
+        XCTAssertTrue(view.contains("TimelineView(.animation(paused: p == nil))"))
+        // The old swell (a stroke grown past the screen) ended on the whole game.
+        XCTAssertFalse(view.contains("lineWidth: fired ? 2 * hypot("))
         XCTAssertTrue(view.contains("startedAt: state.session.quitHoldStartedAt"))
         XCTAssertFalse(view.contains(".animation(.linear(duration: 0.05), value: state.session.streamQuitProgress)"))
     }

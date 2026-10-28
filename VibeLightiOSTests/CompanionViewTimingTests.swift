@@ -29,4 +29,36 @@ final class CompanionViewTimingTests: XCTestCase {
         XCTAssertNil(Engine.companionNext(.dimmed, idle: .seconds(3600), keyboardUp: false))
     }
 }
+/// Leaving the stream (Frame Trace's fire): the frame closes in to black, a
+/// curved diamond opens on the game and closes again, and it ENDS black, so
+/// the stream only stops under black (owner). Pure, so the shape is tested.
+final class ExitFireTests: XCTestCase {
+    private let screen = CGSize(width: 1376, height: 1032)
+    private func window(_ f: Double) -> CGRect? {
+        StreamExitOverlay.fireWindow(f: f, in: screen, inset: 10)?.boundingRect
+    }
+
+    func testStartsAsTheWholeFrame() throws {
+        let w = try XCTUnwrap(window(0))
+        XCTAssertEqual(w, CGRect(x: 10, y: 10, width: 1356, height: 1012))
+    }
+
+    func testClosesToBlackBeforeTheDiamond() {
+        XCTAssertNil(window(0.40))
+        XCTAssertNil(window(0.47))
+    }
+
+    func testDiamondPeaksTallerThanWide() throws {
+        let d = try XCTUnwrap(window(0.75))
+        XCTAssertEqual(d.width, 0.6 * screen.width, accuracy: 1)
+        XCTAssertEqual(d.height, 0.9 * screen.height, accuracy: 1)
+        XCTAssertEqual(d.midX, screen.width / 2, accuracy: 0.5)
+    }
+
+    /// The whole last stretch is solid black — the engine waits past it.
+    func testEndsBlack() {
+        for f in stride(from: 0.95, through: 1.0, by: 0.01) { XCTAssertNil(window(f), "f = \(f)") }
+    }
+}
+
 #endif

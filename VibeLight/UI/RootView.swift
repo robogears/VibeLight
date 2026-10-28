@@ -366,14 +366,17 @@ struct StreamExitOverlay: View {
 
     /// "Frame Trace" (owner's pick of four, Oct 2026): an accent line traces
     /// the screen's edge from the top centre both ways and meets at the
-    /// bottom; gameplay stays visible. At fire the border swells inward and
-    /// swallows the picture. The engine waits this long after fire before
-    /// tearing the stream view down, so the swell always lands on black.
-    static let fireDuration: Duration = .milliseconds(350)
+    /// bottom; gameplay stays visible. At fire the frame closes in to black,
+    /// a curved diamond opens on the game and closes again, and it ends on
+    /// black (`fireWindow`). The engine waits this long after fire before
+    /// tearing the stream view down, so the stream only stops under black.
+    static let fireDuration: Duration = .milliseconds(1000)
 
     /// Set one transaction after progress pins at 1, so the p = 1 frame (the
-    /// thick, complete border) is drawn once before the swell runs.
+    /// thick, complete border) is drawn once before the lines fade.
     @State private var fired = false
+    /// When the fire began, so the close / diamond / black runs on the clock.
+    @State private var firedAt: Date?
     private static var fireSeconds: Double {
         Double(fireDuration.components.seconds) + Double(fireDuration.components.attoseconds) / 1e18
     }
@@ -387,17 +390,19 @@ struct StreamExitOverlay: View {
             // Redrawn every display refresh while the line is moving (120 Hz on
             // the iPad), from the hold's start time — the engine's 40 ms steps
             // only decide nil / running / fired. Paused otherwise.
-            TimelineView(.animation(paused: !(p.map { $0 < 1 } ?? false))) { context in
+            TimelineView(.animation(paused: p == nil)) { context in
                 ZStack {
                     if let shown = Self.displayProgress(engine: p, startedAt: state.session.quitHoldStartedAt,
                                                         now: context.date) {
-                        ZStack { frameTrace(p: shown, tv: tv, size: geo.size) }
+                        let fire = firedAt.map { min(max(context.date.timeIntervalSince($0) / Self.fireSeconds, 0), 1) }
+                        ZStack { frameTrace(p: shown, fire: fire, tv: tv, size: geo.size) }
                             .transition(.opacity.animation(.easeOut(duration: 0.15)))   // cancel: fades away
                     }
                 }
             }
             .onChange(of: p == 1) { _, isFired in
-                withAnimation(reduceMotion ? nil : .easeIn(duration: Self.fireSeconds)) { fired = isFired }
+                firedAt = isFired ? Date() : nil
+                withAnimation(reduceMotion ? nil : .easeIn(duration: 0.25)) { fired = isFired }
             }
         }
         .ignoresSafeArea()
@@ -415,8 +420,41 @@ struct StreamExitOverlay: View {
         return min(max(t / span, 0), 0.999)   // 1 is the engine's to declare (fire)
     }
 
+    /// The fire, as the window the black leaves open at `f` (0…1 of
+    /// `fireDuration`); nil = all black. Owner loved the diamond — which was
+    /// an accident of stroking: a black stroke grown far past the screen
+    /// folded over at the rounded corners, opened a diamond on the game, and
+    /// ended on the WHOLE game again, so the stream froze in view before the
+    /// cut to black. Now it's drawn on purpose, a little slower, and ends
+    /// black: the frame closes in (to 38 %), black, a curved diamond opens
+    /// (48–75 %) and closes (to 95 %), black.
+    nonisolated static func fireWindow(f: Double, in size: CGSize, inset: CGFloat) -> Path? {
+        let w = size.width, h = size.height, half = min(w, h) / 2
+        func easeIn(_ t: Double) -> Double { t * t * t }
+        func easeOut(_ t: Double) -> Double { 1 - pow(1 - t, 3) }
+        if f < 0.38 {
+            let d = inset + CGFloat(easeIn(f / 0.38)) * (half - inset)
+            guard d < half else { return nil }
+            return Path(CGRect(x: d, y: d, width: w - 2 * d, height: h - 2 * d))
+        }
+        guard f >= 0.48, f < 0.95 else { return nil }
+        let g = CGFloat(f < 0.75 ? easeOut((f - 0.48) / 0.27) : 1 - easeIn((f - 0.75) / 0.20))
+        guard g > 0.001 else { return nil }
+        // Taller than wide, sides bulging out, like the one it replaces.
+        let a = 0.30 * w * g, b = 0.45 * h * g, k: CGFloat = 0.72
+        let cx = w / 2, cy = h / 2
+        var p = Path()
+        p.move(to: CGPoint(x: cx, y: cy - b))
+        p.addQuadCurve(to: CGPoint(x: cx + a, y: cy), control: CGPoint(x: cx + a * k, y: cy - b * k))
+        p.addQuadCurve(to: CGPoint(x: cx, y: cy + b), control: CGPoint(x: cx + a * k, y: cy + b * k))
+        p.addQuadCurve(to: CGPoint(x: cx - a, y: cy), control: CGPoint(x: cx - a * k, y: cy + b * k))
+        p.addQuadCurve(to: CGPoint(x: cx, y: cy - b), control: CGPoint(x: cx - a * k, y: cy - b * k))
+        p.closeSubpath()
+        return p
+    }
+
     @ViewBuilder
-    private func frameTrace(p: Double, tv: CGFloat, size: CGSize) -> some View {
+    private func frameTrace(p: Double, fire: Double?, tv: CGFloat, size: CGSize) -> some View {
         let frame = ScreenPerimeter(inset: 10 * tv, radius: 28 * tv)
         Color.black.opacity(0.25 * p)
         frame.stroke(.white.opacity(0.12), lineWidth: 6 * tv)
@@ -426,9 +464,15 @@ struct StreamExitOverlay: View {
             frame.stroke(Theme.accent, lineWidth: 6 * tv).opacity(p)
             Color.black.opacity(fired ? 1 : 0)
         } else {
-            // The swell: a black stroke on the same path, wide enough to
-            // cover the screen from its edge inward.
-            frame.stroke(.black, lineWidth: fired ? 2 * hypot(size.width, size.height) : 0)
+            // The fire: black everywhere but `fireWindow` (even-odd), so
+            // the screen closes, shows the diamond, and lands on black.
+            if let fire {
+                Canvas { ctx, canvas in
+                    var black = Path(CGRect(origin: .zero, size: canvas))
+                    if let window = Self.fireWindow(f: fire, in: canvas, inset: 10 * tv) { black.addPath(window) }
+                    ctx.fill(black, with: .color(.black), style: FillStyle(eoFill: true))
+                }
+            }
             ForEach([1.0, -1.0], id: \.self) { direction in
                 frame.trim(from: 0, to: p / 2)
                     .stroke(Theme.accent,
