@@ -65,12 +65,6 @@ struct HomeView: View {
                     .introReveal(state.intro.arrived(LaunchIntro.hero), y: 8)
             }
         }
-        // Kabuki Cut's hit of white as the hero changes.
-        .overlay {
-            if Theme.current == .kabukiCut {
-                KabukiFlash(key: state.focusedApp.map { state.appKey($0) })
-            }
-        }
     }
 
     /// The hero's badges: the stream's numbers, which preset they are, and
@@ -337,37 +331,6 @@ private struct GridIndex: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-    }
-}
-
-/// Kabuki Cut's hit: one 140 ms frame of white at 50 % when the hero changes.
-/// Never more than about twice a second however fast focus moves (WCAG 2.3.1
-/// allows three flashes), and never under Reduce Motion.
-private struct KabukiFlash: View {
-    let key: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hits = 0
-    @State private var last = Date.distantPast
-
-    var body: some View {
-        Color.white
-            .phaseAnimator(FlashPhase.allCases, trigger: hits) { flash, phase in
-                flash.opacity(phase.strength)
-            } animation: { phase in
-                phase == .lit ? Animation.linear(duration: 0.02) : Animation.easeOut(duration: 0.14)
-            }
-            .allowsHitTesting(false)
-            .ignoresSafeArea()
-            .onChange(of: key) { _, new in
-                guard new != nil, !reduceMotion, Date().timeIntervalSince(last) > 0.4 else { return }
-                last = Date()
-                hits += 1
-            }
-    }
-
-    private enum FlashPhase: CaseIterable {
-        case rest, lit, fade
-        var strength: Double { self == .lit ? 0.5 : 0 }
     }
 }
 
