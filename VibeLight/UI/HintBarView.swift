@@ -4,19 +4,25 @@ import SwiftUI
 /// keycap showing the actual keys (so "Settings" reads "⌘ ," not a bare ⌘).
 struct GlyphBadge: View {
     let glyph: InputGlyph
+    /// The glyph's colour, when the chip it sits in sets one (Kabuki's black
+    /// on a white disc).
+    var ink: Color? = nil
+    var symbolSize: CGFloat = 17
+    /// No keycap plate of its own: the chip around it already boxes it.
+    var bare = false
 
     var body: some View {
         if let cap = glyph.keyCap {
             Text(cap)
-                .font(.system(size: Theme.labelSize(12), weight: .heavy, design: .rounded))
-                .foregroundStyle(Theme.textPrimary.opacity(0.9))
-                .padding(.horizontal, 7)
+                .themeText(.keyCap)
+                .foregroundStyle(ink ?? Theme.textPrimary.opacity(0.9))
+                .padding(.horizontal, bare ? 4 : 7)
                 .padding(.vertical, 3)
-                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                .background(Theme.ink.opacity(bare ? 0 : 0.1), in: Theme.plate(6))
         } else {
             Image(systemName: glyph.symbolName)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                .font(.system(size: symbolSize, weight: .semibold))
+                .foregroundStyle(ink ?? Theme.textPrimary.opacity(0.9))
         }
     }
 }
@@ -56,35 +62,101 @@ struct HintChip: View {
 
     @ViewBuilder private var chrome: some View {
         if touch {
-            Text(label ?? InputGlyphs.glyph(for: event, style: .keyboard).label)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(Theme.textPrimary.opacity(0.95))
-                .padding(.horizontal, 18)
-                // Authored ≈ 44 pt tall; the iPad canvas scale draws it at
-                // 35–42 pt (UX-ios-scale-shrinks-text-targets). Touch only.
-                .padding(.vertical, 13)
-                .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
-                .overlay(Capsule().strokeBorder(Theme.hairline(0.12, contrast), lineWidth: 1))
-                .contentShape(Capsule())
-                // A Text with a tap gesture; tell VoiceOver it's a button.
-                .accessibilityAddTraits(.isButton)
+            let text = label ?? InputGlyphs.glyph(for: event, style: .keyboard).label
+            switch Theme.current {
+            case .default:
+                Text(text)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.95))
+                    .padding(.horizontal, 18)
+                    // Authored ≈ 44 pt tall; the iPad canvas scale draws it at
+                    // 35–42 pt (UX-ios-scale-shrinks-text-targets). Touch only.
+                    .padding(.vertical, 13)
+                    .background(.white.opacity(hovering ? 0.16 : 0.09), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.hairline(0.12, contrast), lineWidth: 1))
+                    .contentShape(Capsule())
+                    // A Text with a tap gesture; tell VoiceOver it's a button.
+                    .accessibilityAddTraits(.isButton)
+            case .kabukiCut:
+                Text(text)
+                    .themeText(.hintTouch)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 13)
+                    .background { SlantedRect(Theme.slant).fill(Theme.accent.opacity(hovering ? 0.85 : 1)) }
+                    .contentShape(Rectangle())
+                    .accessibilityAddTraits(.isButton)
+            case .nightEdition, .grid72, .grid72Dark:
+                let grid = Theme.current.isGrid
+                Text(text)
+                    .themeText(.hintTouch)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.95))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 13)
+                    .background(Theme.ink.opacity(hovering ? 0.12 : 0.06), in: Theme.pill)
+                    .overlay(Theme.pill.strokeBorder(grid ? Theme.ink : Theme.hairline(0.3, contrast),
+                                                     lineWidth: grid ? 1.5 : 1))
+                    .contentShape(Theme.pill)
+                    .accessibilityAddTraits(.isButton)
+            }
         } else {
             let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)
-            HStack(spacing: 7) {
-                GlyphBadge(glyph: glyph)
-                Text(label ?? glyph.label)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            switch Theme.current {
+            case .default:
+                HStack(spacing: 7) {
+                    GlyphBadge(glyph: glyph)
+                    Text(label ?? glyph.label)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, Theme.perPlatform(iOS: 8, macOS: 5))
+                .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+                // A glyph + label row with a tap gesture: one element, announced as
+                // a button, as the wizard's Back/Continue were before they shared
+                // this chip (UX-onboarding-hints-generic-glyphs follow-up).
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+            case .kabukiCut:
+                // A slanted crimson slab; the button on a white disc.
+                HStack(spacing: 9) {
+                    GlyphBadge(glyph: glyph, ink: .black, symbolSize: 15, bare: true)
+                        .frame(minWidth: 22, minHeight: 22)
+                        .background(Color.white, in: Capsule())
+                    Text(label ?? glyph.label)
+                        .themeText(.hint)
+                        .foregroundStyle(Color.white)
+                }
+                .padding(.leading, 6)
+                .padding(.trailing, 12)
+                .padding(.vertical, 6)
+                .background { SlantedRect(Theme.slant).fill(Theme.accent.opacity(hovering ? 0.85 : 1)) }
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+            case .nightEdition, .grid72, .grid72Dark:
+                // Tracked capitals; Grid 72 boxes the button in an ink square.
+                let grid = Theme.current.isGrid
+                HStack(spacing: grid ? 9 : 7) {
+                    if grid {
+                        GlyphBadge(glyph: glyph, ink: Theme.textPrimary, symbolSize: 14, bare: true)
+                            .frame(minWidth: 22, minHeight: 22)
+                            .overlay(Rectangle().strokeBorder(Theme.ink, lineWidth: 1.5))
+                    } else {
+                        GlyphBadge(glyph: glyph, ink: Theme.textPrimary)
+                    }
+                    Text(label ?? glyph.label)
+                        .themeText(.hint)
+                        .foregroundStyle(grid || hovering ? Theme.textPrimary : Theme.textSecondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, Theme.perPlatform(iOS: 8, macOS: 5))
+                .background(Theme.ink.opacity(hovering ? 0.08 : 0), in: Theme.plate(8))
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, Theme.perPlatform(iOS: 8, macOS: 5))
-            .background(.white.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
-            .contentShape(Rectangle())
-            // A glyph + label row with a tap gesture: one element, announced as
-            // a button, as the wizard's Back/Continue were before they shared
-            // this chip (UX-onboarding-hints-generic-glyphs follow-up).
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
         }
     }
 
@@ -115,12 +187,38 @@ struct HintBarView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        HStack(spacing: touchButtons ? 12 : 26) {
+        HStack(spacing: touchButtons ? 12 : (Theme.current == .kabukiCut ? 18 : 26)) {
             ForEach(shownHints, id: \.0) { _, event, label in
                 HintChip(event: event, label: label, touch: touchButtons)
             }
             Spacer()
+            if Theme.current == .nightEdition, let folio = Self.folio(version: state.updateService.currentVersion) {
+                Text(folio)
+                    .font(ThemeFace.frauncesMediumItalic.font(14))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .accessibilityHidden(true)
+            }
         }
+        // The printed themes rule the bar off from the page: a hairline on
+        // Night Edition, an ink rule on Grid 72.
+        .overlay(alignment: .top) {
+            if Theme.current == .nightEdition || Theme.current.isGrid {
+                Rectangle()
+                    .fill(Theme.current.isGrid ? Theme.ink : Theme.ink.opacity(0.3))
+                    .frame(height: Theme.current.isGrid ? 1.5 : 1)
+                    .offset(y: -10)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Night Edition's folio, from the app's version: 0.2.3 → "Vol. 2 · No. 3
+    /// · Night Edition". Nil when the version doesn't read as three numbers.
+    nonisolated static func folio(version: String) -> String? {
+        let parts = version.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return "Vol. \(parts[1]) · No. \(parts[2]) · Night Edition"
     }
 
     private var touchButtons: Bool { Self.touchPresentation(state) }

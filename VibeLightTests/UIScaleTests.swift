@@ -66,7 +66,7 @@ final class UIScaleTests: XCTestCase {
     /// focus ID is emitted by exactly one tab (the focus invariant: one view
     /// per emitted ID). Raw values persist in UserDefaults, so they're frozen.
     func testInterfaceSizeIsOneRowOnTheThemesTab() {
-        XCTAssertEqual(AppState.SettingsTab.themes.rows, [.background, .interfaceSize])
+        XCTAssertEqual(AppState.SettingsTab.themes.rows, [.theme, .interfaceSize])
         let tabsWithRow = AppState.SettingsTab.allCases.filter { $0.rows.contains(.interfaceSize) }
         XCTAssertEqual(tabsWithRow, [.themes])
         XCTAssertEqual(AppState.SettingsRow.interfaceSize.title, "Interface Size")

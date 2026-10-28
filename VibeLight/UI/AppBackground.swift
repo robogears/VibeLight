@@ -1,156 +1,54 @@
 import SwiftUI
 
-/// The launcher background, selectable in Settings ▸ Themes. Rendered behind the
-/// whole launcher by `LauncherContent`, so the choice applies everywhere the UI
-/// shows (iPad, Mac, and the TV mirror).
+/// The launcher background: the selected theme's own (Settings ▸ Themes ▸
+/// Theme). Default always draws Parallax Deep — the Background picker that
+/// once chose among ten is gone. Rendered behind the whole launcher by
+/// `LauncherContent`, so it applies everywhere the UI shows (iPad, Mac, and the
+/// TV mirror).
 struct AppBackground: View {
-    let theme: BackgroundTheme
+    let theme: AppTheme
+    /// How big the patterns draw: 1 on the launcher's canvas; a theme preview
+    /// card passes its width over the canvas width so it reads as a miniature.
+    var scale: CGFloat = 1
 
-    var body: some View {
+    /// The backdrops there are.
+    enum Backdrop: Equatable {
+        case parallaxDeep, nightPaper, gridPaper, gridInk, kabuki
+    }
+
+    /// Which backdrop a theme draws — Default's is always Parallax Deep.
+    nonisolated static func backdrop(for theme: AppTheme) -> Backdrop {
         switch theme {
-        case .ambient:        AmbientBackground()
-        case .livingGlass:    LivingGlassBackground()
-        case .inkPool:        InkPoolBackground()
-        case .nightfallSheen: NightfallSheenBackground()
-        case .parallaxDeep:   ParallaxDeepBackground()
-        case .constellation:  ConstellationBackground()
-        case .diagonal:       DiagonalStripesBackground()
-        case .gaslight:        GaslightBackground()
-        case .searchlightCity: SearchlightCityBackground()
-        case .swingingBulb:    SwingingBulbBackground()
+        case .default:      .parallaxDeep
+        case .nightEdition: .nightPaper
+        case .grid72:       .gridPaper
+        case .grid72Dark:   .gridInk
+        case .kabukiCut:    .kabuki
+        }
+    }
+
+    var body: some View {
+        switch Self.backdrop(for: theme) {
+        case .parallaxDeep: ParallaxDeepBackground()
+        case .nightPaper:   NightPaperBackground(scale: scale)
+        case .gridPaper:    GridPaperBackground(palette: .grid72, lineWidth: 1, scale: scale)
+        case .gridInk:      GridPaperBackground(palette: .grid72Dark, lineWidth: 1.5, scale: scale)
+        case .kabuki:       KabukiBackground(scale: scale)
         }
     }
 }
 
-/// Default theme: deep console-dark backdrop with a slow-breathing accent wash —
-/// gives the app the ambient glow Big Picture screens have, without any artwork.
-struct AmbientBackground: View {
-    @State private var breathe = false
-
-    var body: some View {
-        ZStack {
-            Theme.background
-
-            RadialGradient(
-                colors: [Theme.accent.opacity(breathe ? 0.16 : 0.09), .clear],
-                center: .init(x: 0.25, y: 0.15),
-                startRadius: 0,
-                endRadius: 900
-            )
-            RadialGradient(
-                colors: [Color(red: 0.45, green: 0.2, blue: 0.75).opacity(breathe ? 0.08 : 0.13), .clear],
-                center: .init(x: 0.85, y: 0.85),
-                startRadius: 0,
-                endRadius: 800
-            )
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) {
-                breathe = true
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
-/// "Living Glass" — the flagship animated theme: dark navy with two dim blooms of
-/// blue and violet drifting on slow, coprime sine orbits, like light migrating
-/// through frosted glass. Corners stay pinned near-black so the frame never
-/// brightens. Pure gradients (no per-frame blur) — the soft radial falloff IS the
-/// bloom, so it stays cheap even at native iPad resolution.
-struct LivingGlassBackground: View {
-    private let base   = Color(red: 0.043, green: 0.051, blue: 0.078)  // #0b0d14
-    private let blue   = Color(red: 0.110, green: 0.227, blue: 0.400)  // #1c3a66
-    private let violet = Color(red: 0.141, green: 0.102, blue: 0.227)  // #241a3a
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            GeometryReader { geo in
-                let d = max(geo.size.width, geo.size.height)
-                // Coprime periods (20/27/24/19 s) so the two blooms never sync.
-                let bx = CGFloat(0.32 + 0.11 * sin(t * .pi * 2 / 20))
-                let by = CGFloat(0.30 + 0.09 * cos(t * .pi * 2 / 27))
-                let vx = CGFloat(0.70 + 0.10 * sin(t * .pi * 2 / 24 + 1.3))
-                let vy = CGFloat(0.72 + 0.08 * cos(t * .pi * 2 / 19 + 0.6))
-                ZStack {
-                    base
-                    RadialGradient(colors: [blue.opacity(0.60), .clear],
-                                   center: UnitPoint(x: bx, y: by),
-                                   startRadius: 0, endRadius: d * 0.72)
-                        .blendMode(.plusLighter)
-                    RadialGradient(colors: [violet.opacity(0.55), .clear],
-                                   center: UnitPoint(x: vx, y: vy),
-                                   startRadius: 0, endRadius: d * 0.78)
-                        .blendMode(.plusLighter)
-                    // Pin the corners near-black so the frame never brightens.
-                    RadialGradient(colors: [.clear, base.opacity(0.92)],
-                                   center: .center, startRadius: d * 0.32, endRadius: d * 0.90)
-                }
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
-/// "Ink Pool" — the calmest static theme: near-black charcoal lit by a single cool
-/// light pooling off the top-left edge, heavy shadow everywhere else. No motion,
-/// so it's genuinely zero-cost — the quiet backdrop behind a busy shelf.
-struct InkPoolBackground: View {
-    private let base   = Color(red: 0.039, green: 0.043, blue: 0.055)  // #0a0b0e
-    private let shadow = Color(red: 0.024, green: 0.027, blue: 0.031)  // #060708
-    private let pool   = Color(red: 0.102, green: 0.129, blue: 0.188)  // #1a2130
-
-    var body: some View {
-        GeometryReader { geo in
-            let d = max(geo.size.width, geo.size.height)
-            ZStack {
-                base
-                // Deepen the far edges first…
-                RadialGradient(colors: [.clear, shadow.opacity(0.9)],
-                               center: .center, startRadius: d * 0.2, endRadius: d * 0.95)
-                // …then lay the cool light pool off the top-left corner on top.
-                RadialGradient(colors: [pool, .clear],
-                               center: UnitPoint(x: -0.05, y: -0.05),
-                               startRadius: 0, endRadius: d * 1.05)
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
-/// "Nightfall Sheen" — a single sheet of dusk: cool navy in the top-left bleeding
-/// to a warm plum corner, like light leaving a room. Static; one linear wash, a
-/// faint ember bleed in the far corner, and a soft vignette.
-struct NightfallSheenBackground: View {
-    private let top   = Color(red: 0.039, green: 0.051, blue: 0.090)  // #0a0d17
-    private let mid   = Color(red: 0.067, green: 0.063, blue: 0.125)  // #111020
-    private let warm  = Color(red: 0.102, green: 0.071, blue: 0.125)  // #1a1220
-    private let ember = Color(red: 0.173, green: 0.110, blue: 0.180)  // #2c1c2e
-
-    var body: some View {
-        GeometryReader { geo in
-            let d = max(geo.size.width, geo.size.height)
-            ZStack {
-                LinearGradient(colors: [top, mid, warm],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                RadialGradient(colors: [ember.opacity(0.55), .clear],
-                               center: UnitPoint(x: 1.0, y: 1.0),
-                               startRadius: 0, endRadius: d * 0.62)
-                    .blendMode(.plusLighter)
-                RadialGradient(colors: [.clear, Color.black.opacity(0.32)],
-                               center: UnitPoint(x: 0.5, y: 0.42),
-                               startRadius: d * 0.3, endRadius: d * 0.88)
-            }
-        }
-        .ignoresSafeArea()
-    }
+extension AppTheme {
+    /// Whether the theme's background moves — the "Static"/"Animated" tag on
+    /// its preview card. Grid 72's only life is the focus index.
+    var hasAnimatedBackground: Bool { !isGrid }
 }
 
 /// "Parallax Deep" — drifting through quiet space: a fixed star field on two
 /// depth layers scrolling at different slow speeds (each star gently twinkling),
 /// with a diffuse nebula glowing off one corner and breathing. The star array is
 /// built ONCE (deterministically) and only its positions/alpha animate — cheap.
+/// The Default theme's background, always.
 struct ParallaxDeepBackground: View {
     private let base      = Color.black                                   // pitch black
     private let voidCol   = Color.black
@@ -217,445 +115,305 @@ struct ParallaxDeepBackground: View {
     private static func frac(_ v: Double) -> Double { v - v.rounded(.down) }
 }
 
-/// "Constellation" — a gentle web of light: ~40 fixed nodes drifting a few points
-/// on slow sine orbits, hairline links fading in as nearby pairs cross a distance
-/// threshold. Everything dims toward the edges (center falloff) so the frame stays
-/// dark. One Canvas pass.
-struct ConstellationBackground: View {
-    private let base = Color(red: 0.031, green: 0.043, blue: 0.075)  // #080b13
-    private let node = Color(red: 0.357, green: 0.616, blue: 1.0)    // #5b9dff
+// MARK: - Night Edition
 
-    private struct Node { let x: CGFloat; let y: CGFloat; let phase: Double; let freq: Double }
-    private let nodes: [Node]
+/// Night Edition's page: black paper with a fine warm grain, one band of window
+/// light crossing it every 40 s, and a soft vignette. Reduce Motion stops the
+/// band where it stands; the grain stays.
+struct NightPaperBackground: View {
+    var scale: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init() {
-        var made: [Node] = []
-        for i in 0..<42 {
-            let x     = CGFloat(Self.frac(Double(i) * 0.61803398875 + 0.11))
-            let y     = CGFloat(Self.frac(Double(i) * 0.41421356237 + 0.67))
-            let phase = Self.frac(Double(i) * 0.31830988618) * 2 * .pi
-            let freq  = 2 * .pi / (22 + Self.frac(Double(i) * 0.27) * 9)  // 22–31 s periods
-            made.append(Node(x: x, y: y, phase: phase, freq: freq))
-        }
-        nodes = made
-    }
+    private let paper = Color(hex: 0x15130F)
+    private let light = Color(hex: 0xFFECC8)
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            ZStack {
-                base
-                Canvas { ctx, size in
-                    let w = size.width, h = size.height
-                    guard w > 0, h > 0 else { return }
-                    let cx = w / 2, cy = h / 2
-                    let maxD = max(hypot(w, h) / 2, 1)
-                    let amp = min(w, h) * 0.022   // scale node drift to the view so links actually cross
-                    var pts: [(x: CGFloat, y: CGFloat, fall: CGFloat)] = []
-                    pts.reserveCapacity(nodes.count)
-                    for n in nodes {
-                        let nx = n.x * w + CGFloat(sin(t * n.freq + n.phase)) * amp
-                        let ny = n.y * h + CGFloat(cos(t * n.freq * 0.9 + n.phase)) * amp
-                        let fall = max(0, 1 - hypot(nx - cx, ny - cy) / maxD)
-                        pts.append((nx, ny, fall))
-                    }
-                    let thresh = min(w, h) * 0.24
-                    for i in 0..<pts.count {
-                        for j in (i + 1)..<pts.count {
-                            let dist = hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y)
-                            if dist < thresh {
-                                let strength = Double((1 - dist / thresh) * min(pts[i].fall, pts[j].fall))
-                                let alpha = strength * 0.11
-                                if alpha > 0.004 {
-                                    var path = Path()
-                                    path.move(to: CGPoint(x: pts[i].x, y: pts[i].y))
-                                    path.addLine(to: CGPoint(x: pts[j].x, y: pts[j].y))
-                                    ctx.stroke(path, with: .color(node.opacity(alpha)), lineWidth: 0.6)
-                                }
-                            }
-                        }
-                    }
-                    for p in pts {
-                        let alpha = 0.03 + 0.12 * Double(p.fall)
-                        let r: CGFloat = 1.7
-                        ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                                 with: .color(node.opacity(alpha)))
-                    }
-                }
-            }
-        }
-        .ignoresSafeArea()
-    }
-
-    private static func frac(_ v: Double) -> Double { v - v.rounded(.down) }
-}
-
-// MARK: - The noir set
-
-/// "Gaslight" — film-noir street corner: a lone streetlamp flickering warm
-/// light over drizzle, a blocky skyline silhouette, a wet-street sheen. The
-/// only motion is the gaslight's breathing flicker and the rain inside the
-/// cone — monochrome silver-on-black with the bulb as the single warm hue.
-struct GaslightBackground: View {
-    private let skyTop    = Color(red: 0.020, green: 0.024, blue: 0.043)  // #05060b
-    private let skyBottom = Color(red: 0.035, green: 0.043, blue: 0.071)  // #090b12
-    private let building  = Color(red: 0.024, green: 0.031, blue: 0.063)  // #060810
-    private let warm      = Color(red: 0.839, green: 0.808, blue: 0.698)  // #d6ceb2
-    private let rainCol   = Color(red: 0.667, green: 0.714, blue: 0.816)  // #aab6d0
-
-    private struct Drop { let x: CGFloat; let z: CGFloat; let phase: CGFloat }
-    private let drops: [Drop]
-
-    init() {
-        var made: [Drop] = []
-        for i in 0..<70 {
-            // Cluster most drops around the lamp cone (x ≈ 0.28) — rain reads
-            // where the light is; a few strays elsewhere keep it honest.
-            let spread = Self.frac(Double(i) * 0.61803398875)
-            let nearLamp = i % 4 != 0
-            let x = nearLamp ? 0.28 + CGFloat(spread - 0.5) * 0.30
-                             : CGFloat(spread)
-            made.append(Drop(x: min(max(x, 0.02), 0.98),
-                             z: CGFloat(0.5 + Self.frac(Double(i) * 0.41421356237) * 0.5),
-                             phase: CGFloat(Self.frac(Double(i) * 0.75487766624))))
-        }
-        drops = made
-    }
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            // Gaslight breathing: layered incommensurate sines, occasionally
-            // dipping — never strobing (WCAG: stay far under 3 flashes/sec).
-            let flicker = 0.86 + 0.09 * sin(t * 0.9) + 0.05 * sin(t * 2.3 + 1.7)
+        ZStack {
+            paper
+            PaperGrain(scale: scale)
+                .opacity(0.16)
+                .blendMode(.screen)
             GeometryReader { geo in
-                let w = geo.size.width, h = geo.size.height
-                let lampX = w * 0.28
-                ZStack {
-                    LinearGradient(colors: [skyTop, skyBottom], startPoint: .top, endPoint: .bottom)
-
-                    // Skyline silhouette, right half.
-                    SkylinePath(bases: [0.55, 0.30, 0.72, 0.18, 0.48, 0.62, 0.26, 0.52])
-                        .fill(building)
-                        .frame(width: w * 0.52, height: h * 0.36)
-                        .position(x: w * 0.74, y: h * 0.70)
-
-                    // Light cone (trapezoid) + post + bulb.
-                    ConeShape()
-                        .fill(LinearGradient(colors: [warm.opacity(0.16 * flicker),
-                                                      warm.opacity(0.02), .clear],
-                                             startPoint: .top, endPoint: .bottom))
-                        .frame(width: w * 0.30, height: h * 0.72)
-                        .position(x: lampX, y: h * 0.52)
-                    Rectangle().fill(Color(red: 0.05, green: 0.06, blue: 0.09))
-                        .frame(width: 3, height: h * 0.76)
-                        .position(x: lampX, y: h * 0.54)
-                    Circle().fill(warm)
-                        .frame(width: 7, height: 7)
-                        .position(x: lampX, y: h * 0.165)
-                        .shadow(color: warm.opacity(0.55 * flicker), radius: 12)
-
-                    // Drizzle — heavier and brighter inside the cone.
-                    Canvas { ctx, size in
-                        guard size.width > 0, size.height > 0 else { return }
-                        let fall = size.height * 0.55
-                        var path = Path()
-                        var conePath = Path()
-                        for drop in drops {
-                            let speed = 0.9 + Double(drop.z) * 0.9      // screens/sec-ish
-                            let prog = CGFloat((t * speed + Double(drop.phase))
-                                .truncatingRemainder(dividingBy: 1))
-                            let x = drop.x * size.width + prog * 8
-                            let y = size.height * 0.12 + prog * fall
-                            let len = 8 + drop.z * 10
-                            let inCone = abs(x - size.width * 0.28) < size.width * 0.11
-                            var seg = Path()
-                            seg.move(to: CGPoint(x: x, y: y))
-                            seg.addLine(to: CGPoint(x: x - 1.5, y: y - len))
-                            if inCone { conePath.addPath(seg) } else { path.addPath(seg) }
-                        }
-                        ctx.stroke(path, with: .color(rainCol.opacity(0.10)), lineWidth: 1)
-                        ctx.stroke(conePath, with: .color(rainCol.opacity(0.26 * flicker)), lineWidth: 1)
-                    }
-
-                    // Wet-street sheen + vignette.
-                    LinearGradient(colors: [rainCol.opacity(0.05), .clear],
-                                   startPoint: .bottom, endPoint: .top)
-                        .frame(height: h * 0.18)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                    RadialGradient(colors: [.clear, Color.black.opacity(0.6)],
-                                   center: .center,
-                                   startRadius: min(w, h) * 0.3, endRadius: max(w, h) * 0.75)
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+                    windowLight(Self.bandProgress(at: timeline.date.timeIntervalSinceReferenceDate),
+                                in: geo.size)
                 }
             }
+            EllipticalGradient(stops: [.init(color: .clear, location: 0.5),
+                                       .init(color: .black.opacity(0.45), location: 1)],
+                               center: UnitPoint(x: 0.5, y: 0.4),
+                               startRadiusFraction: 0, endRadiusFraction: 0.75)
         }
         .ignoresSafeArea()
     }
 
-    private static func frac(_ v: Double) -> Double { v - v.rounded(.down) }
+    /// Where the light is, 0 (just off the left edge) … 1 (just off the right):
+    /// across the page and back, 40 s each way, eased at both ends.
+    nonisolated static func bandProgress(at time: TimeInterval) -> Double {
+        let leg = 40.0
+        let phase = time.truncatingRemainder(dividingBy: 2 * leg) / leg   // 0..<2
+        let x = phase <= 1 ? phase : 2 - phase
+        return x * x * (3 - 2 * x)
+    }
+
+    /// The band: 0.8 widths of soft light, brightest in the middle, leaning
+    /// 10° off vertical like light through a tall window.
+    private func windowLight(_ progress: Double, in size: CGSize) -> some View {
+        let centre = -0.2 + 1.4 * progress                      // in widths
+        let lean = size.height > 0 ? 0.4 * size.width * 0.174 / size.height : 0
+        return LinearGradient(stops: [.init(color: light.opacity(0), location: 0),
+                                      .init(color: light.opacity(0.07), location: 0.4),
+                                      .init(color: light.opacity(0.10), location: 0.5),
+                                      .init(color: light.opacity(0.07), location: 0.6),
+                                      .init(color: light.opacity(0), location: 1)],
+                              startPoint: UnitPoint(x: centre - 0.394, y: 0.5 - lean),
+                              endPoint: UnitPoint(x: centre + 0.394, y: 0.5 + lean))
+    }
 }
 
-/// "Searchlight City" — two slow searchlight beams crossing over a blacked-out
-/// skyline, a few window lights barely holding on. Beams rotate ±8–9° on long
-/// incommensurate periods; everything else is static geometry.
-struct SearchlightCityBackground: View {
-    private let skyTop   = Color(red: 0.016, green: 0.020, blue: 0.039)  // #04050a
-    private let skyLow   = Color(red: 0.031, green: 0.039, blue: 0.067)  // #080a11
-    private let building = Color(red: 0.016, green: 0.024, blue: 0.047)  // #04060c
-    private let beamCol  = Color(red: 0.769, green: 0.816, blue: 0.910)  // #c4d0e8
-    private let warm     = Color(red: 0.839, green: 0.808, blue: 0.698)  // #d6ceb2
+/// The paper's grain: a 220 pt tile of warm specks, made once in code (no
+/// image asset), repeated across the page.
+private struct PaperGrain: View {
+    var scale: CGFloat
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let a1 = -21.5 + 8.5 * sin(t * 2 * .pi / 36)    // −30°…−13°
-            let a2 = -158  - 8.0 * sin(t * 2 * .pi / 47)    // −150°…−166°
-            GeometryReader { geo in
-                let w = geo.size.width, h = geo.size.height
-                ZStack {
-                    LinearGradient(colors: [skyTop, skyLow], startPoint: .top, endPoint: .bottom)
-
-                    beam(width: w, angle: a1, phase: t)
-                        .position(x: w * 0.30, y: h * 0.84)
-                    beam(width: w, angle: a2, phase: t + 11)
-                        .position(x: w * 0.68, y: h * 0.84)
-
-                    SkylinePath(bases: [0.50, 0.20, 0.65, 0.10, 0.55, 0.32, 0.70, 0.16,
-                                        0.44, 0.60, 0.24, 0.52])
-                        .fill(building)
-                        .frame(width: w, height: h * 0.22)
-                        .position(x: w / 2, y: h * 0.89)
-
-                    // Three window lights breathing on slow, offset periods.
-                    ForEach(0..<3, id: \.self) { i in
-                        windowLight(index: i, t: t, w: w, h: h)
-                    }
-
-                    RadialGradient(colors: [.clear, Color.black.opacity(0.55)],
-                                   center: .center,
-                                   startRadius: min(w, h) * 0.32, endRadius: max(w, h) * 0.72)
-                }
-            }
+        if let tile = PaperGrainTile.image {
+            Image(decorative: tile, scale: 1 / max(scale, 0.05))
+                .resizable(resizingMode: .tile)
         }
-        .ignoresSafeArea()
-    }
-
-    /// One breathing window light. Split out (with explicit types) — inlining
-    /// this arithmetic in the ForEach blows the iOS type-checker's budget.
-    private func windowLight(index: Int, t: Double, w: CGFloat, h: CGFloat) -> some View {
-        let xs: [CGFloat] = [0.20, 0.52, 0.81]
-        let periods: [Double] = [9.0, 13.0, 11.0]
-        let phase: Double = t * 2 * .pi / periods[index] + Double(index) * 2.1
-        let alpha: Double = 0.25 + 0.28 * (0.5 + 0.5 * sin(phase))
-        return Circle().fill(warm)
-            .frame(width: 3, height: 3)
-            .position(x: w * xs[index], y: h * 0.90)
-            .opacity(alpha)
-    }
-
-    /// One beam: a long gradient bar rotated around its base end.
-    private func beam(width: CGFloat, angle: Double, phase: Double) -> some View {
-        LinearGradient(colors: [beamCol.opacity(0.14), beamCol.opacity(0.04), .clear],
-                       startPoint: .leading, endPoint: .trailing)
-            .frame(width: width * 1.8, height: 26)
-            .offset(x: width * 0.9)   // rotate around the LEFT end (the searchlight)
-            .rotationEffect(.degrees(angle))
-            .blendMode(.plusLighter)
     }
 }
 
-/// "Swinging Bulb" — the interrogation-room icon: a bare bulb on a cord swaying
-/// gently, its light pool shifting in counter-phase across the dark, one moth
-/// circling. The pendulum is a single sine; everything scales with it.
-struct SwingingBulbBackground: View {
-    private let base = Color(red: 0.016, green: 0.020, blue: 0.035)      // #040509
-    private let warm = Color(red: 0.910, green: 0.863, blue: 0.722)      // #e8dcb8
+@MainActor
+private enum PaperGrainTile {
+    static let image: CGImage? = make()
+
+    /// Deterministic noise: mostly faint specks, a few brighter, in Night
+    /// Edition's warm white (premultiplied RGBA).
+    private static func make() -> CGImage? {
+        let side = 220
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        var seed: UInt32 = 0x9E37_79B9
+        for i in 0..<(side * side) {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let n = Double(seed >> 8) / Double(1 << 24)   // 0..<1
+            let a = n * n * 0.5
+            bytes[i * 4 + 0] = UInt8(255 * a)
+            bytes[i * 4 + 1] = UInt8(255 * 0.96 * a)
+            bytes[i * 4 + 2] = UInt8(255 * 0.86 * a)
+            bytes[i * 4 + 3] = UInt8(255 * a)
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+}
+
+// MARK: - Grid 72
+
+/// Grid 72's page, and its ink inversion: paper ruled into the app's own 72 pt
+/// margin, with crop marks in the corners. Nothing moves — the focus index on
+/// Home (and the seconds clock) is the only life, which is the point.
+struct GridPaperBackground: View {
+    let palette: ThemePalette
+    /// 1 pt on paper; 1.5 pt on the dark inversion, where thin light lines shimmer.
+    let lineWidth: CGFloat
+    var scale: CGFloat = 1
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let swing = sin(t * 2 * .pi / 5.6)               // −1…1, 5.6 s period
-            let angle = swing * 8.5                          // degrees
-            GeometryReader { geo in
-                let w = geo.size.width, h = geo.size.height
-                let cordLen = h * 0.30
-                let rad = angle * .pi / 180
-                let bulbX = w / 2 + CGFloat(sin(rad)) * cordLen
-                let bulbY = h * -0.02 + CGFloat(cos(rad)) * cordLen
-                ZStack {
-                    base
-
-                    // Light pool sweeps opposite the bulb, slightly delayed feel.
-                    RadialGradient(colors: [warm.opacity(0.12), warm.opacity(0.035), .clear],
-                                   center: .center,
-                                   startRadius: 0, endRadius: min(w, h) * 0.75)
-                        .frame(width: w * 1.6, height: h * 1.6)
-                        .position(x: w / 2 - CGFloat(swing) * w * 0.06, y: h * 0.62)
-
-                    // Cord + bulb.
-                    Path { p in
-                        p.move(to: CGPoint(x: w / 2, y: h * -0.02))
-                        p.addLine(to: CGPoint(x: bulbX, y: bulbY))
-                    }
-                    .stroke(Color(red: 0.10, green: 0.11, blue: 0.15), lineWidth: 2)
-                    Circle()
-                        .fill(RadialGradient(colors: [warm, warm.opacity(0.55),
-                                                      Color(red: 0.23, green: 0.22, blue: 0.19)],
-                                             center: UnitPoint(x: 0.5, y: 0.38),
-                                             startRadius: 0, endRadius: 9))
-                        .frame(width: 15, height: 15)
-                        .position(x: bulbX, y: bulbY)
-                        .shadow(color: warm.opacity(0.4), radius: 16)
-
-                    // One moth: a slow orbit around the bulb + a faster bob.
-                    let mothA = t * 2 * .pi / 7
-                    let mothR = min(w, h) * 0.055
-                    Circle().fill(warm.opacity(0.55))
-                        .frame(width: 3.5, height: 3.5)
-                        .position(x: bulbX + CGFloat(cos(mothA)) * mothR,
-                                  y: bulbY + 14 + CGFloat(sin(mothA)) * mothR * 0.6
-                                     + CGFloat(sin(t * 2 * .pi / 1.9)) * 7)
-
-                    RadialGradient(colors: [.clear, Color.black.opacity(0.65)],
-                                   center: UnitPoint(x: 0.5, y: 0.4),
-                                   startRadius: min(w, h) * 0.3, endRadius: max(w, h) * 0.8)
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(palette.background))
+            let step = 72 * scale
+            let line = lineWidth * max(scale, 0.5)
+            guard step > 1 else { return }
+            var grid = Path()
+            var x: CGFloat = 0
+            while x <= size.width {
+                grid.addRect(CGRect(x: x, y: 0, width: line, height: size.height))
+                x += step
+            }
+            var y: CGFloat = 0
+            while y <= size.height {
+                grid.addRect(CGRect(x: 0, y: y, width: size.width, height: line))
+                y += step
+            }
+            ctx.fill(grid, with: .color(palette.isLight ? Color(hex: 0xCFCEC8).opacity(0.55)
+                                                        : palette.ink.opacity(0.07)))
+            // Crop marks: an L at each corner, 24 pt in, arms pointing inward.
+            let inset = 24 * scale, arm = 24 * scale, mark = max(line, scale)
+            var marks = Path()
+            for right in [false, true] {
+                for bottom in [false, true] {
+                    let cx = right ? size.width - inset : inset
+                    let cy = bottom ? size.height - inset : inset
+                    marks.addRect(CGRect(x: right ? cx - arm : cx, y: bottom ? cy - mark : cy,
+                                         width: arm, height: mark))
+                    marks.addRect(CGRect(x: right ? cx - mark : cx, y: bottom ? cy - arm : cy,
+                                         width: mark, height: arm))
                 }
             }
+            ctx.fill(marks, with: .color(palette.ink))
         }
         .ignoresSafeArea()
     }
 }
 
-/// Blocky noir skyline: rectangles of varying height from a normalized base
-/// list. Deterministic; built once per body evaluation (cheap — a dozen rects).
-private struct SkylinePath: Shape {
-    let bases: [CGFloat]   // 0…1 heights, one per building
+// MARK: - Kabuki Cut
 
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        guard !bases.isEmpty else { return p }
-        let bw = rect.width / CGFloat(bases.count)
-        p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        for (i, b) in bases.enumerated() {
-            let x = rect.minX + CGFloat(i) * bw
-            let top = rect.maxY - rect.height * b
-            p.addLine(to: CGPoint(x: x, y: top))
-            p.addLine(to: CGPoint(x: x + bw, y: top))
+/// Kabuki Cut's backdrop: black, a crimson wedge down the right with halftone
+/// fading off its inner edge, thin diagonal stripes drifting over everything,
+/// and a white shard in the bottom-left corner. Reduce Motion stops the
+/// stripes and drops the halftone; the cuts remain.
+struct KabukiBackground: View {
+    var scale: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Color(hex: 0x0B0B0C)
+            UnitPolygon.kabukiWedge.fill(Color(hex: 0xE5102E))
+            if !reduceMotion { KabukiHalftone(scale: scale) }
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+                KabukiStripes(scale: scale,
+                              drift: reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate)
+            }
+            UnitPolygon.kabukiShard.fill(Color.white.opacity(0.9))
         }
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        p.closeSubpath()
-        return p
+        .ignoresSafeArea()
     }
 }
 
-/// Streetlamp light cone: a narrow-topped trapezoid.
-private struct ConeShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.midX - rect.width * 0.05, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.midX + rect.width * 0.05, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        p.closeSubpath()
-        return p
+/// White hairline stripes at −32°, 30 pt apart, crawling 36 pt every 14 s.
+private struct KabukiStripes: View {
+    let scale: CGFloat
+    let drift: TimeInterval
+
+    var body: some View {
+        Canvas { ctx, size in
+            let gap = 30 * scale
+            guard gap > 0.5 else { return }
+            let offset = CGFloat((drift * 36 / 14).truncatingRemainder(dividingBy: 30)) * scale
+            let reach = hypot(size.width, size.height)
+            var c = ctx
+            c.translateBy(x: size.width / 2, y: size.height / 2)
+            c.rotate(by: .degrees(-32))
+            var bands = Path()
+            var y = -(reach / gap).rounded(.up) * gap + offset
+            while y < reach {
+                bands.addRect(CGRect(x: -reach, y: y, width: 2 * reach, height: 2 * scale))
+                y += gap
+            }
+            c.fill(bands, with: .color(.white.opacity(0.055)))
+        }
+        .allowsHitTesting(false)
     }
 }
 
-/// A selectable theme preview card — a live thumbnail of the real background +
-/// its name, with an accent ring + lift when selected. Reused by the setup
-/// wizard and Settings ▸ Themes so users SEE each theme, not just a label.
+/// Halftone dots printed over the wedge, strongest at its inner edge and gone
+/// a little way in (the spec's 100° mask, 20 % → 70 % of the screen). Static.
+private struct KabukiHalftone: View {
+    let scale: CGFloat
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width, h = size.height
+            let step = 8 * scale, r = 1.6 * scale
+            guard w > 0, h > 0, step > 1 else { return }
+            let length = w * 0.985 + h * 0.174
+            // Ten strengths, one path each, instead of a fill per dot.
+            var levels = [Path](repeating: Path(), count: 10)
+            var y = step / 2
+            while y < h {
+                let left = w * (0.64 + 0.18 * y / h)   // the wedge's inner edge
+                var x = (max(left - step / 2, 0) / step).rounded(.up) * step + step / 2
+                while x < w {
+                    let t = (x * 0.985 + y * 0.174) / length
+                    let level = Int((min(max(1 - (t - 0.2) / 0.5, 0), 1) * 10).rounded())
+                    if level > 0 {
+                        levels[level - 1].addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                    }
+                    x += step
+                }
+                y += step
+            }
+            for (i, dots) in levels.enumerated() where !dots.isEmpty {
+                ctx.fill(dots, with: .color(.black.opacity(0.6 * Double(i + 1) / 10)))
+            }
+        }
+        .clipShape(UnitPolygon.kabukiWedge)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Theme picker card
+
+/// One theme as a card: a live miniature of its background with its name in
+/// its own display face over a stroke of its accent, and the name below.
+/// Reused by the setup wizard and Settings ▸ Themes so the choice is
+/// something you SEE.
 struct ThemeCard: View {
-    let theme: BackgroundTheme
+    let theme: AppTheme
     var selected: Bool = false
     var width: CGFloat = 220
 
     var body: some View {
         VStack(spacing: 10) {
-            AppBackground(theme: theme)
+            AppBackground(theme: theme, scale: width / RootView.designMin.width)
                 .allowsHitTesting(false)
                 .frame(width: width, height: width * 9 / 16)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(alignment: .bottomLeading) { sample.padding(12) }
+                .clipShape(Theme.plate(14))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(selected ? Theme.accent : .white.opacity(0.1),
+                    Theme.plate(14)
+                        .strokeBorder(selected ? Theme.accent : Theme.ink.opacity(0.1),
                                       lineWidth: selected ? 3 : 1)
                 }
-                // A small tag so the static/animated split is legible at a glance.
+                // A small tag so the still/moving split is legible at a glance.
                 .overlay(alignment: .topTrailing) {
-                    Text(theme.isAnimated ? "Animated" : "Static")
-                        .font(.system(size: Theme.labelSize(10), weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(.black.opacity(0.4), in: Capsule())
-                        .padding(8)
+                    chip(theme.hasAnimatedBackground ? "Animated" : "Static", ink: .white.opacity(0.92))
                 }
-                // A little red "my favourite" flag on Parallax Deep — same chip style.
-                .overlay(alignment: .bottomLeading) {
-                    if theme == .parallaxDeep {
-                        Text("my favourite")
-                            .font(.system(size: Theme.labelSize(10), weight: .bold, design: .rounded))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(.black.opacity(0.4), in: Capsule())
-                            .padding(8)
-                    }
+                // The owner's red "my favourite" flag, on Parallax Deep — now
+                // Default's background — in the same chip style.
+                .overlay(alignment: .topLeading) {
+                    if theme == .default { chip("my favourite", ink: .red) }
                 }
-                .shadow(color: selected ? Theme.accentGlow : .black.opacity(0.4),
+                .shadow(color: selected ? Theme.accentGlow : Theme.restShadow(0.4),
                         radius: selected ? 20 : 8, y: 5)
             Text(theme.title)
-                .font(.system(size: 16, weight: selected ? .bold : .medium, design: .rounded))
+                .font(Theme.ui(16, selected ? .bold : .medium))
                 .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
         }
-        .scaleEffect(selected ? 1.04 : 1.0)
+        .scaleEffect(selected ? Theme.focusScale(1.04) : 1.0)
         .animation(Theme.focusSpring, value: selected)
         // The whole card is clickable — the thumbnail itself is hit-test-off, so
         // without this a mouse click on the preview (most of the card) misses.
         .contentShape(Rectangle())
     }
-}
 
-/// "Diagonal Drift": near-black with flat diagonal stripes that slowly crawl
-/// across the screen. FLAT on purpose — a single solid stripe with no bevel or
-/// sheen, so it reads painted/cartoony rather than brushed-metal. A
-/// `TimelineView` advances the stripe phase; the whole pattern is one `Canvas`
-/// pass, so it's cheap regardless of stripe count.
-struct DiagonalStripesBackground: View {
-    // Tunables — safe to tweak to taste.
-    private let spacing: CGFloat = 66         // gap between stripes
-    private let tilt = Angle(degrees: 58)     // "/" lean — negate to lean the other way
-    private let driftPerSecond: CGFloat = 6   // slow crawl
-    private let lineWidth: CGFloat = 4        // flat, chunky-ish stripe
-
-    private let base = Color(red: 0.02, green: 0.03, blue: 0.03)     // near-black
-    private let stripe = Color(red: 0.13, green: 0.27, blue: 0.24)   // flat, friendly teal-green
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let phase = CGFloat((t * Double(driftPerSecond))
-                .truncatingRemainder(dividingBy: Double(spacing)))
-            Canvas { context, size in
-                var ctx = context
-                ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base))
-                // Draw in a rotated, oversized space so the vertical stripes read
-                // as parallel diagonals covering the whole view.
-                let diag = hypot(size.width, size.height)
-                ctx.translateBy(x: size.width / 2, y: size.height / 2)
-                ctx.rotate(by: tilt)
-                ctx.translateBy(x: -diag, y: -diag)
-                let count = Int((2 * diag) / spacing) + 2
-                for i in 0...count {
-                    let x = CGFloat(i) * spacing + phase
-                    // One flat, solid stroke — no groove, no highlight, no sheen.
-                    var line = Path()
-                    line.move(to: CGPoint(x: x, y: 0))
-                    line.addLine(to: CGPoint(x: x, y: 2 * diag))
-                    ctx.stroke(line, with: .color(stripe), lineWidth: lineWidth)
-                }
-            }
+    /// The theme's voice in miniature: the wordmark in its display face and
+    /// ink, over one stroke of its accent — in ITS colours, whatever the
+    /// current theme is.
+    private var sample: some View {
+        let palette = theme.palette
+        return VStack(alignment: .leading, spacing: 5) {
+            Text("VIBELIGHT")
+                .font(theme.displayFont(width * 0.085))
+                .foregroundStyle(palette.textPrimary)
+            Rectangle()
+                .fill(palette.accent)
+                .frame(width: width * 0.16, height: 3)
         }
-        .ignoresSafeArea()
+    }
+
+    private func chip(_ text: String, ink: Color) -> some View {
+        Text(text)
+            .font(Theme.ui(Theme.labelSize(10), .bold))
+            .foregroundStyle(ink)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.4), in: Capsule())
+            .padding(8)
     }
 }

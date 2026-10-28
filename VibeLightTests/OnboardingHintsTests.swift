@@ -70,16 +70,18 @@ final class OnboardingHintsTests: XCTestCase {
     /// tappable row, so VoiceOver must hear one button — the wizard's Back and
     /// Continue were real Buttons before they shared this chip. The d-pad
     /// "Change" hint does nothing on tap, so it drops the trait
-    /// (UX-onboarding-hints-generic-glyphs follow-up).
+    /// (UX-onboarding-hints-generic-glyphs follow-up). Every theme's dress of
+    /// the chip keeps that: one button per chip.
     func testGlyphChipsAreButtonsAndTheChangeHintIsNot() throws {
         let bar = try source("VibeLight/UI/HintBarView.swift")
         let glyphBranch = try body(of: "let glyph = InputGlyphs.glyph(for: event, style: state.effectiveGlyphStyle)",
                                    until: "\n    }\n", in: bar)
         XCTAssertTrue(glyphBranch.contains(
-            ".contentShape(Rectangle())\n            // A glyph + label row with a tap gesture"), String(glyphBranch))
-        XCTAssertTrue(glyphBranch.contains(
-            ".accessibilityElement(children: .combine)\n            .accessibilityAddTraits(.isButton)\n        }"),
-            String(glyphBranch))
+            ".contentShape(Rectangle())\n                // A glyph + label row with a tap gesture"), String(glyphBranch))
+        // Default, Kabuki Cut, and Night Edition / Grid 72.
+        XCTAssertEqual(glyphBranch.components(
+            separatedBy: ".accessibilityElement(children: .combine)\n                .accessibilityAddTraits(.isButton)").count - 1,
+            3, String(glyphBranch))
 
         let flow = try source("VibeLight/UI/OnboardingFlow.swift")
         let hints = try body(of: "private struct OnboardingHints: View {", until: "\n}\n", in: flow)

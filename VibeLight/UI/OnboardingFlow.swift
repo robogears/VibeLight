@@ -14,11 +14,11 @@ struct OnboardingFlow: View {
         ZStack {
             // Live, blurred background that morphs as the user picks a theme —
             // it previews the product the whole time. Heavier blur on welcome.
-            AppBackground(theme: state.backgroundTheme)
+            AppBackground(theme: state.appTheme)
                 .blur(radius: bigMoment ? 42 : 16)
-                .overlay(Color.black.opacity(bigMoment ? 0.42 : 0.5))
+                .overlay(Theme.veil.opacity(bigMoment ? 0.42 : 0.5))
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.6), value: state.backgroundTheme)
+                .animation(.easeInOut(duration: 0.6), value: state.appTheme)
                 .animation(.easeInOut(duration: 0.6), value: step)
 
             content
@@ -45,6 +45,8 @@ struct OnboardingFlow: View {
             .ignoresSafeArea(.keyboard)
         }
         .ignoresSafeArea()
+        // A light page on Grid 72, as the launcher is (LauncherContent).
+        .environment(\.colorScheme, Theme.palette.isLight ? .light : .dark)
         .animation(Theme.focusSpring, value: step)   // step→step transitions
     }
 
@@ -75,11 +77,11 @@ private struct WelcomeStep: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("VibeLight")
-                .font(.system(size: 72, weight: .black, design: .rounded))
+                .font(Theme.display(72))
                 .foregroundStyle(Theme.textPrimary)
                 .shadow(color: Theme.accentGlow, radius: 30)
             Text("Thanks for downloading.")
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .font(Theme.ui(24, .semibold))
                 .foregroundStyle(Theme.textSecondary)
         }
         .scaleEffect(shown ? 1 : (reduceMotion ? 1 : 0.92))
@@ -124,7 +126,7 @@ private struct FinaleStep: View {
 
     var body: some View {
         Text("VibeLight")
-            .font(.system(size: 80, weight: .black, design: .rounded))
+            .font(Theme.display(80))
             .foregroundStyle(Theme.textPrimary)
             .shadow(color: Theme.accentGlow, radius: 40)
             .scaleEffect(shown ? 1 : (reduceMotion ? 1 : 0.9))
@@ -163,19 +165,19 @@ private struct ThemeStep: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 26) {
-                        ForEach(BackgroundTheme.allCases, id: \.self) { theme in
-                            ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 240)
+                        ForEach(AppTheme.allCases, id: \.self) { theme in
+                            ThemeCard(theme: theme, selected: state.appTheme == theme, width: 240)
                                 .id(theme)
-                                .onTapGesture { state.backgroundTheme = theme }
+                                .onTapGesture { state.appTheme = theme }
                         }
                     }
                     .padding(.horizontal, 60)
                     .padding(.vertical, 24)
                 }
-                .onChange(of: state.backgroundTheme) { _, theme in
+                .onChange(of: state.appTheme) { _, theme in
                     withAnimation(Theme.focusSpring) { proxy.scrollTo(theme, anchor: .center) }
                 }
-                .onAppear { proxy.scrollTo(state.backgroundTheme, anchor: .center) }
+                .onAppear { proxy.scrollTo(state.appTheme, anchor: .center) }
             }
         }
     }
@@ -198,7 +200,7 @@ private struct QualityStep: View {
                         .onTapGesture { state.focusOnboardingQuality(i) }
                 }
                 Text(bitrateHint)
-                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .font(Theme.ui(14, .medium))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 6)
                     .animation(Theme.focusSpring, value: state.settings.bitrateKbps)
@@ -224,13 +226,13 @@ private struct OnboardingQualityRow: View {
     var body: some View {
         HStack(spacing: 14) {
             Text(row.title)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundStyle(focused ? .white : Theme.textPrimary)
+                .font(Theme.ui(18, .semibold))
+                .foregroundStyle(focused ? Theme.onAccentLarge : Theme.textPrimary)
             Spacer()
             chevron("chevron.left") { state.adjust(row: row, forward: false) }
             Text(state.value(for: row))
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(focused ? .white : Theme.accent)
+                .font(Theme.ui(18, .bold))
+                .foregroundStyle(focused ? Theme.onAccentLarge : Theme.accentText)
                 .monospacedDigit()
                 .frame(minWidth: 130)
                 .contentTransition(.numericText())
@@ -239,10 +241,10 @@ private struct OnboardingQualityRow: View {
         .padding(.horizontal, 26)
         .padding(.vertical, 18)
         .background(focused ? Theme.accent.opacity(0.85) : Theme.surface.opacity(0.6),
-                    in: RoundedRectangle(cornerRadius: 14))
+                    in: Theme.plate(14))
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.white.opacity(focused ? 0.3 : 0.06), lineWidth: 1)
+            Theme.plate(14)
+                .strokeBorder(Theme.ink.opacity(focused ? 0.3 : 0.06), lineWidth: 1)
         }
         .animation(Theme.focusSpring, value: focused)
         .animation(Theme.focusSpring, value: state.value(for: row))
@@ -252,7 +254,7 @@ private struct OnboardingQualityRow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(focused ? .white : .white.opacity(0.6))
+                .foregroundStyle(focused ? Theme.onAccentLarge : Theme.ink.opacity(0.6))
                 .frame(width: Theme.perPlatform(iOS: 44, macOS: 36),
                        height: Theme.perPlatform(iOS: 44, macOS: 36))
                 .contentShape(Circle())
@@ -281,7 +283,7 @@ private struct PresetsStep: View {
                     Text("On the home screen, your presets sit right under your games — press ▼ to load one.")
                     Text("Change a setting and the preset shows what changed: A keeps it, or revert it.")
                 }
-                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .font(Theme.ui(16, .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
             }
@@ -307,11 +309,11 @@ private struct MiniPresetChip: View {
     var body: some View {
         VStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(Theme.ui(15, .bold))
                 .foregroundStyle(highlighted ? Theme.onAccent : Theme.textSecondary)
                 .lineLimit(1)
             Text(label)
-                .font(.system(size: Theme.labelSize(11), weight: .medium, design: .rounded))
+                .font(Theme.ui(Theme.labelSize(11), .medium))
                 .foregroundStyle(highlighted ? Theme.onAccent.opacity(0.9) : Theme.textSecondary.opacity(0.6))
                 .lineLimit(1)
         }
@@ -319,10 +321,10 @@ private struct MiniPresetChip: View {
         .frame(minWidth: Theme.perPlatform(iOS: 112, macOS: 96),
                minHeight: Theme.perPlatform(iOS: 64, macOS: 60))
         .background(highlighted ? Theme.accent.opacity(0.85) : Theme.surface.opacity(0.6),
-                    in: RoundedRectangle(cornerRadius: 12))
+                    in: Theme.plate(12))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(highlighted ? Theme.accent : .white.opacity(0.12),
+            Theme.plate(12)
+                .strokeBorder(highlighted ? Theme.accent : Theme.ink.opacity(0.12),
                               style: StrokeStyle(lineWidth: highlighted ? 2 : 1, dash: highlighted ? [] : [4, 3]))
         }
         .shadow(color: highlighted ? Theme.accentGlow : .clear, radius: 14)
@@ -340,7 +342,7 @@ private struct FinishStep: View {
                 .font(.system(size: 64))
                 .foregroundStyle(Theme.accent)
             Text("You're all set")
-                .font(.system(size: 44, weight: .black, design: .rounded))
+                .font(Theme.display(44))
                 .foregroundStyle(Theme.textPrimary)
             OnboardingButton(title: "Jump in", prominent: true) { state.advanceOnboarding() }
                 .padding(.top, 6)
@@ -361,10 +363,10 @@ private struct OnboardingStepScaffold<Body: View>: View {
     var body: some View {
         VStack(spacing: 20) {
             Text(title)
-                .font(.system(size: 40, weight: .black, design: .rounded))
+                .font(Theme.display(40))
                 .foregroundStyle(Theme.textPrimary)
             Text(subtitle)
-                .font(.system(size: 18, weight: .medium, design: .rounded))
+                .font(Theme.ui(18, .medium))
                 .foregroundStyle(Theme.textSecondary)
             content
                 .padding(.vertical, 14)
@@ -382,12 +384,12 @@ private struct OnboardingButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(Theme.ui(18, .bold))
                 .foregroundStyle(prominent ? Theme.onAccent : Theme.textPrimary)
                 .padding(.horizontal, 34)
                 .padding(.vertical, 14)
                 .background(prominent ? Theme.accent : Theme.surface.opacity(0.7),
-                            in: Capsule())
+                            in: Theme.pill)
                 .shadow(color: prominent ? Theme.accentGlow : .clear, radius: 18, y: 4)
         }
         .buttonStyle(.plain)
@@ -405,8 +407,8 @@ private struct OnboardingPips: View {
     var body: some View {
         HStack(spacing: 10) {
             ForEach(steps, id: \.rawValue) { s in
-                Capsule()
-                    .fill(s == step ? Theme.accent : Color.white.opacity(0.18))
+                Theme.pill
+                    .fill(s == step ? Theme.accent : Theme.ink.opacity(0.18))
                     .frame(width: s == step ? 26 : 8, height: 8)
                     .animation(Theme.focusSpring, value: step)
             }
@@ -440,6 +442,6 @@ private struct OnboardingHints: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
-        .background(.black.opacity(0.35), in: Capsule())
+        .background(Theme.veil.opacity(0.35), in: Theme.pill)
     }
 }

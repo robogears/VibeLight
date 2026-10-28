@@ -460,17 +460,20 @@ final class AppState {
         }
     }
 
-    /// The launcher background style (Settings ▸ Themes). Global appearance pref,
-    /// stored on its own key so it's NOT captured into per-session stream presets.
-    var backgroundTheme: BackgroundTheme = .parallaxDeep {
+    /// Settings ▸ Themes ▸ Theme: the launcher's whole look (it replaced the
+    /// Background picker). Global appearance pref, stored on its own key so it's
+    /// NOT captured into per-session stream presets. `ThemeStore` hands it to
+    /// every `Theme` token, so whatever reads one redraws in the new theme.
+    var appTheme: AppTheme = .default {
         didSet {
-            guard oldValue != backgroundTheme else { return }
-            UserDefaults.standard.set(backgroundTheme.rawValue, forKey: Self.backgroundThemeKey)
+            ThemeStore.shared.theme = appTheme
+            guard oldValue != appTheme else { return }
+            UserDefaults.standard.set(appTheme.rawValue, forKey: AppTheme.storageKey)
         }
     }
 
     /// Settings ▸ Themes ▸ Interface Size. Global appearance pref on its own key,
-    /// like `backgroundTheme`: inside `settings` it would be captured into
+    /// like `appTheme`: inside `settings` it would be captured into
     /// presets, so loading a preset would undo it and changing it would
     /// deselect the active preset. (UX-ios-scale-shrinks-text-targets)
     var interfaceSize: InterfaceSize = .default {
@@ -587,7 +590,6 @@ final class AppState {
     }
 
     private static let settingsKey = "vibelight.streamSettings"
-    private static let backgroundThemeKey = "vibelight.backgroundTheme"
     private static let interfaceSizeKey = "vibelight.interfaceSize"
     static let menuSoundsKey = "vibelight.menuSounds"
     private static let setupVersionKey = "vibelight.setupVersion"
@@ -638,10 +640,9 @@ final class AppState {
         loaded.bitrateKbps = min(max(((loaded.bitrateKbps + step / 2) / step) * step,
                                      Self.bitrateMin), Self.bitrateMax)
         settings = loaded
-        if let raw = UserDefaults.standard.string(forKey: Self.backgroundThemeKey),
-           let theme = BackgroundTheme(rawValue: raw) {
-            backgroundTheme = theme   // didSet doesn't fire during init
-        }
+        ThemeFonts.register()   // the themes' bundled faces, before anything draws
+        appTheme = AppTheme.migrated(in: .standard)
+        ThemeStore.shared.theme = appTheme   // didSet doesn't fire during init
         if let raw = UserDefaults.standard.string(forKey: Self.interfaceSizeKey),
            let size = InterfaceSize(rawValue: raw) {
             interfaceSize = size
@@ -2611,8 +2612,8 @@ final class AppState {
             if event == .select || event == .move(.right) { advanceOnboarding() }
         case .theme:
             switch event {
-            case .move(.left):  backgroundTheme = Self.cycle(backgroundTheme, forward: false); sfx.play(.move)
-            case .move(.right): backgroundTheme = Self.cycle(backgroundTheme, forward: true); sfx.play(.move)
+            case .move(.left):  appTheme = Self.cycle(appTheme, forward: false); sfx.play(.move)
+            case .move(.right): appTheme = Self.cycle(appTheme, forward: true); sfx.play(.move)
             case .select:       advanceOnboarding()
             case .back:         backOnboarding()
             default: break
@@ -3342,7 +3343,7 @@ final class AppState {
         case audio, muteHostSpeakers, muteOnFocusLoss, menuSounds
         case touchControls, touchWithController, absoluteMouse, swapMouseButtons, reverseScrolling, captureSystemKeys, swapGamepadButtons, backgroundGamepad
         case vsync, framePacing, keepAwake, performanceOverlay
-        case background, interfaceSize
+        case theme, interfaceSize
         case appVersion, checkUpdates, restartSetup
 
         var focusID: String { "setting:\(rawValue)" }
@@ -3377,7 +3378,7 @@ final class AppState {
             case .framePacing: "Frame Pacing"
             case .keepAwake: "Keep Display Awake"
             case .performanceOverlay: "Performance Stats"
-            case .background: "Background"
+            case .theme: "Theme"
             case .interfaceSize: "Interface Size"
             case .appVersion: "Version"
             case .checkUpdates: "Software Update"
@@ -3426,7 +3427,7 @@ final class AppState {
                 #else
                 [.vsync, .framePacing, .keepAwake, .performanceOverlay]
                 #endif
-            case .themes: [.background, .interfaceSize]
+            case .themes: [.theme, .interfaceSize]
             }
         }
     }
@@ -3547,7 +3548,7 @@ final class AppState {
         case .framePacing: settings.framePacing ? "On" : "Off"
         case .keepAwake: settings.keepAwake ? "On" : "Off"
         case .performanceOverlay: settings.performanceOverlay ? "On" : "Off"
-        case .background: backgroundTheme.title
+        case .theme: appTheme.title
         case .interfaceSize: interfaceSize.label
         case .appVersion: "v\(updateService.currentVersion)"
         case .checkUpdates: updateStatusText
@@ -3624,7 +3625,7 @@ final class AppState {
         case .framePacing: settings.framePacing.toggle()
         case .keepAwake: settings.keepAwake.toggle(); refreshKeepAwake()
         case .performanceOverlay: settings.performanceOverlay.toggle()
-        case .background: backgroundTheme = Self.cycle(backgroundTheme, forward: forward)
+        case .theme: appTheme = Self.cycle(appTheme, forward: forward)
         case .interfaceSize: interfaceSize = Self.cycle(interfaceSize, forward: forward)
         case .appVersion, .checkUpdates, .restartSetup: break  // not value rows
         }

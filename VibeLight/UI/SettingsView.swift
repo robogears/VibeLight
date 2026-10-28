@@ -9,13 +9,12 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 16) {
                 Text("SETTINGS")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
-                    .tracking(6)
+                    .themeText(.screenTitle)
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if let host = state.selectedHost {
                     Text("Streaming from \(host.name)")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(Theme.ui(14, .medium, design: .default))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -30,8 +29,8 @@ struct SettingsView: View {
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
-                        // Themes tab: visual previews of each background above the
-                        // Background row, so the choice is something you SEE.
+                        // Themes tab: visual previews of each theme above the
+                        // Theme row, so the choice is something you SEE.
                         if state.settingsTab == .themes {
                             ThemePreviewStrip()
                                 .padding(.top, 38)      // sit a touch lower — less top-heavy
@@ -81,7 +80,7 @@ private struct SettingsTabBar: View {
                 bumper(.nextSection)
 
                 // Divider, then which preset these settings belong to.
-                Rectangle().fill(.white.opacity(0.12))
+                Rectangle().fill(Theme.ink.opacity(0.12))
                     .frame(width: 1, height: 26)
                     .padding(.horizontal, 6)
                 PresetStatusPill()
@@ -109,7 +108,7 @@ private struct TabChip: View {
 
     var body: some View {
         Text(tab.title)
-            .font(.system(size: 16, weight: .bold, design: .rounded))
+            .font(Theme.ui(16, .bold))
             .foregroundStyle(selected ? Theme.onAccent
                              : (contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))
             .fixedSize()
@@ -117,14 +116,14 @@ private struct TabChip: View {
             .padding(.vertical, 9)
             .background(
                 selected ? Theme.accent
-                         : Color.white.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06),
-                in: Capsule()
+                         : Theme.ink.opacity(hovering && state.inputMode == .pointer ? 0.14 : 0.06),
+                in: Theme.pill
             )
             .overlay {
-                Capsule().strokeBorder(.white.opacity(selected ? 0.3 : 0), lineWidth: 1)
+                Theme.pill.strokeBorder(Theme.ink.opacity(selected ? 0.3 : 0), lineWidth: 1)
             }
             // Hover brightens, never scales (owner rule: nothing zooms on hover).
-            .contentShape(Capsule())
+            .contentShape(Theme.pill)
             .onHover { hovering = $0 }
             .onTapGesture { state.setSettingsTab(tab) }
             .animation(Theme.focusSpring, value: selected)
@@ -145,14 +144,14 @@ private struct PresetStatusPill: View {
         HStack(spacing: 8) {
             if let preset = state.activePreset {
                 Text(preset.name)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(Theme.ui(15, .bold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 if edited {
-                    Circle().fill(Color.orange).frame(width: 7, height: 7)
+                    Circle().fill(Theme.edited).frame(width: 7, height: 7)
                     Text("edited")
-                        .font(.system(size: Theme.labelSize(12), weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.orange)
+                        .font(Theme.ui(Theme.labelSize(12), .bold))
+                        .foregroundStyle(Theme.editedText)
                 } else {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 13))
@@ -160,7 +159,7 @@ private struct PresetStatusPill: View {
                 }
             } else {
                 Text("Not saved as a preset")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(Theme.ui(14, .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
             }
@@ -168,11 +167,11 @@ private struct PresetStatusPill: View {
         .fixedSize()
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(edited ? Color.orange.opacity(0.12) : Theme.accent.opacity(state.activePreset == nil ? 0.06 : 0.16),
-                    in: Capsule())
-        .overlay(Capsule().strokeBorder(edited ? Color.orange.opacity(0.5) : .white.opacity(0.1), lineWidth: 1))
+        .background(edited ? Theme.edited.opacity(0.12) : Theme.accent.opacity(state.activePreset == nil ? 0.06 : 0.16),
+                    in: Theme.pill)
+        .overlay(Theme.pill.strokeBorder(edited ? Theme.edited.opacity(0.5) : Theme.ink.opacity(0.1), lineWidth: 1))
         .animation(Theme.focusSpring, value: edited)
-        .contentShape(Capsule())
+        .contentShape(Theme.pill)
         .onTapGesture { state.route(.detail) }
         .contextMenu {
             if let preset = state.activePreset, edited {
@@ -193,12 +192,16 @@ private struct SettingsRowView: View {
     let row: AppState.SettingsRow
 
     private var isFocused: Bool { state.focus.focusedItemID == row.focusID }
+    /// The ◀ ▶ arrows: bright on the focused (accent) row, dim ink elsewhere.
+    private var chevronInk: Color {
+        isFocused ? Theme.onAccentLarge.opacity(0.9) : Theme.ink.opacity(0.55)
+    }
 
     var body: some View {
         HStack {
             Text(row.title)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .foregroundStyle(isFocused ? .white : Theme.textPrimary.opacity(0.85))
+                .font(Theme.ui(19, .semibold))
+                .foregroundStyle(isFocused ? Theme.onAccentLarge : Theme.textPrimary.opacity(0.85))
 
             Spacer()
 
@@ -210,7 +213,7 @@ private struct SettingsRowView: View {
                 Button { state.adjust(row: row, forward: false) } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear)
+                        .foregroundStyle(showChevrons ? chevronInk : .clear)
                         .frame(width: Theme.perPlatform(iOS: 44, macOS: 34),
                                height: Theme.perPlatform(iOS: 44, macOS: 34))
                         .contentShape(Circle())
@@ -218,8 +221,8 @@ private struct SettingsRowView: View {
                 .buttonStyle(.plain)
                 .disabled(!showChevrons)
                 Text(state.value(for: row))
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
-                    .foregroundStyle(isFocused ? .white : Theme.accent)
+                    .font(Theme.ui(19, .bold))
+                    .foregroundStyle(isFocused ? Theme.onAccentLarge : Theme.accentText)
                     .monospacedDigit()
                     .frame(minWidth: 120, alignment: .center)
                     .contentTransition(.numericText())
@@ -229,8 +232,8 @@ private struct SettingsRowView: View {
                 } label: {
                     Image(systemName: row.isAction ? "chevron.forward.circle.fill" : "chevron.right")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(row.isAction ? (isFocused ? .white : Theme.accent)
-                                         : (showChevrons ? .white.opacity(isFocused ? 0.9 : 0.55) : .clear))
+                        .foregroundStyle(row.isAction ? (isFocused ? Theme.onAccentLarge : Theme.accent)
+                                         : (showChevrons ? chevronInk : .clear))
                         .frame(width: Theme.perPlatform(iOS: 44, macOS: 34),
                                height: Theme.perPlatform(iOS: 44, macOS: 34))
                         .contentShape(Circle())
@@ -244,13 +247,16 @@ private struct SettingsRowView: View {
         .padding(.vertical, 20)
         .background(
             isFocused ? Theme.accent.opacity(0.85) : Theme.surface.opacity(0.6),
-            in: RoundedRectangle(cornerRadius: 14)
+            in: Theme.plate(14)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Theme.hairline(isFocused ? 0.3 : 0.06, contrast), lineWidth: 1)
+            // Grid 72 rules each row in ink; elsewhere a faint hairline.
+            Theme.plate(14)
+                .strokeBorder(Theme.current.isGrid && !isFocused ? Theme.ink
+                                                                 : Theme.hairline(isFocused ? 0.3 : 0.06, contrast),
+                              lineWidth: Theme.current.isGrid && !isFocused ? 1.5 : 1)
         }
-        .scaleEffect(isFocused ? 1.015 : 1.0)
+        .scaleEffect(isFocused ? Theme.focusScale(1.015) : 1.0)
         .animation(Theme.focusSpring, value: isFocused)
         .animation(Theme.focusSpring, value: state.value(for: row))
         .onHover { if $0 && state.inputMode == .pointer { state.focus.focus(itemID: row.focusID) } }
@@ -271,7 +277,7 @@ private struct SettingsRowView: View {
 }
 
 /// Visual theme picker shown atop Settings ▸ Themes — tap a card to select it;
-/// the controller/keyboard still cycles via the Background row below.
+/// the controller/keyboard still cycles via the Theme row below.
 private struct ThemePreviewStrip: View {
     @Environment(AppState.self) private var state
 
@@ -281,19 +287,19 @@ private struct ThemePreviewStrip: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 22) {
-                    ForEach(BackgroundTheme.allCases, id: \.self) { theme in
-                        ThemeCard(theme: theme, selected: state.backgroundTheme == theme, width: 200)
+                    ForEach(AppTheme.allCases, id: \.self) { theme in
+                        ThemeCard(theme: theme, selected: state.appTheme == theme, width: 200)
                             .id(theme)
-                            .onTapGesture { state.backgroundTheme = theme }
+                            .onTapGesture { state.appTheme = theme }
                     }
                 }
                 .padding(.vertical, 24)
                 .padding(.horizontal, 2)
             }
-            .onChange(of: state.backgroundTheme) { _, theme in
+            .onChange(of: state.appTheme) { _, theme in
                 withAnimation(Theme.focusSpring) { proxy.scrollTo(theme, anchor: .center) }
             }
-            .onAppear { proxy.scrollTo(state.backgroundTheme, anchor: .center) }
+            .onAppear { proxy.scrollTo(state.appTheme, anchor: .center) }
         }
     }
 }

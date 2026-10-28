@@ -12,7 +12,7 @@ struct HoldProgressRing: View {
         VStack(spacing: 14) {
             ZStack {
                 Circle()
-                    .stroke(.white.opacity(0.14), lineWidth: 5)
+                    .stroke(Theme.ink.opacity(0.14), lineWidth: 5)
                 Circle()
                     .trim(from: 0, to: progress.fraction)
                     .stroke(tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
@@ -24,17 +24,18 @@ struct HoldProgressRing: View {
             .frame(width: 68, height: 68)
 
             Text(label)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(Theme.ui(15, .bold))
                 .foregroundStyle(Theme.textPrimary)
         }
         .padding(.horizontal, 30)
         .padding(.vertical, 24)
-        .background(Theme.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 20))
+        .background(Theme.surface.opacity(0.92), in: Theme.plate(20))
         .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(.white.opacity(0.1), lineWidth: 1)
+            Theme.plate(20)
+                .strokeBorder(Theme.ink.opacity(Theme.current.isGrid ? 1 : 0.1),
+                              lineWidth: Theme.current.isGrid ? 1.5 : 1)
         }
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 8)
+        .shadow(color: Theme.restShadow(0.5), radius: 24, y: 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .padding(.bottom, 110)
     }

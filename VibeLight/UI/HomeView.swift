@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The big-picture home screen: status header, hero title of the focused app,
 /// the games shelf with the preset row directly beneath it, and the input
-/// hint bar.
+/// hint bar. Every piece dresses for the selected theme (Settings ▸ Themes);
+/// the layout and focus ids are the same in all of them.
 struct HomeView: View {
     @Environment(AppState.self) private var state
 
@@ -23,33 +24,12 @@ struct HomeView: View {
 
             // Hero: the focused app's name writ large — the "what am I about
             // to play" moment.
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Theme.current == .nightEdition ? 14 : 10) {
                 if let app = state.focusedApp {
-                    Text(app.name)
-                        .font(.system(size: 52, weight: .black, design: .rounded))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
+                    HeroTitle(name: app.name)
                         .id("hero-\(state.appKey(app))")
-                        .transition(.opacity.combined(with: .offset(y: 8)))
-                    HStack(spacing: 12) {
-                        if app.isHDRSupported && state.settings.hdr {
-                            Badge(text: "HDR")
-                        }
-                        // Same friendly labels as the Settings rows ("1080p",
-                        // "4K", raw W×H for customs; whole-number Mbps).
-                        Badge(text: state.value(for: .resolution))
-                        Badge(text: "\(state.settings.fps) FPS")
-                        Badge(text: "\(state.settings.bitrateKbps / 1000) MBPS")
-                        // Which preset those numbers are; orange once changed.
-                        if let preset = state.activePreset {
-                            Badge(text: state.isActivePresetEdited ? "\(preset.name.uppercased()) · EDITED"
-                                                                   : preset.name.uppercased(),
-                                  tint: state.isActivePresetEdited ? .orange : .white)
-                        }
-                        if let info = state.serverInfo, info.runningAppID == app.id {
-                            Badge(text: "RUNNING", tint: .green)
-                        }
-                    }
+                        .transition(HeroTitle.transition)
+                    BadgeRow(items: heroBadges(for: app))
                 }
             }
             .frame(height: 110, alignment: .leading)
@@ -76,6 +56,318 @@ struct HomeView: View {
                 .padding(.bottom, 36)
                 .introReveal(state.intro.arrived(LaunchIntro.late), y: 6)
         }
+        // Grid 72's index numeral, huge and faint behind the hero and shelf.
+        .background(alignment: .topTrailing) {
+            if Theme.current.isGrid {
+                GridIndex()
+                    .padding(.top, 88)
+                    .padding(.trailing, 66)
+                    .introReveal(state.intro.arrived(LaunchIntro.hero), y: 8)
+            }
+        }
+        // Kabuki Cut's hit of white as the hero changes.
+        .overlay {
+            if Theme.current == .kabukiCut {
+                KabukiFlash(key: state.focusedApp.map { state.appKey($0) })
+            }
+        }
+    }
+
+    /// The hero's badges: the stream's numbers, which preset they are, and
+    /// RUNNING when this game is the one live on the PC.
+    private func heroBadges(for app: StreamApp) -> [BadgeItem] {
+        var items: [BadgeItem] = []
+        if app.isHDRSupported && state.settings.hdr {
+            items.append(BadgeItem(id: "hdr", text: "HDR"))
+        }
+        // Same friendly labels as the Settings rows ("1080p", "4K", raw W×H
+        // for customs; whole-number Mbps).
+        items.append(BadgeItem(id: "res", text: state.value(for: .resolution)))
+        items.append(BadgeItem(id: "fps", text: "\(state.settings.fps) FPS"))
+        items.append(BadgeItem(id: "rate", text: "\(state.settings.bitrateKbps / 1000) MBPS"))
+        // Which preset those numbers are; orange once changed.
+        if let preset = state.activePreset {
+            let edited = state.isActivePresetEdited
+            items.append(BadgeItem(id: "preset",
+                                   text: edited ? "\(preset.name.uppercased()) · EDITED" : preset.name.uppercased(),
+                                   kind: .preset(edited: edited)))
+        }
+        if let info = state.serverInfo, info.runningAppID == app.id {
+            items.append(BadgeItem(id: "running", text: "RUNNING", kind: .running))
+        }
+        return items
+    }
+}
+
+// MARK: - Hero
+
+/// The focused game's name in the theme's voice, and its entrance: Default's
+/// soft rise (the hero's transition); Night Edition's line set from beneath a
+/// hairline that rules itself in; Grid 72's short slide; Kabuki Cut's crimson
+/// slab that wipes in and the name that slams onto it. Reduce Motion: the
+/// themes just change the name.
+private struct HeroTitle: View {
+    let name: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var arrived = false
+
+    /// Default keeps its fade-and-rise as the transition. The themes animate
+    /// inside (so the entrance can be clipped and timed) and the name they
+    /// replace leaves at once — the spec swaps the text, then animates the new.
+    static var transition: AnyTransition {
+        Theme.current == .default ? .opacity.combined(with: .offset(y: 8)) : .identity
+    }
+
+    private var shown: Bool { arrived || reduceMotion }
+
+    var body: some View {
+        switch Theme.current {
+        case .default:
+            Text(name)
+                .font(.system(size: 52, weight: .black, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+        case .nightEdition:
+            Text(name)
+                .themeText(.hero)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .bottomLeading)
+                .offset(y: shown ? 0 : 49)
+                .opacity(shown ? 1 : 0)
+                .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32), value: shown)
+                .padding(.bottom, 4)
+                .clipped()   // after the offset: the line rises from under the rule
+                .overlay(alignment: .bottomLeading) {
+                    Rectangle()
+                        .fill(Theme.ink.opacity(0.5))
+                        .frame(height: 1)
+                        .scaleEffect(x: shown ? 1 : 0, anchor: .leading)
+                        .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38), value: shown)
+                }
+                .onAppear { arrived = true }
+        case .grid72, .grid72Dark:
+            Text(name)
+                .themeText(.hero)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .offset(x: shown ? 0 : -16)
+                .animation(.timingCurve(0.2, 0, 0, 1, duration: 0.18), value: shown)
+                .onAppear { arrived = true }
+        case .kabukiCut:
+            Text(name)
+                .themeText(.hero)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .frame(height: 60)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .padding(.leading, 18)
+                .padding(.trailing, 26)
+                // The slam: the name lands on the slab a beat after it wipes in.
+                .scaleEffect(shown ? 1 : 1.35)
+                .opacity(shown ? 1 : 0)
+                .animation(.spring(response: 0.2, dampingFraction: 0.55).delay(0.07), value: shown)
+                .background(Theme.accent)
+                .background { Color.white.offset(x: 8, y: 8) }
+                .scaleEffect(x: shown ? 1 : 0, y: 1, anchor: .leading)
+                .animation(.timingCurve(0.2, 0, 0, 1, duration: 0.16), value: shown)
+                .slanted(-8, pivot: 36)
+                .onAppear { arrived = true }
+        }
+    }
+}
+
+/// One hero badge: what it says and what kind of fact it is.
+struct BadgeItem: Identifiable {
+    let id: String
+    let text: String
+    var kind: Badge.Kind = .spec
+}
+
+/// The hero's badges in the theme's arrangement: pills in a row (Default), one
+/// printed line between dots (Night Edition), columns between ink rules (Grid
+/// 72), slanted slabs (Kabuki Cut). Also on the starting card.
+struct BadgeRow: View {
+    let items: [BadgeItem]
+
+    var body: some View {
+        switch Theme.current {
+        case .default:
+            HStack(spacing: 12) {
+                ForEach(items) { Badge(text: $0.text, kind: $0.kind) }
+            }
+        case .nightEdition:
+            HStack(spacing: 0) {
+                ForEach(items) { item in
+                    if item.id != items.first?.id {
+                        Text("·")
+                            .themeText(.badge)
+                            .foregroundStyle(Theme.ink.opacity(0.4))
+                            .padding(.horizontal, 10)
+                    }
+                    Badge(text: item.text, kind: item.kind)
+                }
+            }
+        case .grid72, .grid72Dark:
+            HStack(spacing: 0) {
+                ForEach(items) { item in
+                    let first = item.id == items.first?.id
+                    if !first {
+                        Rectangle().fill(Theme.ink).frame(width: 1.5, height: 15)
+                    }
+                    Badge(text: item.text, kind: item.kind)
+                        .padding(.leading, first ? 0 : 14)
+                        .padding(.trailing, 14)
+                }
+            }
+            .padding(.top, 2)
+        case .kabukiCut:
+            HStack(spacing: 10) {
+                ForEach(items) { Badge(text: $0.text, kind: $0.kind) }
+            }
+            .padding(.leading, 4)
+        }
+    }
+}
+
+struct Badge: View {   // also on the starting card (PosterLiftCard)
+    /// What the badge says about the stream: a number, which preset, or that
+    /// the game is running.
+    enum Kind: Equatable {
+        case spec
+        case preset(edited: Bool)
+        case running
+    }
+
+    let text: String
+    var kind: Kind = .spec
+
+    var body: some View {
+        switch Theme.current {
+        case .default:
+            Text(text)
+                .font(.system(size: Theme.labelSize(12), weight: .heavy, design: .rounded))
+                .tracking(1.2)
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+        case .nightEdition:
+            // Printed words; RUNNING carries its green dot after it.
+            HStack(spacing: 7) {
+                Text(text).themeText(.badge).foregroundStyle(words)
+                if kind == .running {
+                    Circle().fill(Theme.live).frame(width: 7, height: 7)
+                }
+            }
+        case .grid72, .grid72Dark:
+            Text(text).themeText(.badge).foregroundStyle(words)
+        case .kabukiCut:
+            Text(text)
+                .themeText(.badge)
+                .foregroundStyle(slab == .black ? Color.white : Color.black)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background { SlantedRect(Theme.slant).fill(slab) }
+                .overlay {
+                    if case .preset(let edited) = kind {
+                        SlantedRect(Theme.slant).strokeBorder(edited ? Theme.edited : Theme.accent, lineWidth: 2)
+                    }
+                }
+        }
+    }
+
+    /// Default's pill colour: the accent for numbers, white for the preset
+    /// (orange once edited), green for RUNNING.
+    private var tint: Color {
+        switch kind {
+        case .spec: Theme.accent
+        case .preset(let edited): edited ? Theme.edited : Theme.textPrimary
+        case .running: Theme.live
+        }
+    }
+
+    /// The printed themes' word colour: quiet numbers (ink on Grid 72), the
+    /// accent's text cut for the preset, green for RUNNING.
+    private var words: Color {
+        switch kind {
+        case .spec: Theme.current.isGrid ? Theme.textPrimary : Theme.textSecondary
+        case .preset(let edited): edited ? Theme.editedText : Theme.accentText
+        case .running: Theme.liveText
+        }
+    }
+
+    /// Kabuki's slab: white for numbers, black for the preset, lime for RUNNING.
+    private var slab: Color {
+        switch kind {
+        case .spec: .white
+        case .preset: .black
+        case .running: Theme.live
+        }
+    }
+}
+
+/// Grid 72's index: which game is focused, of how many, set huge and faint at
+/// the top right. It flips with focus — the screen's only ambient life.
+private struct GridIndex: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var number: Int? {
+        guard let app = state.focusedApp,
+              let index = state.apps.firstIndex(where: { $0.id == app.id }) else { return nil }
+        return index + 1
+    }
+
+    var body: some View {
+        if let number {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text(twoDigits(number))
+                    .font(ThemeFace.archivoExpandedBlack.font(300))
+                    .tracking(-12)
+                    .foregroundStyle(Theme.palette.isLight ? Color(hex: 0xE4E3DE) : Theme.ink.opacity(0.06))
+                    .contentTransition(.numericText(value: Double(number)))
+                Text("/" + twoDigits(state.apps.count))
+                    .font(ThemeFace.archivoExpandedBlack.font(90))
+                    .foregroundStyle(Theme.palette.isLight ? Color(hex: 0xD9D8D2) : Theme.ink.opacity(0.1))
+            }
+            .monospacedDigit()
+            .animation(reduceMotion ? nil : Theme.focusSpring, value: number)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+/// Kabuki Cut's hit: one 140 ms frame of white at 50 % when the hero changes.
+/// Never more than about twice a second however fast focus moves (WCAG 2.3.1
+/// allows three flashes), and never under Reduce Motion.
+private struct KabukiFlash: View {
+    let key: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hits = 0
+    @State private var last = Date.distantPast
+
+    var body: some View {
+        Color.white
+            .phaseAnimator(FlashPhase.allCases, trigger: hits) { flash, phase in
+                flash.opacity(phase.strength)
+            } animation: { phase in
+                phase == .lit ? Animation.linear(duration: 0.02) : Animation.easeOut(duration: 0.14)
+            }
+            .allowsHitTesting(false)
+            .ignoresSafeArea()
+            .onChange(of: key) { _, new in
+                guard new != nil, !reduceMotion, Date().timeIntervalSince(last) > 0.4 else { return }
+                last = Date()
+                hits += 1
+            }
+    }
+
+    private enum FlashPhase: CaseIterable {
+        case rest, lit, fade
+        var strength: Double { self == .lit ? 0.5 : 0 }
     }
 }
 
@@ -86,10 +378,7 @@ private struct HeaderBar: View {
 
     var body: some View {
         HStack(spacing: 20) {
-            Text("VIBELIGHT")
-                .font(.system(size: 22, weight: .black, design: .rounded))
-                .tracking(6)
-                .foregroundStyle(Theme.textPrimary.opacity(0.9))
+            Wordmark()
 
             Spacer()
 
@@ -109,11 +398,89 @@ private struct HeaderBar: View {
             // button (it carries `header:addhost`), not a pill up here — one
             // view per focus id (UX-empty-home-no-invitation).
 
+            HeaderClock()
+        }
+        // Night Edition's masthead rule: two hairlines under the header.
+        .overlay(alignment: .bottom) {
+            if Theme.current == .nightEdition {
+                VStack(spacing: 2) {
+                    Rectangle().frame(height: 1)
+                    Rectangle().frame(height: 1)
+                }
+                .foregroundStyle(Theme.ink.opacity(0.55))
+                .offset(y: 8)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+/// The masthead: Default's tracked SF Rounded; Night Edition's Fraunces; Grid
+/// 72's expanded capitals after a red square; Kabuki Cut's V in a slanted
+/// crimson block.
+private struct Wordmark: View {
+    var body: some View {
+        switch Theme.current {
+        case .default:
+            Text("VIBELIGHT")
+                .font(.system(size: 22, weight: .black, design: .rounded))
+                .tracking(6)
+                .foregroundStyle(Theme.textPrimary.opacity(0.9))
+        case .nightEdition:
+            Text("VIBELIGHT")
+                .themeText(.wordmark)
+                .foregroundStyle(Theme.textPrimary)
+        case .grid72, .grid72Dark:
+            HStack(spacing: 12) {
+                Rectangle().fill(Theme.accent).frame(width: 12, height: 12)
+                Text("VIBELIGHT")
+                    .themeText(.wordmark)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+        case .kabukiCut:
+            HStack(spacing: 6) {
+                Text("V")
+                    .themeText(.wordmark)
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Theme.accent)
+                    .slanted(Theme.slant, pivot: 17)
+                Text("IBELIGHT")
+                    .themeText(.wordmark)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("VibeLight")
+        }
+    }
+}
+
+/// The header clock. Grid 72's is a railway clock — it shows seconds; Kabuki
+/// Cut's casts a hard crimson shadow.
+private struct HeaderClock: View {
+    var body: some View {
+        switch Theme.current {
+        case .default:
             TimelineView(.everyMinute) { context in
                 Text(context.date, format: .dateTime.hour().minute())
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary.opacity(0.85))
                     .monospacedDigit()
+            }
+        case .grid72, .grid72Dark:
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(context.date, format: .dateTime.hour().minute().second())
+                    .themeText(.clock)
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+            }
+        case .nightEdition, .kabukiCut:
+            TimelineView(.everyMinute) { context in
+                Text(context.date, format: .dateTime.hour().minute())
+                    .themeText(.clock)
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+                    .shadow(color: Theme.current == .kabukiCut ? Theme.accent : .clear, radius: 0, x: 3, y: 3)
             }
         }
     }
@@ -127,16 +494,21 @@ private struct HostChip: View {
     @State private var hovering = false
 
     private var isFocused: Bool { state.focus.focusedItemID == "header:host" }
+    /// Kabuki Cut's chip is a white slab (crimson when focused), so its words
+    /// are dark on it.
+    private var onSlab: Bool { Theme.current == .kabukiCut }
+    private var ink: Color { onSlab ? (isFocused ? .white : .black) : Theme.textPrimary }
+    private var inkSecondary: Color {
+        onSlab ? (isFocused ? .white.opacity(0.85) : .black.opacity(0.62)) : Theme.textSecondary
+    }
+    private var inkWarning: Color { onSlab ? (isFocused ? .white : Color(hex: 0xA34700)) : Theme.warning }
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(state.selectedHostDot.color)
-                .frame(width: 9, height: 9)
-                .shadow(color: state.hostOnline ? .green.opacity(0.8) : .clear, radius: 5)
+            dot
             Text(host.name)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.textPrimary)
+                .themeText(.hostName)
+                .foregroundStyle(ink)
             // A real error must never masquerade as "asleep" — that hides
             // pairing/TLS problems behind a wake hint (AppState.hostBanner).
             switch state.hostBanner {
@@ -148,8 +520,8 @@ private struct HostChip: View {
                 // empty bar after it. The chip now ends where the text ends.
                 WidthCap(max: 420) {
                     Text(AppState.chipBannerText(error, hostName: host.name))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .font(Theme.ui(13, .medium, design: .default))
+                        .foregroundStyle(inkWarning)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -159,34 +531,165 @@ private struct HostChip: View {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(Theme.textSecondary)
+                        .tint(inkSecondary)
                     Text(notice)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(Theme.ui(13, .medium, design: .default))
+                        .foregroundStyle(inkSecondary)
                 }
             case .status(let status):
                 Text(status)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(13, .medium, design: .default))
+                    .foregroundStyle(inkSecondary)
             case nil:
                 EmptyView()
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(inkSecondary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Capsule())
-        .overlay {
-            Capsule().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
-        }
-        .scaleEffect(isFocused ? 1.03 : 1.0)
-        .contentShape(Capsule())
+        .modifier(HostChipChrome(isFocused: isFocused, hovering: hovering))
         .onHover { hovering = $0 }
         .onTapGesture { state.openHostMenu() }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(Theme.focusSpring, value: isFocused)
+    }
+
+    /// The status dot: round in Default and Night Edition, square in Grid 72
+    /// and Kabuki Cut. On Kabuki's white slab the theme's lime would vanish,
+    /// so its colours are deeper there.
+    @ViewBuilder private var dot: some View {
+        switch Theme.current {
+        case .default:
+            Circle()
+                .fill(state.selectedHostDot.color)
+                .frame(width: 9, height: 9)
+                .shadow(color: state.hostOnline ? .green.opacity(0.8) : .clear, radius: 5)
+        case .nightEdition:
+            Circle()
+                .fill(state.selectedHostDot.color)
+                .frame(width: 9, height: 9)
+        case .grid72, .grid72Dark:
+            Rectangle()
+                .fill(state.selectedHostDot.color)
+                .frame(width: 9, height: 9)
+        case .kabukiCut:
+            Rectangle()
+                .fill(slabDot)
+                .frame(width: 9, height: 9)
+        }
+    }
+
+    private var slabDot: Color {
+        if isFocused { return .white }
+        switch state.selectedHostDot {
+        case .online: return Color(hex: 0x2F7D00)
+        case .unreachable: return Theme.accent
+        case .attention: return Color(hex: 0xC25E00)
+        }
+    }
+}
+
+/// The host chip's plate: Default's pill; Night Edition's bare words (a 2 pt
+/// frame when focused); Grid 72's ink-ruled box; Kabuki Cut's slanted white
+/// slab that turns crimson when focused.
+private struct HostChipChrome: ViewModifier {
+    let isFocused: Bool
+    let hovering: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        switch Theme.current {
+        case .default:
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
+                .scaleEffect(isFocused ? 1.03 : 1.0)
+                .contentShape(Capsule())
+        case .nightEdition:
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(Theme.ink.opacity(hovering ? 0.06 : 0), in: Theme.plate(2))
+                .overlay {
+                    Theme.plate(2).strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
+                .contentShape(Rectangle())
+        case .grid72, .grid72Dark:
+            content
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(Theme.ink.opacity(hovering ? 0.06 : 0), in: Rectangle())
+                .overlay {
+                    Rectangle().strokeBorder(isFocused ? Theme.accent : Theme.ink, lineWidth: isFocused ? 2.5 : 1.5)
+                }
+                .contentShape(Rectangle())
+        case .kabukiCut:
+            content
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background {
+                    SlantedRect(Theme.slant).fill(isFocused ? Theme.accent : Color.white.opacity(hovering ? 0.88 : 1))
+                }
+                .scaleEffect(isFocused ? 1.03 : 1.0)
+                .contentShape(Rectangle())
+        }
+    }
+}
+
+/// The header's round buttons (Wake, Restart): Default's soft circle, Night
+/// Edition's ruled ring, Grid 72's ink square, Kabuki Cut's slanted white block.
+private struct HeaderButtonChrome: ViewModifier {
+    let isFocused: Bool
+    let hovering: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        switch Theme.current {
+        case .default:
+            content
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
+                }
+        case .nightEdition:
+            content
+                .frame(width: 38, height: 38)
+                .background(Theme.ink.opacity(hovering ? 0.06 : 0), in: Circle())
+                .overlay {
+                    Circle().strokeBorder(isFocused ? Theme.accent : Theme.ink.opacity(0.5),
+                                          lineWidth: isFocused ? 2 : 1)
+                }
+        case .grid72, .grid72Dark:
+            content
+                .frame(width: 38, height: 38)
+                .background(Theme.ink.opacity(hovering ? 0.06 : 0), in: Rectangle())
+                .overlay {
+                    Rectangle().strokeBorder(isFocused ? Theme.accent : Theme.ink, lineWidth: isFocused ? 2.5 : 1.5)
+                }
+        case .kabukiCut:
+            content
+                .frame(width: 38, height: 38)
+                .background {
+                    SlantedRect(Theme.slant).fill(isFocused ? Theme.accent : Color.white.opacity(hovering ? 0.88 : 1))
+                }
+        }
+    }
+
+    /// The glyph on that chrome: the accent while a wake is under way, then
+    /// Default's dim-until-hovered grey, ink on the printed themes, and black
+    /// (white when focused) on Kabuki's slab.
+    static func glyph(focused: Bool, hovering: Bool, busy: Bool = false) -> Color {
+        switch Theme.current {
+        case .default:
+            busy ? Theme.accent : (hovering || focused ? Theme.textPrimary : Theme.textSecondary)
+        case .kabukiCut:
+            focused ? .white : (busy ? Theme.accent : .black)
+        case .nightEdition, .grid72, .grid72Dark:
+            busy ? Theme.accentText : Theme.textPrimary
+        }
     }
 }
 
@@ -206,22 +709,17 @@ private struct WakePCButton: View {
         Button { state.wakeSelectedHost() } label: {
             Image(systemName: "power")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(waking ? Theme.accent
-                                 : (hovering || isFocused ? Theme.textPrimary : Theme.textSecondary))
-                .frame(width: 38, height: 38)
-                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
-                .overlay {
-                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
-                }
+                .foregroundStyle(HeaderButtonChrome.glyph(focused: isFocused, hovering: hovering, busy: waking))
+                .modifier(HeaderButtonChrome(isFocused: isFocused, hovering: hovering))
                 .symbolEffect(.pulse, options: .repeating, isActive: waking)
-                // The 38 pt circle stays the look; on iOS the padding authors a
+                // The 38 pt button stays the look; on iOS the padding authors a
                 // 44 pt tap area, which the iPad canvas scale draws at 35–42 pt
                 // (UX-ios-scale-shrinks-text-targets). The Mac keeps 38 pt.
                 .padding(Theme.perPlatform(iOS: 3, macOS: 0))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(isFocused ? 1.06 : 1.0)
+        .scaleEffect(isFocused ? Theme.focusScale(1.06) : 1.0)
         .onHover { hovering = $0 }
         .help(waking ? "Waking…" : "Wake computer")
         .animation(.easeOut(duration: 0.12), value: hovering)
@@ -242,36 +740,17 @@ private struct RestartPCButton: View {
         Button { state.requestRestartPC() } label: {
             Image(systemName: "restart")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(hovering || isFocused ? Theme.textPrimary : Theme.textSecondary)
-                .frame(width: 38, height: 38)
-                .background(.white.opacity(hovering || isFocused ? 0.12 : 0.06), in: Circle())
-                .overlay {
-                    Circle().strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 0)
-                }
+                .foregroundStyle(HeaderButtonChrome.glyph(focused: isFocused, hovering: hovering))
+                .modifier(HeaderButtonChrome(isFocused: isFocused, hovering: hovering))
                 .padding(Theme.perPlatform(iOS: 3, macOS: 0))   // as Wake
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(isFocused ? 1.06 : 1.0)
+        .scaleEffect(isFocused ? Theme.focusScale(1.06) : 1.0)
         .onHover { hovering = $0 }
         .help("Restart PC")
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(Theme.focusSpring, value: isFocused)
-    }
-}
-
-struct Badge: View {   // also on the starting card (PosterLiftCard)
-    let text: String
-    var tint: Color = Theme.accent
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: Theme.labelSize(12), weight: .heavy, design: .rounded))
-            .tracking(1.2)
-            .foregroundStyle(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -317,6 +796,35 @@ private struct ShelfTiles: View {
         // screen edge like a proper shelf.)
         .padding(.trailing, ShelfScroll.trailing)
         .padding(.vertical, AppTileView.Metrics.focusPadding)
+        // Grid 72's focus is one red bar that slides along the row.
+        .overlay(alignment: .topLeading) {
+            if Theme.current.isGrid { GridFocusBar() }
+        }
+    }
+}
+
+/// Grid 72's focus: a 6 pt red bar along the bottom edge of the focused tile's
+/// art, sliding from tile to tile in 180 ms (120 ms under Reduce Motion). One
+/// view for the whole row, as in the spec, so it travels rather than blinks.
+private struct GridFocusBar: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var focusedIndex: Int? {
+        guard let id = state.focus.focusedItemID, id.hasPrefix("app:") else { return nil }
+        return state.apps.firstIndex { "app:\(state.appKey($0))" == id }
+    }
+
+    var body: some View {
+        if let index = focusedIndex, state.intro.focusReady {
+            Rectangle()
+                .fill(Theme.accent)
+                .frame(width: ShelfScroll.tile, height: 6)
+                .offset(x: ShelfScroll.leading + CGFloat(index) * (ShelfScroll.tile + ShelfScroll.spacing),
+                        y: AppTileView.Metrics.focusPadding + AppTileView.Metrics.art.height - 2)
+                .animation(reduceMotion ? .easeOut(duration: 0.12) : Theme.focusSpring, value: index)
+                .allowsHitTesting(false)
+        }
     }
 }
 
@@ -497,16 +1005,16 @@ private struct EmptyShelfPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(shelf == .notResponding || shelf == .problem ? Color.orange : Theme.accent)
+                .foregroundStyle(shelf == .notResponding || shelf == .problem ? Theme.warning : Theme.accent)
                 .accessibilityHidden(true)
             Text(title)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(Theme.ui(22, .bold))
                 .foregroundStyle(Theme.textPrimary)
             Text(message)
-                .font(.system(size: 15, weight: .medium))
+                .font(Theme.ui(15, .medium, design: .default))
                 // A saved-computers warning is orange, as everywhere else
                 // (DESIGN.md › Semantic colours); the normal invitation is not.
-                .foregroundStyle(isWarning ? Color.orange
+                .foregroundStyle(isWarning ? Theme.warning
                                  : contrast == .increased ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if shelf == .noComputer {
@@ -526,10 +1034,11 @@ private struct EmptyShelfPanel: View {
         }
         .padding(28)
         .frame(width: 416, alignment: .leading)
-        .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 13))
+        .background(Theme.surface.opacity(0.6), in: Theme.plate(13))
         .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(Theme.hairline(0.08, contrast), lineWidth: 1)
+            Theme.plate(13)
+                .strokeBorder(Theme.current.isGrid ? Theme.ink : Theme.hairline(0.08, contrast),
+                              lineWidth: Theme.current.isGrid ? 1.5 : 1)
         }
     }
 }
@@ -543,12 +1052,13 @@ private struct PresetRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("PRESETS")
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
-                .tracking(2)
-                .foregroundStyle(Theme.textSecondary)
+                .themeText(.sectionLabel)
+                // Quiet in Default and Night Edition; ink on Grid 72, white on Kabuki.
+                .foregroundStyle(Theme.current.isGrid || Theme.current == .kabukiCut
+                                 ? Theme.textPrimary : Theme.textSecondary)
             HStack(spacing: 10) {
-                ForEach(state.presets) { preset in
-                    PresetChip(preset: preset)
+                ForEach(Array(state.presets.enumerated()), id: \.element.id) { index, preset in
+                    PresetChip(preset: preset, number: index + 1)
                         // Equal flexible widths that cap at 252 pt (room for the
                         // full "1440p · 120 fps · 100 Mbps" summary); on narrow
                         // screens they compress together and the summary
@@ -562,6 +1072,9 @@ private struct PresetRow: View {
                         .transition(.opacity)
                 }
             }
+            // Kabuki's slanted chips lean left at the bottom; this keeps the
+            // first one off the margin.
+            .padding(.leading, Theme.current == .kabukiCut ? 8 : 0)
             .animation(Theme.focusSpring, value: state.presetRowFocusIDs)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -572,12 +1085,15 @@ private struct PresetRow: View {
 /// since = "edited": an accent ring, an orange dot, and the change itself in
 /// place of the summary ("Edited · 80 → 60 Mbps") — A keeps it, Options ▸
 /// Revert drops it. Focus is the white ring. Tap = A; right-click / long-press
-/// = rename, revert, delete.
+/// = rename, revert, delete. The other themes keep those states in their own
+/// dress (see `chrome`).
 private struct PresetChip: View {
     @Environment(AppState.self) private var state
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let preset: StreamPreset
+    /// Its place in the row, from 1 — Grid 72 prints it ("01").
+    let number: Int
     @State private var hovering = false
 
     private var focusID: String { "preset:\(preset.id)" }
@@ -590,10 +1106,30 @@ private struct PresetChip: View {
     /// one is a 0.35 tint over the dark backdrop and keeps white ink.
     private var ink: Color { Theme.labelInk(onSolidAccent: solid) }
 
+    /// The name's colour. Default as above; the solid chip in the other
+    /// themes is the accent (Night Edition), ink (Grid 72) or white (Kabuki).
+    private var nameInk: Color {
+        switch Theme.current {
+        case .default: solid || isFocused ? ink : Theme.textPrimary
+        case .nightEdition: solid ? Theme.onAccent : Theme.textPrimary
+        case .grid72, .grid72Dark: solid ? Theme.background : Theme.textPrimary
+        case .kabukiCut: solid ? .black : (isFocused ? .white : Theme.textPrimary)
+        }
+    }
+
+    private var summaryInk: Color {
+        switch Theme.current {
+        case .default: solid || isFocused ? ink.opacity(0.85) : Theme.textSecondary
+        case .nightEdition: solid ? Theme.onAccent : Theme.textSecondary   // full ink: 4.7:1 on the fill
+        case .grid72, .grid72Dark: solid ? Theme.background.opacity(0.8) : Theme.textSecondary
+        case .kabukiCut: solid ? Color(hex: 0x333333) : (isFocused ? .white.opacity(0.85) : Theme.textSecondary)
+        }
+    }
+
     private func summaryLine(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: Theme.labelSize(11), weight: .medium))
-            .foregroundStyle(solid || isFocused ? ink.opacity(0.85) : Theme.textSecondary)
+            .themeText(.chipSummary)
+            .foregroundStyle(summaryInk)
             .lineLimit(1)
     }
 
@@ -605,49 +1141,51 @@ private struct PresetChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preset.name)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(solid || isFocused ? ink : Theme.textPrimary)
-                    .lineLimit(1)
-                if edited {
-                    Text(changeLine)
-                        .font(.system(size: Theme.labelSize(11), weight: .bold))
-                        .foregroundStyle(Color.orange)
+        chrome(
+            HStack(spacing: 10) {
+                if Theme.current.isGrid {
+                    Text(twoDigits(number))
+                        .font(ThemeFace.archivoNarrowBold.font(Theme.labelSize(11)))
+                        .tracking(0.66)
+                        .foregroundStyle(solid ? Theme.accent : Theme.accentText)
+                        .monospacedDigit()
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.name)
+                        .themeText(.chipName)
+                        .foregroundStyle(nameInk)
                         .lineLimit(1)
-                        .contentTransition(.opacity)
-                } else {
-                    // The first form that fits, so a narrow chip shows
-                    // "1080p · 144 fps" instead of "1080p · 144 fps · 8…".
-                    ViewThatFits(in: .horizontal) {
-                        summaryLine(preset.summary)
-                        summaryLine(preset.shortSummary)
-                        summaryLine(preset.resolutionLabel)
+                    if edited {
+                        Text(changeLine)
+                            .themeText(.chipEdited)
+                            .foregroundStyle(Theme.editedText)
+                            .lineLimit(1)
+                            .contentTransition(.opacity)
+                    } else {
+                        // The first form that fits, so a narrow chip shows
+                        // "1080p · 144 fps" instead of "1080p · 144 fps · 8…".
+                        ViewThatFits(in: .horizontal) {
+                            summaryLine(preset.summary)
+                            summaryLine(preset.shortSummary)
+                            summaryLine(preset.resolutionLabel)
+                        }
                     }
                 }
+                Spacer(minLength: 4)
+                if solid {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.current == .default || Theme.current == .nightEdition
+                                         ? Theme.onAccent : Theme.accent)
+                } else if edited {
+                    editedDot
+                }
             }
-            Spacer(minLength: 4)
-            if solid {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.onAccent)
-            } else if edited {
-                Circle().fill(Color.orange).frame(width: 8, height: 8)
-                    .shadow(color: .orange.opacity(0.8), radius: 4)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-        .contentShape(Rectangle())
-        .background(fill, in: RoundedRectangle(cornerRadius: 13))
-        .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(border, lineWidth: isFocused ? 2.5 : 1)
-        }
-        .shadow(color: solid ? Theme.accentGlow : .clear, radius: 12, y: 3)
-        .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+            .contentShape(Rectangle())
+        )
         .animation(Theme.focusSpring, value: solid)
         .animation(Theme.focusSpring, value: edited)
         .animation(Theme.focusSpring, value: isFocused)
@@ -677,6 +1215,92 @@ private struct PresetChip: View {
         .accessibilityValue(solid ? Text("Loaded") : edited ? Text("Loaded, edited: \(changeLine)") : Text(""))
     }
 
+    /// The edited marker: Default's glowing orange dot; a plain dot on Night
+    /// Edition; a square on Grid 72 and Kabuki Cut.
+    @ViewBuilder private var editedDot: some View {
+        switch Theme.current {
+        case .default:
+            Circle().fill(Color.orange).frame(width: 8, height: 8)
+                .shadow(color: .orange.opacity(0.8), radius: 4)
+        case .nightEdition:
+            Circle().fill(Theme.edited).frame(width: 8, height: 8)
+        case .grid72, .grid72Dark, .kabukiCut:
+            Rectangle().fill(Theme.edited).frame(width: 8, height: 8)
+        }
+    }
+
+    /// The chip's plate, per theme. Default: the fill and ring below, a glow
+    /// when loaded, a small lift when focused. Night Edition: a printed 2 pt
+    /// box (vermilion when loaded, a vermilion rule when edited), focus an
+    /// ivory frame outside it. Grid 72: an ink-ruled box (solid ink when
+    /// loaded, red rule when edited), focus a keyline outside and a red bar
+    /// under it. Kabuki Cut: a slanted black slab with a white rule (white
+    /// with a crimson shadow when loaded, a crimson rule when edited), focus
+    /// crimson and a little bigger.
+    @ViewBuilder private func chrome(_ chip: some View) -> some View {
+        switch Theme.current {
+        case .default:
+            chip
+                .background(fill, in: RoundedRectangle(cornerRadius: 13))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13)
+                        .strokeBorder(border, lineWidth: isFocused ? 2.5 : 1)
+                }
+                .shadow(color: solid ? Theme.accentGlow : .clear, radius: 12, y: 3)
+                .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+        case .nightEdition:
+            chip
+                .background(solid ? Theme.accent : Theme.ink.opacity(hovering ? 0.05 : 0),
+                            in: RoundedRectangle(cornerRadius: 2))
+                .overlay {
+                    if !solid {
+                        RoundedRectangle(cornerRadius: 2)
+                            .strokeBorder(edited ? Theme.accent : Theme.hairline(0.3, contrast),
+                                          lineWidth: edited ? 2 : 1)
+                    }
+                }
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Theme.textPrimary, lineWidth: 2)
+                            .padding(-5)
+                    }
+                }
+        case .grid72, .grid72Dark:
+            chip
+                .background(solid ? Theme.ink : Theme.surface, in: Rectangle())
+                .overlay {
+                    if !solid {
+                        Rectangle().strokeBorder(edited ? Theme.accent : Theme.ink, lineWidth: edited ? 2.5 : 1.5)
+                    }
+                }
+                .overlay {
+                    if isFocused {
+                        Rectangle().strokeBorder(Theme.ink, lineWidth: 1).padding(-6)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if isFocused {
+                        Rectangle().fill(Theme.accent).frame(height: 4).offset(y: 12)
+                    }
+                }
+        case .kabukiCut:
+            chip
+                .background {
+                    SlantedRect(-12).fill(solid ? Color.white : (isFocused ? Theme.accent : Color.black))
+                }
+                .overlay {
+                    SlantedRect(-12)
+                        .strokeBorder(edited || (solid && isFocused) ? Theme.accent : Color.white,
+                                      lineWidth: edited || (solid && isFocused) ? 3 : 2)
+                }
+                .background {
+                    if solid { SlantedRect(-12).fill(Theme.accent).offset(x: 6, y: 6) }
+                }
+                .scaleEffect(isFocused && !reduceMotion ? 1.04 : 1.0)
+        }
+    }
+
     private var fill: AnyShapeStyle {
         if solid { return AnyShapeStyle(Theme.accent) }
         if isFocused { return AnyShapeStyle(Theme.accent.opacity(0.35)) }
@@ -700,36 +1324,35 @@ private struct SavePresetChip: View {
 
     private let focusID = "preset:add"
     private var isFocused: Bool { state.focus.focusedItemID == focusID }
+    /// Kabuki's focused "+" is a crimson slab, so its words go white.
+    private var onCrimson: Bool { isFocused && Theme.current == .kabukiCut }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "plus")
-                .font(.system(size: 13, weight: .heavy))
-                .foregroundStyle(isFocused ? Theme.textPrimary : Theme.accent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.presets.isEmpty ? "Save your setup as a preset" : "Save current")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(isFocused ? Theme.textPrimary : Theme.textPrimary.opacity(0.85))
-                    .lineLimit(1)
-                Text(StreamPreset.summary(of: state.settings))
-                    .font(.system(size: Theme.labelSize(11), weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
+        chrome(
+            HStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .heavy))
+                    .foregroundStyle(Theme.current == .default
+                                     ? (isFocused ? Theme.textPrimary : Theme.accent)
+                                     : (onCrimson ? Color.white : Theme.textPrimary))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(state.presets.isEmpty ? "Save your setup as a preset" : "Save current")
+                        .themeText(.chipName)
+                        .foregroundStyle(onCrimson ? Color.white
+                                         : isFocused ? Theme.textPrimary : Theme.textPrimary.opacity(0.85))
+                        .lineLimit(1)
+                    Text(StreamPreset.summary(of: state.settings))
+                        .themeText(.chipSummary)
+                        .foregroundStyle(onCrimson ? Color.white.opacity(0.85) : Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
             }
-            Spacer(minLength: 4)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-        .contentShape(Rectangle())
-        .background(isFocused ? Theme.accent.opacity(0.25) : Color.white.opacity(0.03),
-                    in: RoundedRectangle(cornerRadius: 13))
-        .overlay {
-            RoundedRectangle(cornerRadius: 13)
-                .strokeBorder(isFocused ? Color.white.opacity(0.7) : Theme.hairline(0.2, contrast),
-                              style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1, dash: [4, 3]))
-        }
-        .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+            .contentShape(Rectangle())
+        )
         .animation(Theme.focusSpring, value: isFocused)
         .onHover { over in
             if over && state.inputMode == .pointer { state.focus.focus(itemID: focusID) }
@@ -738,6 +1361,61 @@ private struct SavePresetChip: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
+
+    /// A dashed (Night Edition: dotted) outline in every theme; focus as on
+    /// the preset chips beside it.
+    @ViewBuilder private func chrome(_ chip: some View) -> some View {
+        switch Theme.current {
+        case .default:
+            chip
+                .background(isFocused ? Theme.accent.opacity(0.25) : Color.white.opacity(0.03),
+                            in: RoundedRectangle(cornerRadius: 13))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13)
+                        .strokeBorder(isFocused ? Color.white.opacity(0.7) : Theme.hairline(0.2, contrast),
+                                      style: StrokeStyle(lineWidth: isFocused ? 2.5 : 1, dash: [4, 3]))
+                }
+                .scaleEffect(isFocused && !reduceMotion ? 1.03 : 1.0)
+        case .nightEdition:
+            chip
+                .overlay {
+                    RoundedRectangle(cornerRadius: 2)
+                        .strokeBorder(Theme.hairline(0.45, contrast),
+                                      style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [1, 3]))
+                }
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Theme.textPrimary, lineWidth: 2)
+                            .padding(-5)
+                    }
+                }
+        case .grid72, .grid72Dark:
+            chip
+                .overlay {
+                    Rectangle().strokeBorder(Theme.ink, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                }
+                .overlay {
+                    if isFocused {
+                        Rectangle().strokeBorder(Theme.ink, lineWidth: 1).padding(-6)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if isFocused {
+                        Rectangle().fill(Theme.accent).frame(height: 4).offset(y: 12)
+                    }
+                }
+        case .kabukiCut:
+            chip
+                .background {
+                    if isFocused { SlantedRect(-12).fill(Theme.accent) }
+                }
+                .overlay {
+                    SlantedRect(-12).strokeBorder(Color.white, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                }
+                .scaleEffect(isFocused && !reduceMotion ? 1.04 : 1.0)
+        }
+    }
 }
 
 extension AppState.HostDot {
@@ -745,12 +1423,15 @@ extension AppState.HostDot {
     /// always agree.
     var color: Color {
         switch self {
-        case .online: .green
+        case .online: Theme.live
         case .unreachable: .red
-        case .attention: .orange
+        case .attention: Theme.warning
         }
     }
 }
+
+/// "03", "12": Grid 72 prints its counts with two digits.
+func twoDigits(_ n: Int) -> String { n >= 0 && n < 10 ? "0\(n)" : "\(n)" }
 
 /// Caps a view's width WITHOUT stretching it: proposes at most `max` and then
 /// takes the child's own size. `.frame(maxWidth:)` instead grows to the cap
