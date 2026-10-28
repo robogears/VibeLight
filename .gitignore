@@ -64,3 +64,6 @@ VibeLightiOSTests/**/* [0-9].swift
 VibeLightiOSTests/**/* [0-9][0-9].swift
 VibeLightiOSTests/**/* copy.swift
 VibeLightiOSTests/**/* copy [0-9]*.swift
+
+# Agent worktrees (local scratch checkouts)
+.claude/worktrees/
