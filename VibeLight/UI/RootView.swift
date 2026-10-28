@@ -167,19 +167,27 @@ struct RootView: View {
                         if !onTV || gameOnIPad {
                             StreamControls(onLeave: { state.session.disconnect() }, keyboardUp: keyboardUp,
                                            statsOn: state.session.showPerfOverlay,
-                                           onToggleStats: { state.session.togglePerformanceStats() })
+                                           onToggleStats: { state.session.togglePerformanceStats() },
+                                           onTaskView: { state.session.showTaskView() },
+                                           pulls: state.session.streamControlsPulls,
+                                           onTucked: { state.session.streamControlsTucked = $0 })
                         } else if !dimmedOnTV {
-                            HStack(spacing: 12) {
-                                companionButton("speedometer", label: "Performance stats",
-                                                isOn: state.session.showPerfOverlay) {
-                                    state.session.togglePerformanceStats()
+                            // Stacked like the controls over the game, in the
+                            // same order (owner: vertical on the TV panel too).
+                            VStack(spacing: 12) {
+                                companionButton("xmark", label: "Leave the stream") {
+                                    state.session.disconnect()
                                 }
                                 companionButton(keyboardUp.wrappedValue ? "keyboard.chevron.compact.down" : "keyboard",
                                                 label: keyboardUp.wrappedValue ? "Hide the keyboard" : "Show the keyboard") {
                                     keyboardUp.wrappedValue.toggle()
                                 }
-                                companionButton("xmark", label: "Leave the stream") {
-                                    state.session.disconnect()
+                                companionButton("speedometer", label: "Performance stats",
+                                                isOn: state.session.showPerfOverlay) {
+                                    state.session.togglePerformanceStats()
+                                }
+                                companionButton("rectangle.on.rectangle", label: "Task View (Windows key + Tab)") {
+                                    state.session.showTaskView()
                                 }
                             }
                             .padding(24)
@@ -227,7 +235,7 @@ struct RootView: View {
         // guards, and makes the card hide the instant the real TV scene engages.
         .overlay {
             if placement.isOnExternalScreen && !ExternalDisplay.shared.isConnected {
-                ExternalRedirectCard()
+                ExternalRedirectCard(onUseHere: { placement.dismiss() })
             }
         }
         // Always-present, invisible probe: reads RootView's own hosting window and

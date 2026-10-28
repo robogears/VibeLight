@@ -29,6 +29,51 @@ final class CompanionViewTimingTests: XCTestCase {
         XCTAssertNil(Engine.companionNext(.dimmed, idle: .seconds(3600), keyboardUp: false))
     }
 }
+/// The tucked controls' corner (owner: tapping by the grey line "can't do it,
+/// and sometimes the menu opens"): a tap there is the game's; only a swipe
+/// left pulls the controls out.
+final class StreamControlsPullTests: XCTestCase {
+    private typealias Surface = StreamView.DisplayLayerView
+
+    func testOnlyASwipeLeftPulls() {
+        XCTAssertEqual(Surface.pullVerdict(dx: -30, dy: 3), .pull)
+        XCTAssertEqual(Surface.pullVerdict(dx: -10, dy: 0), .undecided)   // a tap that lifts here is the game's
+        XCTAssertEqual(Surface.pullVerdict(dx: 0, dy: 20), .game)
+        XCTAssertEqual(Surface.pullVerdict(dx: 15, dy: 0), .game)
+        XCTAssertEqual(Surface.pullVerdict(dx: -20, dy: -20), .game)
+        XCTAssertEqual(Surface.pullVerdict(dx: -30, dy: 30), .game)
+    }
+
+    func testTheZoneIsTheTopRightCorner() {
+        let screen = CGSize(width: 1376, height: 1032)
+        XCTAssertTrue(Surface.inPullZone(CGPoint(x: 1360, y: 40), in: screen))
+        XCTAssertFalse(Surface.inPullZone(CGPoint(x: 1300, y: 40), in: screen))
+        XCTAssertFalse(Surface.inPullZone(CGPoint(x: 1360, y: 400), in: screen))
+    }
+}
+
+/// The owner got stuck on "Open VibeLight on your iPad" on the iPad itself.
+/// A screen only counts as another screen when one exists, it is a
+/// different object AND a different size from the built-in panel.
+final class ExternalPlacementTests: XCTestCase {
+    private let iPad = CGSize(width: 2752, height: 2064)
+    private let tv = CGSize(width: 3840, height: 2160)
+
+    func testTheIPadsOwnScreenIsNeverExternal() {
+        XCTAssertFalse(ExternalScenePlacement.isOtherScreen(screenCount: 1, sameObject: false,
+                                                            nativeSize: tv, builtInNativeSize: iPad))
+        XCTAssertFalse(ExternalScenePlacement.isOtherScreen(screenCount: 2, sameObject: false,
+                                                            nativeSize: iPad, builtInNativeSize: iPad))
+        XCTAssertFalse(ExternalScenePlacement.isOtherScreen(screenCount: 2, sameObject: true,
+                                                            nativeSize: tv, builtInNativeSize: iPad))
+    }
+
+    func testAWindowOnTheTVIs() {
+        XCTAssertTrue(ExternalScenePlacement.isOtherScreen(screenCount: 2, sameObject: false,
+                                                           nativeSize: tv, builtInNativeSize: iPad))
+    }
+}
+
 /// Leaving the stream (Frame Trace's fire): the frame closes in to black, a
 /// diamond grows out of the centre over the game while the game dims, and it
 /// ENDS black, so the stream only stops under black (owner). Pure, so the

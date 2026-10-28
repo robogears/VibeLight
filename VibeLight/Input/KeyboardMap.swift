@@ -200,5 +200,8 @@ enum KeyboardMap {
 
     /// VK_BACK — the on-screen keyboard's delete key.
     static let backspaceVK: Int16 = 0x08
+    /// VK_LWIN and VK_TAB — the Task View button sends Win+Tab.
+    static let leftWinVK: Int16 = 0x5B
+    static let tabVK: Int16 = 0x09
 }
 #endif

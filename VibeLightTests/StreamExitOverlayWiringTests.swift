@@ -39,6 +39,28 @@ final class StreamExitOverlayWiringTests: XCTestCase {
         XCTAssertLessThan(wait.lowerBound, leave.lowerBound)
     }
 
+    /// Owner: an Alt+Tab ("maybe Win+Tab") button beside stats, and the TV
+    /// panel's buttons stacked like the ones over the game.
+    func testTaskViewButtonAndVerticalPanel() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        XCTAssertTrue(engine.contains("session.sendKeyboardEvent(KeyboardMap.leftWinVK, down: true, modifiers: win)"))
+        XCTAssertTrue(engine.contains("session.sendKeyboardEvent(KeyboardMap.leftWinVK, down: false, modifiers: 0)"))
+        let controls = try source("VibeLight/App/iOS/StreamControls.swift")
+        XCTAssertTrue(controls.contains("controlButton(\"rectangle.on.rectangle\""))
+        let root = try source("VibeLight/UI/RootView.swift")
+        XCTAssertTrue(root.contains("onTaskView: { state.session.showTaskView() }"))
+        XCTAssertTrue(root.contains("VStack(spacing: 12) {\n                                companionButton(\"xmark\""))
+    }
+
+    /// The grey pill takes no touches; only StreamView's corner swipe opens.
+    func testTheCornerTapBelongsToTheGame() throws {
+        let controls = try source("VibeLight/App/iOS/StreamControls.swift")
+        XCTAssertFalse(controls.contains(".onTapGesture { reveal() }"))
+        XCTAssertTrue(controls.contains(".onChange(of: pulls) { _, _ in reveal() }"))
+        let view = try source("VibeLight/App/iOS/StreamView.swift")
+        XCTAssertTrue(view.contains("engine.pullStreamControls()"))
+    }
+
     /// Owner: "the outside ring thing twice". With Start still held after the
     /// fire, the Menu latch's own re-forward (not the ControllerManager) saw
     /// the whole chord and started a second hold, so Frame Trace traced again
@@ -96,7 +118,24 @@ final class LeaveAudioTests: XCTestCase {
     func testEffectsRunOnTheRenderThreadAndResetPerStream() throws {
         let audio = try source("VibeLight/Streaming/MoonlightSession.mm")
         XCTAssertTrue(audio.contains("ArApplyLeaveEffects((int16_t *)out"))
-        XCTAssertTrue(audio.contains("sMuffleTarget.store(0.0f); sGainTarget.store(1.0f); sGainStep.store(1.0f);"))
+        XCTAssertTrue(audio.contains("sMuffleTarget.store(0.0f); sGainTarget.store(1.0f);"))
+    }
+
+    /// Owner: "a weird audio click … on launch". The Select chime was cut off
+    /// mid-wave when the stream switched the audio session a few ms after the
+    /// press; now the session changes only once the chime is over, and game
+    /// audio fades in from its first samples instead of cutting in.
+    func testLaunchHasNoClick() throws {
+        let engine = try source("VibeLight/App/iOS/InProcessStreamEngine.swift")
+        let take = try XCTUnwrap(engine.range(of: "await takeAudioSession()"))
+        let resume = try XCTUnwrap(engine.range(of: "sessionUrl = try await api.resume("))
+        XCTAssertLessThan(resume.lowerBound, take.lowerBound, "the session switches after the host requests")
+        XCTAssertTrue(engine.contains("private func takeAudioSession() async {\n        await MenuSFX.handOffToStream()"))
+        let sfx = try source("VibeLight/UI/MenuSFX.swift")
+        XCTAssertTrue(sfx.contains("static func handOffToStream() async"))
+        let audio = try source("VibeLight/Streaming/MoonlightSession.mm")
+        XCTAssertTrue(audio.contains("sMuffle = 0.0f; sGain = 0.0f; sAwaitingFirstAudio = true;"))
+        XCTAssertTrue(audio.contains("if (take == 0) return noErr;   // still silence: the fade-in waits for sound"))
     }
 }
 

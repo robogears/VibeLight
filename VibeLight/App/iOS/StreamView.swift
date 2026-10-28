@@ -41,6 +41,12 @@ struct StreamView: UIViewRepresentable {
         /// UITouch → stable pointer id (0…9) for the host. Slot 0 is the
         /// primary pointer (the one the mouse fallback follows).
         private var pointerIds: [ObjectIdentifier: UInt32] = [:]
+        /// Touches that began in the corner the controls are tucked into,
+        /// held back (with where they began) until they are clearly a swipe
+        /// left (pull the controls out) or clearly not (deliver to the game).
+        private var pendingPulls: [ObjectIdentifier: CGPoint] = [:]
+        /// Recognised pulls: their remaining events never reach the game.
+        private var pulledTouches: Set<ObjectIdentifier> = []
 
         func attach(_ display: AVSampleBufferDisplayLayer) {
             // Re-add whenever the layer isn't OUR sublayer — not just when the
@@ -106,6 +112,37 @@ struct StreamView: UIViewRepresentable {
             // moves and release ever reach the PC.
             let newTouchesReachGame = engine.noteCompanionActivity()
             for touch in touches {
+                let key = ObjectIdentifier(touch)
+                let here = touch.location(in: self)
+                let ends = phase == .up || phase == .cancel
+                if pulledTouches.contains(key) {
+                    if ends { pulledTouches.remove(key) }
+                    continue
+                }
+                // The corner the controls are tucked into: a tap there is the
+                // game's (owner: tapping by the grey line "can't do it, and
+                // sometimes the menu opens"), only a swipe left pulls them out.
+                if phase == .down, newTouchesReachGame, engine.streamControlsTucked,
+                   Self.inPullZone(here, in: bounds.size), !isUnderKeyboard(here) {
+                    pendingPulls[key] = here
+                    continue
+                }
+                if let start = pendingPulls[key] {
+                    if phase == .cancel { pendingPulls.removeValue(forKey: key); continue }
+                    switch Self.pullVerdict(dx: here.x - start.x, dy: here.y - start.y) {
+                    case .pull:
+                        pendingPulls.removeValue(forKey: key)
+                        if !ends { pulledTouches.insert(key) }
+                        engine.pullStreamControls()
+                        continue
+                    case .undecided where !ends:
+                        continue
+                    case .undecided, .game:
+                        // Not a pull: the game gets it from where it began.
+                        pendingPulls.removeValue(forKey: key)
+                        send(touch, .down, at: start, allocate: true)
+                    }
+                }
                 let allocate = (phase == .down)
                 if allocate, !newTouchesReachGame { continue }
                 // Only a touch that BEGINS on the keyboard is dropped. Gating
@@ -113,14 +150,40 @@ struct StreamView: UIViewRepresentable {
                 // on the stream working when it crosses the keyboard — and
                 // guarantees its release is delivered, because a touch with no
                 // pointer id never sent a press to strand.
-                if allocate, isUnderKeyboard(touch.location(in: self)) { continue }
-                guard let id = pointerId(for: touch, allocate: allocate) else { continue }
-                engine.sendTouch(phase, pointerId: id,
-                                 location: touch.location(in: self), viewSize: bounds.size)
-                if phase == .up || phase == .cancel {
-                    pointerIds.removeValue(forKey: ObjectIdentifier(touch))
-                }
+                if allocate, isUnderKeyboard(here) { continue }
+                send(touch, phase, at: here, allocate: allocate)
             }
+        }
+
+        private func send(_ touch: UITouch, _ phase: MoonlightTouchPhase, at location: CGPoint, allocate: Bool) {
+            guard let engine, let id = pointerId(for: touch, allocate: allocate) else { return }
+            engine.sendTouch(phase, pointerId: id, location: location, viewSize: bounds.size)
+            if phase == .up || phase == .cancel {
+                pointerIds.removeValue(forKey: ObjectIdentifier(touch))
+            }
+        }
+
+        // MARK: Pulling the controls out
+
+        /// Where the tucked controls' grey pill sits: the top-right corner.
+        nonisolated static let pullZone = CGSize(width: 40, height: 200)
+        /// How far left a touch travels before it counts as a pull.
+        nonisolated static let pullDistance: CGFloat = 24
+
+        nonisolated static func inPullZone(_ point: CGPoint, in size: CGSize) -> Bool {
+            point.x >= size.width - pullZone.width && point.y <= pullZone.height
+        }
+
+        enum PullVerdict: Equatable { case undecided, pull, game }
+
+        /// A clear swipe left is a pull; a clear move any other way is the
+        /// game's; anything smaller waits (and is a tap if it lifts).
+        nonisolated static func pullVerdict(dx: CGFloat, dy: CGFloat) -> PullVerdict {
+            if -dx >= pullDistance, -dx > abs(dy) * 1.5 { return .pull }
+            let travelled = hypot(dx, dy)
+            if travelled >= 12, -dx <= abs(dy) { return .game }
+            if travelled >= 40 { return .game }   // a long drag that never read as a pull
+            return .undecided
         }
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {

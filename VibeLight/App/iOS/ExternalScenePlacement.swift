@@ -28,13 +28,25 @@ final class ExternalScenePlacement {
     @ObservationIgnored private weak var lastWindow: UIWindow?
     /// Guards against a stale async confirmation clobbering a newer read.
     @ObservationIgnored private var epoch = 0
+    /// The screen the person said "use VibeLight here" on: the card stays
+    /// away until this window moves to another screen.
+    @ObservationIgnored private weak var dismissedOn: UIScreen?
+
+    /// The card's escape hatch. The owner got stuck on this card on the iPad
+    /// itself, so a wrong verdict must never be able to trap anyone.
+    func dismiss() {
+        dismissedOn = lastWindow?.windowScene?.screen
+        epoch &+= 1   // drop any confirmation in flight
+        evaluate(for: lastWindow)
+    }
 
     /// Evaluate against the window that actually hosts `RootView` (per-window,
     /// never a global scene scan — so the loved flow's separate TV window can
     /// never be mistaken for this one).
     func evaluate(for window: UIWindow?) {
         lastWindow = window
-        let candidate = Self.isCertainlyExternal(window)
+        let screen = window?.windowScene?.screen
+        let candidate = Self.isCertainlyExternal(window) && (dismissedOn == nil || screen !== dismissedOn)
         // Super-sample the redirect card the instant we're on an external screen
         // (idempotent; removed when back on the iPad) so its text is crisp — the
         // main window renders at the panel's native scale otherwise, which looks
@@ -59,6 +71,18 @@ final class ExternalScenePlacement {
         }
     }
 
+    /// The window-side half of the verdict: the screen it is on is not the
+    /// built-in panel. Both objects can be swapped by iOS while a display
+    /// connects or disconnects — the iPad's own screen briefly stopped
+    /// matching `UIScreen.screens.first`, and with nothing re-checking, the
+    /// owner was stuck on the card on the iPad. So it also takes a second
+    /// screen to exist at all, and the window's screen to differ from the
+    /// built-in one in size, not just in identity. Pure, so it is tested.
+    nonisolated static func isOtherScreen(screenCount: Int, sameObject: Bool,
+                                          nativeSize: CGSize, builtInNativeSize: CGSize) -> Bool {
+        screenCount > 1 && !sameObject && nativeSize != builtInNativeSize
+    }
+
     /// True ONLY when all guards positively confirm the accidental case.
     private static func isCertainlyExternal(_ window: UIWindow?) -> Bool {
         // 1 — read THIS window's own scene (never a global scan).
@@ -79,7 +103,9 @@ final class ExternalScenePlacement {
         //     built-in → equal → false. (Mirroring likewise stays on the
         //     built-in → equal → false.)
         guard let builtIn = builtInScreen() else { return false }
-        return scene.screen !== builtIn
+        return isOtherScreen(screenCount: UIScreen.screens.count, sameObject: scene.screen === builtIn,
+                             nativeSize: scene.screen.nativeBounds.size,
+                             builtInNativeSize: builtIn.nativeBounds.size)
     }
 
     private static func hasNonInteractiveExternalScene() -> Bool {
@@ -136,6 +162,15 @@ struct ScenePlacementProbe: UIViewRepresentable {
             self.placement = placement
             super.init(frame: .zero)
             isUserInteractionEnabled = false
+            // A display arriving or leaving changes the answer without
+            // necessarily laying this view out again; a verdict left standing
+            // from the hand-off is how the card got stuck.
+            for name in [UIScene.willConnectNotification, UIScene.didDisconnectNotification,
+                         UIScene.didActivateNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.reevaluate() }
+                }
+            }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -147,7 +182,10 @@ struct ScenePlacementProbe: UIViewRepresentable {
 
 /// Shown on the external display when the user accidentally opened the app there.
 /// Uses the app's design tokens (SF Rounded heavy, navy-dark, single blue accent).
+/// "Use VibeLight Here" is the way out if the guess was wrong.
 struct ExternalRedirectCard: View {
+    let onUseHere: () -> Void
+
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
@@ -161,6 +199,15 @@ struct ExternalRedirectCard: View {
                 Text("It streams here automatically once it's running on your iPad.")
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.textSecondary)
+                Button(action: onUseHere) {
+                    Text("Use VibeLight Here")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(.white.opacity(0.1), in: Capsule())
+                }
+                .padding(.top, 14)
             }
             .multilineTextAlignment(.center)
             .padding(56)

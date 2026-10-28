@@ -707,6 +707,10 @@ static std::atomic<float> sGainTarget{1.0f};       // output volume, 0…1
 static std::atomic<float> sGainStep{1.0f};         // per frame, toward the target
 static float sMuffle = 0.0f;                       // render-thread owned from here down
 static float sGain = 1.0f;
+// A stream's sound starts from silence: the first samples can land mid-wave,
+// a pop as the game's audio cuts in. Gain is held at 0 until real audio
+// arrives, then rises over ~30 ms (ArInit arms it).
+static bool sAwaitingFirstAudio = false;
 static float sLowpass[2][AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];   // two one-pole stages
 static const float kMuffleStep = 1.0f / (0.08f * 48000.0f);       // glide: ~80 ms end to end
 
@@ -759,6 +763,10 @@ static OSStatus ArRender(void *inRefCon, AudioUnitRenderActionFlags *ioActionFla
     memcpy(out + first, &sAudioRing[0], take - first);
     if (take < want) memset(out + take, 0, want - take);   // underrun → silence
     sRingTail.store(tail + take, std::memory_order_release);
+    if (sAwaitingFirstAudio) {
+        if (take == 0) return noErr;   // still silence: the fade-in waits for sound
+        sAwaitingFirstAudio = false;
+    }
     const int channels = MAX(sOpusCfg.channelCount, 1);
     ArApplyLeaveEffects((int16_t *)out, (UInt32)(want / (sizeof(int16_t) * (size_t)channels)),
                         channels, (float)(sOpusCfg.sampleRate > 0 ? sOpusCfg.sampleRate : 48000));
@@ -815,10 +823,12 @@ static int ArInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION 
         return -1;
     }
     sRingHead.store(0); sRingTail.store(0);
-    // Every stream starts clear and at full volume, whatever the last one's
-    // leave did (the render thread isn't running yet).
-    sMuffleTarget.store(0.0f); sGainTarget.store(1.0f); sGainStep.store(1.0f);
-    sMuffle = 0.0f; sGain = 1.0f;
+    // Every stream starts clear and rises to full volume over ~30 ms from its
+    // first real samples, whatever the last one's leave did (the render
+    // thread isn't running yet).
+    sMuffleTarget.store(0.0f); sGainTarget.store(1.0f);
+    sGainStep.store(1.0f / (0.03f * (float)MAX(opusConfig->sampleRate, 8000)));
+    sMuffle = 0.0f; sGain = 0.0f; sAwaitingFirstAudio = true;
     memset(sLowpass, 0, sizeof(sLowpass));
     // 60 ms latency bound at the negotiated rate/channels (16-bit samples).
     sMaxAudioBacklogBytes = (size_t)opusConfig->sampleRate * (size_t)opusConfig->channelCount * 2 * 60 / 1000;

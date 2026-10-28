@@ -118,6 +118,22 @@ final class InProcessStreamEngine: StreamEngine {
         }
     }
 
+    /// Game audio must play regardless of the silent switch, and keep going
+    /// if Control Center pauses other audio. Failures here are the root of
+    /// "stream has no sound" reports — log them or they're undebuggable.
+    /// Taken just before the connection starts, after the menu sound has
+    /// finished: switching it the moment Play was pressed cut the Select
+    /// chime off mid-wave, a click on every launch (MenuSFX.handOffToStream).
+    private func takeAudioSession() async {
+        await MenuSFX.handOffToStream()
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            NSLog("[VibeLight] audio session setup failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Release the audio session so other apps (Music, podcasts) resume — the
     /// mirror of the `setActive(true)` on launch. `.notifyOthersOnDeactivation`
     /// is what actually un-ducks the app we interrupted. Best-effort; called on
@@ -166,15 +182,6 @@ final class InProcessStreamEngine: StreamEngine {
         touchControlsEnabled = settings.touchControls
         touchWithControllerEnabled = settings.touchWithController
         phase = .launching(app)
-        // Game audio must play regardless of the silent switch, and keep going
-        // if Control Center pauses other audio. Failures here are the root of
-        // "stream has no sound" reports — log them or they're undebuggable.
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            NSLog("[VibeLight] audio session setup failed: \(error.localizedDescription)")
-        }
         // If a /launch we issued against a FREE host fails (classically: it times
         // out while the host has ALREADY started capturing — the PC screen goes
         // black), the host is left streaming to nobody and the next attempt
@@ -224,6 +231,7 @@ final class InProcessStreamEngine: StreamEngine {
                     rikeyHex: key.lowercaseHex, rikeyId: rikeyId, extraLaunchParams: extraParams)
             }
 
+            await takeAudioSession()
             let proxy = SessionDelegateProxy()
             proxy.engine = self
             self.proxy = proxy
@@ -268,7 +276,7 @@ final class InProcessStreamEngine: StreamEngine {
             phase = .idle
         } catch {
             // Hand the audio session back on a real launch failure (host asleep/
-            // busy): we grabbed it at setActive(true) above but no stream started,
+            // busy): we may have grabbed it (takeAudioSession) but no stream started,
             // so without this the user's Music/podcast stays paused with nothing
             // playing. (audit ERR-launch-failure-leaves-audio-active)
             deactivateAudioSession()
@@ -682,6 +690,27 @@ final class InProcessStreamEngine: StreamEngine {
         session.sendKeyboardEvent(KeyboardMap.backspaceVK, down: true, modifiers: keyboardModifiers)
         session.sendKeyboardEvent(KeyboardMap.backspaceVK, down: false, modifiers: keyboardModifiers)
     }
+
+    /// The Task View button (owner asked for Alt+Tab, "maybe Win+Tab"):
+    /// Win+Tab opens Windows' Task View and it STAYS open, so the window can
+    /// then be picked by touch, mouse or keys. Alt+Tab only shows its
+    /// switcher while Alt is held, so one press of a button just flips to the
+    /// previous window.
+    func showTaskView() {
+        guard let session else { return }
+        let win = KeyboardMap.modMeta
+        session.sendKeyboardEvent(KeyboardMap.leftWinVK, down: true, modifiers: win)
+        session.sendKeyboardEvent(KeyboardMap.tabVK, down: true, modifiers: win)
+        session.sendKeyboardEvent(KeyboardMap.tabVK, down: false, modifiers: win)
+        session.sendKeyboardEvent(KeyboardMap.leftWinVK, down: false, modifiers: 0)
+    }
+
+    /// The iPad's in-stream controls are tucked away (StreamControls), so a
+    /// swipe left from the top-right corner pulls them out (StreamView).
+    @ObservationIgnored var streamControlsTucked = false
+    /// Bumped by StreamView each time that swipe is recognised.
+    private(set) var streamControlsPulls = 0
+    func pullStreamControls() { streamControlsPulls += 1 }
 
     /// 0…1 progress of the hold-to-leave chord (nil = not holding).
     /// `StreamExitOverlay` (Frame Trace) draws from this.

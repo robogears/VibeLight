@@ -57,6 +57,10 @@ final class MenuSFX {
     /// its first tick. (LIF-menu-sfx-engine-never-paused)
     var idlePauseDelay: Duration = .seconds(10)
     private var idlePauseTask: Task<Void, Never>?
+    /// When the latest sound finishes, so a stream can let it end first.
+    private var soundEndsAt = ContinuousClock.now
+    /// The app's one player (AppState owns it), for `handOffToStream`.
+    private static weak var current: MenuSFX?
 
     private static let sampleRate: Double = 44_100
 
@@ -96,7 +100,25 @@ final class MenuSFX {
             player.prepareToPlay()
             quackPlayer = player
         }
+        Self.current = self
     }
+
+    #if os(iOS)
+    /// A stream is about to take the shared audio session (`.playback`).
+    /// Switching it under a sound still playing cut the sound off mid-wave:
+    /// the click on every game launch (owner: "it can't find/play the sfx
+    /// properly"). The Select chime is 70 ms and the switch came a few ms
+    /// into it. Lets the current sound finish, then pauses the engine so
+    /// nothing is rendering when the category changes.
+    static func handOffToStream() async {
+        guard let sfx = current else { return }
+        let left = ContinuousClock.now.duration(to: sfx.soundEndsAt)
+        if left > .zero { try? await Task.sleep(for: left + .milliseconds(20)) }
+        sfx.idlePauseTask?.cancel()
+        sfx.idlePauseTask = nil
+        if sfx.engine.isRunning { sfx.engine.pause() }
+    }
+    #endif
 
     #if os(iOS)
     /// Puts the app's one shared audio session in the launcher's category.
@@ -124,6 +146,7 @@ final class MenuSFX {
         if effect == .quack, let quackPlayer {
             quackPlayer.currentTime = 0
             quackPlayer.play()
+            soundEndsAt = .now + .milliseconds(Int(quackPlayer.duration * 1000))
             return
         }
         guard let buffer = buffers[effect] else { return }
@@ -145,7 +168,9 @@ final class MenuSFX {
             }
         }
         player.scheduleBuffer(buffer, at: nil, options: .interrupts)
-        pauseWhenIdle(afterSoundLasting: Double(buffer.frameLength) / Self.sampleRate)
+        let seconds = Double(buffer.frameLength) / Self.sampleRate
+        soundEndsAt = .now + .milliseconds(Int(seconds * 1000))
+        pauseWhenIdle(afterSoundLasting: seconds)
     }
 
     /// Re-arms the one idle timer: each sound pushes the pause back, so the
