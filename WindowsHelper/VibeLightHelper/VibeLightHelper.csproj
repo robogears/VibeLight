@@ -11,7 +11,7 @@
     <RootNamespace>VibeLightHelper</RootNamespace>
     <AssemblyName>VibeLightHelper</AssemblyName>
     <Product>VibeLight Helper</Product>
-    <Version>1.0.0</Version>
+    <Version>0.1.1</Version>
     <ApplicationIcon>helper.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -21,6 +21,13 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <!-- Every publish also leaves a copy named with the version beside the
+       projects: WindowsHelper/VibeLightHelperV0.1.1.exe, the one in git. -->
+  <Target Name="CopyVersionedExe" AfterTargets="Publish">
+    <Copy SourceFiles="$(PublishDir)$(AssemblyName).exe"
+          DestinationFiles="$(MSBuildThisFileDirectory)../VibeLightHelperV$(Version).exe" />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\VibeLightHelper.Core\VibeLightHelper.Core.csproj" />

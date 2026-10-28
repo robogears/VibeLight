@@ -18,6 +18,8 @@ sealed class TrayApp
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string RunValue = "VibeLight Helper";
     const string Title = "VibeLight Helper";
+    /// "0.1.1", from the project's Version: the menu's heading says which build this is.
+    static readonly string AppVersion = typeof(TrayApp).Assembly.GetName().Version?.ToString(3) ?? "";
     const uint TrayMessage = WM_APP + 1;
     const uint IconId = 1;
 
@@ -166,7 +168,7 @@ sealed class TrayApp
     void ShowMenu()
     {
         var menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, (UIntPtr)(uint)Command.Header, Title);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, (UIntPtr)(uint)Command.Header, $"{Title} {AppVersion}");
         SetMenuDefaultItem(menu, (uint)Command.Header, 0);   // bold, as a heading
         AppendMenuW(menu, MF_STRING | MF_GRAYED, UIntPtr.Zero, status);
         AppendMenuW(menu, MF_STRING | MF_GRAYED, UIntPtr.Zero, DevicesLine());

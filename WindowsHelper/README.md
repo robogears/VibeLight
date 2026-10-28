@@ -18,9 +18,10 @@ out.
 
 ## Install
 
-1. Copy `VibeLightHelper.exe` anywhere on the PC (for example
-   `%LOCALAPPDATA%\Programs\VibeLight Helper\`) and run it. It runs as you,
-   and doesn't need administrator rights.
+1. Copy `VibeLightHelperV0.1.1.exe` (in this folder) anywhere on the PC (for
+   example `%LOCALAPPDATA%\Programs\VibeLight Helper\`) and run it. It runs
+   as you, and doesn't need administrator rights. Its menu heading shows the
+   version that's running.
 2. Windows Firewall asks once. Allow it on **private networks**: that is how
    the iPad reaches it (TCP port 47333).
 3. That's it. On first run it starts with Windows (you can untick
@@ -60,11 +61,14 @@ app is plain Win32, with no Windows Forms.
 
 ```bash
 dotnet test VibeLightHelper.Tests                    # protocol, trust, rules, real TLS
-dotnet publish VibeLightHelper -c Release -o out     # out/VibeLightHelper.exe
+dotnet publish VibeLightHelper -c Release -o out     # → VibeLightHelperV<version>.exe here
 ```
 
-The result is one self-contained `VibeLightHelper.exe` (win-x64, about 35 MB).
-It needs no .NET installed on the PC.
+The result is one self-contained exe (win-x64, about 35 MB). It needs no .NET
+installed on the PC. Each publish also copies it to this folder, named with
+the `Version` in `VibeLightHelper/VibeLightHelper.csproj`
+(`VibeLightHelperV0.1.1.exe`), and that copy is the one committed. To release
+a new version, bump `Version`, publish, and delete the old exe.
 
 ## Layout
 
