@@ -11,6 +11,33 @@ do by itself:
 - **Quit Game.** Closes the game that's running. It asks politely first
   (`WM_CLOSE`, the same as clicking ✕). If the game is still open after a few
   seconds, it ends the game.
+- **Restart PC.** Restarts Windows no matter what's running, the way
+  MoonDeckBuddy does (it replaces MoonDeckBuddy for VibeLight): the request is
+  answered at once, a tray notification counts down a few seconds (you can
+  still **Cancel Restart** from the menu), then Windows restarts with apps
+  forced closed.
+
+## How it knows which game is running
+
+The game is the window in front when all of these hold:
+
+1. It isn't the shell, a launcher, a browser, chat, a media player or the
+   streaming host (a fixed list).
+2. It fills most of its screen (fullscreen, borderless or a big window).
+3. Something says it's a game. At least one of:
+   - it's installed in a store's game folder (`steamapps\common`, Epic Games,
+     GOG, EA, Ubisoft, Xbox, Riot);
+   - it was started by a launcher (Steam, Epic, EA, GOG Galaxy, Ubisoft,
+     Battle.net, Riot, Xbox app, Playnite, LaunchBox) or by Vibepollo/Sunshine
+     itself;
+   - Windows itself lists it as a game (the list Game Bar and Game Mode use);
+   - it's in exclusive fullscreen.
+
+A maximised Notepad or video player passes none of these, so it's never
+"the game". The last game seen is remembered while it runs, so Quit still
+finds it after the stream ends. VibeLight shows the game's name before you
+quit, and sends which process that was: if a different game is in front by
+then, nothing is closed.
 
 There are no settings on the PC. Everything is set from VibeLight on the iPad,
 under **Settings ▸ Windows Helper**. Without the helper, those rows are greyed
@@ -18,7 +45,7 @@ out.
 
 ## Install
 
-1. Copy `VibeLightHelperV0.1.1.exe` (in this folder) anywhere on the PC (for
+1. Copy `VibeLightHelperV0.1.2.exe` (in this folder) anywhere on the PC (for
    example `%LOCALAPPDATA%\Programs\VibeLight Helper\`) and run it. It runs
    as you, and doesn't need administrator rights. Its menu heading shows the
    version that's running.
@@ -67,7 +94,7 @@ dotnet publish VibeLightHelper -c Release -o out     # → VibeLightHelperV<vers
 The result is one self-contained exe (win-x64, about 35 MB). It needs no .NET
 installed on the PC. Each publish also copies it to this folder, named with
 the `Version` in `VibeLightHelper/VibeLightHelper.csproj`
-(`VibeLightHelperV0.1.1.exe`), and that copy is the one committed.
+(`VibeLightHelperV0.1.2.exe`), and that copy is the one committed.
 
 **Every change to the helper gets a new version.** Bump `Version` (patch by
 default, 0.1.1 → 0.1.2), run the tests, publish, delete the old exe, update
@@ -90,4 +117,6 @@ The wire contract is in `VibeLightHelper.Core/Protocol.cs`. VibeLight's side is
 | `GET /status` | The display, the game in front (if any), and whether anything is changed. |
 | `POST /match {width, height}` | The display to that size (same Hz), the game fitted borderless. |
 | `POST /restore` | Puts back whatever `/match` changed. |
-| `POST /quit-game {graceSeconds}` | Closes the game, then ends it after the grace period (1–30 s, 5 by default). |
+| `POST /quit-game {graceSeconds, pid}` | Closes the game (only `pid`, when given), then ends it after the grace period (1–30 s, 5 by default). |
+| `POST /restart {delaySeconds}` | Restarts the PC after 1–30 s (anything else is a 400), MoonDeckBuddy's way. |
+| `POST /restart/cancel` | Calls off a restart still counting down. |

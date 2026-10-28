@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using VibeLightHelper.Core;
 using static VibeLightHelper.Native;
 
@@ -9,8 +10,14 @@ namespace VibeLightHelper;
 /// The PC side of VibeLight's TV matching and Quit Game, with Win32.
 ///
 /// "The game" is the foreground window when it belongs to a process that may
-/// be a game (GameRules) and fills most of its display; the last one seen is
-/// remembered, so Quit Game still finds it when VibeLight's stream has ended.
+/// be a game (not the shell, a launcher, a browser…), fills most of its
+/// display, AND has evidence of being a game (GameRules.Why): installed in a
+/// store's game library, started by a launcher or the streaming host, on
+/// Windows' own game list (Game Bar's GameConfigStore), or in exclusive
+/// fullscreen. A maximised Notepad is none of those, so it is never "the
+/// game" and Quit Game can't touch it. The last game seen is remembered, so
+/// Quit Game still finds it when VibeLight's stream has ended; VibeLight
+/// sends the pid it showed, and a different game in front is not closed.
 ///
 /// Match changes the game's DISPLAY to the stream's size (same refresh rate —
 /// the owner never wants the frame rate touched) and fits the game window to
@@ -21,13 +28,21 @@ namespace VibeLightHelper;
 /// </summary>
 sealed class Win32Platform : IPlatform, IDisposable
 {
-    sealed record GameWindow(IntPtr Hwnd, int Pid, string Process, string Title);
+    sealed record GameWindow(IntPtr Hwnd, int Pid, string Process, string Title, string Evidence);
     sealed record SavedDisplay(string Device, int Width, int Height, int RefreshHz);
     sealed record SavedWindow(IntPtr Hwnd, IntPtr Style, IntPtr ExStyle, WINDOWPLACEMENT Placement);
 
     readonly object gate = new();
     readonly System.Threading.Timer watcher;
+    /// The shutdown privilege, taken once at startup as MoonDeckBuddy does.
+    readonly bool shutdownPrivilege = AcquireShutdownPrivilege();
     GameWindow? lastGame;
+    /// Per pid, what doesn't change while a process lives: in a game library,
+    /// started by a launcher, on Windows' game list. (The watcher asks every second.)
+    readonly object evidenceGate = new();
+    readonly Dictionary<int, GameRules.GameEvidence> lastingEvidence = new();
+    HashSet<string>? windowsGames;
+    DateTime windowsGamesReadAt;
     SavedDisplay? savedDisplay;
     SavedWindow? savedWindow;
 
@@ -120,11 +135,18 @@ sealed class Win32Platform : IPlatform, IDisposable
         }
     }
 
-    public async Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, CancellationToken token)
+    public async Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, int? expectedPid, CancellationToken token)
     {
         GameWindow? game;
         lock (gate) { game = CurrentGame(); }
         if (game is null) return new QuitGameResponse(false, null, false, "No game is running.");
+        // Only the game VibeLight showed: if another one is in front now,
+        // closing it would be closing the wrong thing.
+        if (expectedPid is int pid && pid != game.Pid)
+        {
+            return new QuitGameResponse(false, game.Title, false,
+                $"{game.Title} is in front on the PC now, not the game VibeLight showed. Nothing was closed.");
+        }
 
         Process process;
         try { process = Process.GetProcessById(game.Pid); }
@@ -169,6 +191,44 @@ sealed class Win32Platform : IPlatform, IDisposable
         }
     }
 
+    // MARK: - Restart PC (MoonDeckBuddy's way)
+
+    /// Whether Restart PC can work at all (PcStateHandler asks first).
+    public bool CanRestart => shutdownPrivilege;
+
+    /// Restarts Windows now, no matter what's running: MoonDeckBuddy's call —
+    /// no message, no timeout (the grace already ran in PcStateHandler), apps
+    /// forced closed without asking to save, reboot after. One addition for
+    /// "no matter what": if that is refused (a shutdown scheduled by
+    /// something else, say), ExitWindowsEx with EWX_FORCE goes down the other
+    /// road. A shutdown already under way counts as done.
+    public bool RestartNow()
+    {
+        if (!shutdownPrivilege) return false;
+        if (InitiateSystemShutdownW(null, null, 0, true, true)) return true;
+        if (Marshal.GetLastWin32Error() == ERROR_SHUTDOWN_IN_PROGRESS) return true;
+        return ExitWindowsEx(EWX_REBOOT | EWX_FORCE, SHTDN_REASON_MAJOR_OTHER | SHTDN_REASON_FLAG_PLANNED);
+    }
+
+    /// MoonDeckBuddy's acquirePrivilege: enable SeShutdownPrivilege on our own
+    /// token. Normal users hold it (disabled); AdjustTokenPrivileges reports
+    /// success through the last error, ERROR_NOT_ALL_ASSIGNED otherwise.
+    static bool AcquireShutdownPrivilege()
+    {
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out var token)) return false;
+        try
+        {
+            var privileges = new TOKEN_PRIVILEGES { PrivilegeCount = 1, Attributes = SE_PRIVILEGE_ENABLED };
+            if (!LookupPrivilegeValueW(null, SE_SHUTDOWN_NAME, out privileges.Luid)) return false;
+            AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero);
+            return Marshal.GetLastWin32Error() == ERROR_SUCCESS;
+        }
+        finally
+        {
+            CloseHandle(token);
+        }
+    }
+
     // MARK: - The game
 
     GameWindow? CurrentGame()
@@ -178,7 +238,7 @@ sealed class Win32Platform : IPlatform, IDisposable
         return lastGame != null && IsWindow(lastGame.Hwnd) && IsAlive(lastGame.Pid) ? lastGame : null;
     }
 
-    static GameWindow? ForegroundGame()
+    GameWindow? ForegroundGame()
     {
         var hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd)) return null;
@@ -196,8 +256,103 @@ sealed class Win32Platform : IPlatform, IDisposable
         {
             return null;
         }
+        // Big isn't enough: something has to say it's a game.
+        if (GameRules.Why(Evidence((int)pid)) is not { } why) return null;
         var title = Title(hwnd);
-        return new GameWindow(hwnd, (int)pid, name, string.IsNullOrWhiteSpace(title) ? name : title);
+        return new GameWindow(hwnd, (int)pid, name, string.IsNullOrWhiteSpace(title) ? name : title, why);
+    }
+
+    // MARK: - Is it a game?
+
+    GameRules.GameEvidence Evidence(int pid)
+    {
+        GameRules.GameEvidence lasting;
+        lock (evidenceGate)
+        {
+            if (!lastingEvidence.TryGetValue(pid, out lasting!))
+            {
+                if (lastingEvidence.Count > 64) lastingEvidence.Clear();   // pids come and go
+                var path = ExecutablePath(pid);
+                lasting = new GameRules.GameEvidence(
+                    InGameLibrary: path != null && GameRules.IsInGameLibrary(path),
+                    StartedByLauncher: StartedByLauncher(pid),
+                    KnownToWindows: path != null && WindowsGameList().Contains(path),
+                    ExclusiveFullscreen: false);
+                lastingEvidence[pid] = lasting;
+            }
+        }
+        return lasting with { ExclusiveFullscreen = IsExclusiveFullscreen() };
+    }
+
+    /// The process's full path; works for elevated processes too (limited query).
+    static string? ExecutablePath(int pid)
+    {
+        var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (handle == IntPtr.Zero) return null;
+        try
+        {
+            var buffer = new char[1024];
+            uint size = (uint)buffer.Length;
+            return QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? new string(buffer, 0, (int)size) : null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    /// A launcher or the streaming host up the parent chain (a few levels:
+    /// launchers often start a game through a helper or cmd).
+    static bool StartedByLauncher(int pid)
+    {
+        var snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == INVALID_HANDLE_VALUE || snapshot == IntPtr.Zero) return false;
+        var processes = new Dictionary<int, (int Parent, string Exe)>();
+        try
+        {
+            var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>(), szExeFile = "" };
+            for (bool ok = Process32FirstW(snapshot, ref entry); ok; ok = Process32NextW(snapshot, ref entry))
+            {
+                processes[(int)entry.th32ProcessID] = ((int)entry.th32ParentProcessID, entry.szExeFile);
+            }
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+        int current = pid;
+        for (int depth = 0; depth < 8 && processes.TryGetValue(current, out var me); depth++)
+        {
+            if (me.Parent == current || !processes.TryGetValue(me.Parent, out var parent)) return false;
+            if (GameRules.StartsGames(parent.Exe)) return true;
+            current = me.Parent;
+        }
+        return false;
+    }
+
+    /// Windows' own list of games — what Game Bar and Game Mode recognise —
+    /// as executable paths. Re-read at most once a minute.
+    HashSet<string> WindowsGameList()
+    {
+        if (windowsGames != null && DateTime.UtcNow - windowsGamesReadAt < TimeSpan.FromMinutes(1)) return windowsGames;
+        var games = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var children = Registry.CurrentUser.OpenSubKey(@"System\GameConfigStore\Children");
+            if (children != null)
+            {
+                foreach (var name in children.GetSubKeyNames())
+                {
+                    using var child = children.OpenSubKey(name);
+                    if (child?.GetValue("MatchedExeFullPath") is string path && path.Length > 0) games.Add(path);
+                }
+            }
+        }
+        catch (Exception error) when (error is System.Security.SecurityException or IOException
+                                      or UnauthorizedAccessException) { }
+        windowsGames = games;
+        windowsGamesReadAt = DateTime.UtcNow;
+        return games;
     }
 
     static bool IsAlive(int pid)
@@ -214,7 +369,8 @@ sealed class Win32Platform : IPlatform, IDisposable
         return length > 0 ? new string(buffer, 0, length) : "";
     }
 
-    static GameInfo Info(GameWindow game) => new(game.Title, game.Process, IsExclusiveFullscreen());
+    static GameInfo Info(GameWindow game) =>
+        new(game.Title, game.Process, game.Pid, IsExclusiveFullscreen(), game.Evidence);
 
     static bool IsExclusiveFullscreen() =>
         SHQueryUserNotificationState(out var state) == 0 && state == QUNS_RUNNING_D3D_FULL_SCREEN;

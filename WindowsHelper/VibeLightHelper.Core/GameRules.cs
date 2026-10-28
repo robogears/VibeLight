@@ -13,8 +13,10 @@ public interface IPlatform
     /// <summary>Puts back what <see cref="Match"/> changed.</summary>
     MatchResponse Restore();
 
-    /// <summary>Asks the game to close, and ends it if it hasn't after <paramref name="grace"/>.</summary>
-    Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, CancellationToken token);
+    /// <summary>Asks the game to close, and ends it if it hasn't after
+    /// <paramref name="grace"/>. With <paramref name="expectedPid"/>, only
+    /// that game: if another one is in front now, nothing is closed.</summary>
+    Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, int? expectedPid, CancellationToken token);
 }
 
 /// <summary>Which window is "the game", and which display mode to use. Pure,
@@ -36,10 +38,53 @@ public static class GameRules
         "gamebar", "gamebarftserver", "xboxgamebarwidgets", "nvidia overlay", "nvcontainer",
         "msedge", "chrome", "firefox", "opera", "brave", "discord", "obs64", "obs32",
         "devenv", "code", "cmd", "powershell", "pwsh", "windowsterminal", "conhost",
+        "spotify", "slack", "teams", "ms-teams", "zoom", "notepad", "vlc", "mpc-hc64", "wmplayer",
     };
 
     public static bool MayBeGame(string processName) =>
         !string.IsNullOrWhiteSpace(processName) && !NotGames.Contains(processName.Trim());
+
+    /// What starts games: the stores' launchers, front ends, and the
+    /// streaming host itself (which starts the app VibeLight launched). A
+    /// process one of these started — directly or a few levels down — is a game.
+    static readonly HashSet<string> GameStarters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "steam", "epicgameslauncher", "eadesktop", "origin", "galaxyclient", "upc", "ubisoftconnect",
+        "battle.net", "riotclientservices", "xboxpcapp", "gamelaunchhelper", "heroic", "itch",
+        "playnite.desktopapp", "playnite.fullscreenapp", "launchbox", "bigbox",
+        "sunshine", "apollo", "vibepollo",
+    };
+
+    public static bool StartsGames(string processName) =>
+        GameStarters.Contains(Path.GetFileNameWithoutExtension(processName.Trim()));
+
+    /// Where the stores install games. (Not WindowsApps: plenty of store apps
+    /// there aren't games; Windows' own game list covers Xbox titles.)
+    static readonly string[] GameFolders =
+    {
+        @"\steamapps\common\", @"\epic games\", @"\gog galaxy\games\", @"\gog games\", @"\ea games\",
+        @"\origin games\", @"\ubisoft game launcher\games\", @"\xboxgames\", @"\riot games\",
+    };
+
+    public static bool IsInGameLibrary(string exePath)
+    {
+        var path = exePath.Replace('/', '\\');
+        return GameFolders.Any(folder => path.Contains(folder, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>What says a window that fills the screen really is a game.
+    /// Quit Game ends a process, so being big isn't enough: one of these must hold.</summary>
+    public sealed record GameEvidence(bool InGameLibrary, bool StartedByLauncher, bool KnownToWindows,
+                                      bool ExclusiveFullscreen);
+
+    /// <summary>Why the window counts as a game (shown in VibeLight), or null
+    /// when nothing says it is — then it isn't one, and Quit Game won't touch it.</summary>
+    public static string? Why(GameEvidence evidence) =>
+        evidence.InGameLibrary ? "installed by a game store"
+        : evidence.StartedByLauncher ? "started by a launcher"
+        : evidence.KnownToWindows ? "known to Windows as a game"
+        : evidence.ExclusiveFullscreen ? "in exclusive fullscreen"
+        : null;
 
     /// A game fills most of its display (fullscreen, borderless, or a big window).
     public static bool CoversDisplay(int windowWidth, int windowHeight, int displayWidth, int displayHeight) =>

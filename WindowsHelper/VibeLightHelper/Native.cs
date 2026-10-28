@@ -38,6 +38,17 @@ static class Native
     public const uint WM_CLOSE = 0x0010;
     public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
 
+    public const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+    public const uint TOKEN_QUERY = 0x0008;
+    public const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+    public const string SE_SHUTDOWN_NAME = "SeShutdownPrivilege";
+    public const int ERROR_SUCCESS = 0;
+    public const int ERROR_SHUTDOWN_IN_PROGRESS = 1115;
+    public const uint EWX_REBOOT = 0x00000002;
+    public const uint EWX_FORCE = 0x00000004;
+    public const uint SHTDN_REASON_MAJOR_OTHER = 0x00000000;
+    public const uint SHTDN_REASON_FLAG_PLANNED = 0x80000000;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
@@ -48,6 +59,38 @@ static class Native
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LUID { public uint LowPart; public int HighPart; }
+
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint TH32CS_SNAPPROCESS = 0x00000002;
+    public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
+
+    /// PROCESSENTRY32W. 568 bytes on x64.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct PROCESSENTRY32W
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+
+    /// TOKEN_PRIVILEGES with its one LUID_AND_ATTRIBUTES inline. 16 bytes.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TOKEN_PRIVILEGES
+    {
+        public uint PrivilegeCount;
+        public LUID Luid;
+        public uint Attributes;
+    }
 
     /// DEVMODEW, display variant of its unions. 220 bytes.
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -167,4 +210,44 @@ static class Native
 
     [DllImport("shell32.dll")]
     public static extern int SHQueryUserNotificationState(out int pquns);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool QueryFullProcessImageNameW(IntPtr hProcess, uint dwFlags, [Out] char[] lpExeName,
+                                                         ref uint lpdwSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool Process32FirstW(IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool Process32NextW(IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool LookupPrivilegeValueW(string? lpSystemName, string lpName, out LUID lpLuid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, bool disableAllPrivileges,
+                                                    ref TOKEN_PRIVILEGES newState, uint bufferLength,
+                                                    IntPtr previousState, IntPtr returnLength);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool InitiateSystemShutdownW(string? lpMachineName, string? lpMessage, uint dwTimeout,
+                                                      bool bForceAppsClosed, bool bRebootAfterShutdown);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ExitWindowsEx(uint uFlags, uint dwReason);
 }

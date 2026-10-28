@@ -25,7 +25,9 @@ public sealed record InfoResponse(string Name, string Version, string HostName);
 
 public sealed record DisplayInfo(string Device, int Width, int Height, int RefreshHz);
 
-public sealed record GameInfo(string Title, string Process, bool ExclusiveFullscreen);
+/// <summary>The game in front. <c>Pid</c> is what /quit-game is asked to
+/// close; <c>Evidence</c> says why it counts as a game (GameRules.Why).</summary>
+public sealed record GameInfo(string Title, string Process, int Pid, bool ExclusiveFullscreen, string Evidence);
 
 public sealed record StatusResponse(DisplayInfo? Display, GameInfo? Game, bool Matched);
 
@@ -37,8 +39,16 @@ public sealed record MatchRequest(int Width, int Height);
 /// VibeLight can show as is.</summary>
 public sealed record MatchResponse(bool Ok, DisplayInfo? Display, GameInfo? Game, bool GameFitted, string Message);
 
-public sealed record QuitGameRequest(int? GraceSeconds);
+/// <summary>POST /quit-game. <c>Pid</c>: the game VibeLight showed (from
+/// /status); if a different one is in front now, nothing is closed.</summary>
+public sealed record QuitGameRequest(int? GraceSeconds, int? Pid);
 
 public sealed record QuitGameResponse(bool Ok, string? Title, bool Forced, string Message);
+
+/// <summary>POST /restart: restart the PC after <c>DelaySeconds</c> (1–30,
+/// MoonDeckBuddy's range; anything else is a 400).</summary>
+public sealed record RestartRequest(int? DelaySeconds);
+
+public sealed record RestartResponse(bool Ok, string Message);
 
 public sealed record ErrorResponse(string Error);

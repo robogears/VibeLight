@@ -129,6 +129,30 @@ public class GameRulesTests
         Assert.Null(GameRules.PickMode(modes, 2560, 1440, 60));
     }
 
+    /// Filling the screen isn't enough to be quit: something must say it's a game.
+    [Fact]
+    public void AGameNeedsEvidence()
+    {
+        Assert.True(GameRules.IsInGameLibrary(@"D:\SteamLibrary\steamapps\common\ELDEN RING\Game\eldenring.exe"));
+        Assert.True(GameRules.IsInGameLibrary(@"C:\Program Files\Epic Games\Fortnite\FortniteClient-Win64-Shipping.exe"));
+        Assert.True(GameRules.IsInGameLibrary(@"C:\XboxGames\Halo Infinite\Content\HaloInfinite.exe"));
+        Assert.False(GameRules.IsInGameLibrary(@"C:\Windows\System32\notepad.exe"));
+        Assert.False(GameRules.IsInGameLibrary(@"C:\Program Files\WindowsApps\SpotifyAB\Spotify.exe"));
+
+        Assert.True(GameRules.StartsGames("steam"));
+        Assert.True(GameRules.StartsGames("Playnite.FullscreenApp.exe"));
+        Assert.True(GameRules.StartsGames("vibepollo"));   // the app VibeLight launched
+        Assert.False(GameRules.StartsGames("explorer"));
+
+        var nothing = new GameRules.GameEvidence(false, false, false, false);
+        Assert.Null(GameRules.Why(nothing));
+        Assert.Equal("installed by a game store", GameRules.Why(nothing with { InGameLibrary = true }));
+        Assert.Equal("started by a launcher", GameRules.Why(nothing with { StartedByLauncher = true }));
+        Assert.Equal("known to Windows as a game", GameRules.Why(nothing with { KnownToWindows = true }));
+        Assert.Equal("in exclusive fullscreen", GameRules.Why(nothing with { ExclusiveFullscreen = true }));
+        Assert.False(GameRules.MayBeGame("notepad"));
+    }
+
     [Fact]
     public void AGameFillsMostOfItsDisplay()
     {
@@ -189,9 +213,11 @@ public class HelperApiTests
             return new MatchResponse(true, new DisplayInfo(@"\\.\DISPLAY1", width, height, 120), null, false, "ok");
         }
         public MatchResponse Restore() => new(true, null, null, false, "restored");
-        public Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, CancellationToken token)
+        public int? ExpectedPid;
+        public Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, int? expectedPid, CancellationToken token)
         {
             Grace = grace;
+            ExpectedPid = expectedPid;
             return Task.FromResult(new QuitGameResponse(true, "Game", false, "closed"));
         }
     }
@@ -199,6 +225,7 @@ public class HelperApiTests
     readonly FakePlatform platform = new();
     readonly X509Certificate2 paired;
     readonly HelperApi api;
+    int restarts;
 
     public HelperApiTests()
     {
@@ -206,7 +233,8 @@ public class HelperApiTests
         paired = cert;
         var path = Path.Combine(Path.GetTempPath(), $"vlh-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, TrustedClientsTests.StateJson(pem));
-        api = new HelperApi(platform, new TrustedClients(() => new[] { path }), "Gaming PC");
+        var power = new PcStateHandler(() => true, () => { restarts++; return true; });
+        api = new HelperApi(platform, new TrustedClients(() => new[] { path }), "Gaming PC", power);
     }
 
     Task<HttpResponse> Send(string method, string path, string body = "", byte[]? cert = null) =>
@@ -244,6 +272,9 @@ public class HelperApiTests
         Assert.Equal(TimeSpan.FromSeconds(30), platform.Grace);
         await Send("POST", "/quit-game", "", paired.RawData);
         Assert.Equal(TimeSpan.FromSeconds(5), platform.Grace);
+        Assert.Null(platform.ExpectedPid);
+        await Send("POST", "/quit-game", "{\"graceSeconds\":5,\"pid\":4242}", paired.RawData);
+        Assert.Equal(4242, platform.ExpectedPid);   // only the game VibeLight showed
     }
 
     [Fact]
@@ -251,6 +282,68 @@ public class HelperApiTests
     {
         Assert.Equal(404, (await Send("GET", "/nope", cert: paired.RawData)).Status);
         Assert.Equal(405, (await Send("GET", "/match", cert: paired.RawData)).Status);
+        Assert.Equal(405, (await Send("GET", "/restart", cert: paired.RawData)).Status);
+    }
+
+    /// MoonDeckBuddy's rule: a delay of 1–30 s or a 400; then a scheduled,
+    /// cancellable restart, one at a time.
+    [Fact]
+    public async Task RestartTakesMoonDeckBuddysDelayAndCanBeCancelled()
+    {
+        Assert.Equal(401, (await Send("POST", "/restart", "{\"delaySeconds\":5}")).Status);
+        Assert.Equal(400, (await Send("POST", "/restart", "{}", paired.RawData)).Status);
+        Assert.Equal(400, (await Send("POST", "/restart", "{\"delaySeconds\":0}", paired.RawData)).Status);
+        Assert.Equal(400, (await Send("POST", "/restart", "{\"delaySeconds\":31}", paired.RawData)).Status);
+        var first = await Send("POST", "/restart", "{\"delaySeconds\":30}", paired.RawData);
+        Assert.Contains("\"ok\":true", first.Body);
+        var second = await Send("POST", "/restart", "{\"delaySeconds\":30}", paired.RawData);
+        Assert.Contains("already restarting", second.Body);
+        Assert.Contains("\"ok\":true", (await Send("POST", "/restart/cancel", "", paired.RawData)).Body);
+        Assert.Contains("\"ok\":false", (await Send("POST", "/restart/cancel", "", paired.RawData)).Body);
+        Assert.Equal(0, restarts);
+    }
+}
+
+public class PcStateHandlerTests
+{
+    /// The grace runs out, the native restart is called once, and the state
+    /// stays transient until Windows goes down.
+    [Fact]
+    public async Task FiresAfterTheGraceOnce()
+    {
+        int calls = 0;
+        int? scheduled = null;
+        using var power = new PcStateHandler(() => true, () => { Interlocked.Increment(ref calls); return true; });
+        power.RestartScheduled += seconds => scheduled = seconds;
+        Assert.True(power.Restart(1).Ok);
+        Assert.Equal(1, scheduled);
+        Assert.Equal(PcStateHandler.PcState.Restarting, power.State);
+        for (int i = 0; i < 50 && Volatile.Read(ref calls) == 0; i++) await Task.Delay(100);
+        Assert.Equal(1, calls);
+        Assert.Equal(PcStateHandler.PcState.Transient, power.State);
+        Assert.False(power.Restart(1).Ok);   // still going down: no second one
+        Assert.False(power.Cancel());        // too late to cancel
+    }
+
+    [Fact]
+    public void RefusedWithoutThePrivilegeAndBackToNormalWhenWindowsSaysNo()
+    {
+        using var refused = new PcStateHandler(() => false, () => true);
+        Assert.False(refused.Restart(1).Ok);
+        Assert.Equal(PcStateHandler.PcState.Normal, refused.State);
+    }
+
+    [Fact]
+    public async Task ANativeFailurePutsItBackToNormal()
+    {
+        int calls = 0;
+        using var failing = new PcStateHandler(() => true, () => { Interlocked.Increment(ref calls); return false; });
+        Assert.True(failing.Restart(1).Ok);
+        for (int i = 0; i < 50 && Volatile.Read(ref calls) == 0; i++) await Task.Delay(100);
+        for (int i = 0; i < 20 && failing.State != PcStateHandler.PcState.Normal; i++) await Task.Delay(50);
+        Assert.Equal(PcStateHandler.PcState.Normal, failing.State);
+        Assert.True(failing.Restart(30).Ok);   // and it can be asked again
+        Assert.True(failing.Cancel());
     }
 }
 
@@ -264,7 +357,8 @@ public class HelperServerTests
         var statePath = Path.Combine(Path.GetTempPath(), $"vlh-{Guid.NewGuid():N}.json");
         var pfxPath = Path.Combine(Path.GetTempPath(), $"vlh-{Guid.NewGuid():N}", "helper.pfx");
         File.WriteAllText(statePath, TrustedClientsTests.StateJson(pem));
-        var api = new HelperApi(new NullPlatform(), new TrustedClients(() => new[] { statePath }), "PC");
+        var api = new HelperApi(new NullPlatform(), new TrustedClients(() => new[] { statePath }), "PC",
+                                new PcStateHandler(() => false, () => false));
         using var server = new HelperServer(api, CertificateStore.LoadOrCreate(pfxPath), port: 0);
         server.Start();
 
@@ -296,7 +390,7 @@ public class HelperServerTests
         public StatusResponse Status() => new(null, null, false);
         public MatchResponse Match(int width, int height) => new(false, null, null, false, "");
         public MatchResponse Restore() => new(false, null, null, false, "");
-        public Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, CancellationToken token) =>
+        public Task<QuitGameResponse> QuitGameAsync(TimeSpan grace, int? expectedPid, CancellationToken token) =>
             Task.FromResult(new QuitGameResponse(false, null, false, ""));
     }
 }

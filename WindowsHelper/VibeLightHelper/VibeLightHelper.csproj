@@ -11,7 +11,7 @@
     <RootNamespace>VibeLightHelper</RootNamespace>
     <AssemblyName>VibeLightHelper</AssemblyName>
     <Product>VibeLight Helper</Product>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <ApplicationIcon>helper.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

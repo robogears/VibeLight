@@ -21,11 +21,15 @@ sealed class TrayApp
     /// "0.1.1", from the project's Version: the menu's heading says which build this is.
     static readonly string AppVersion = typeof(TrayApp).Assembly.GetName().Version?.ToString(3) ?? "";
     const uint TrayMessage = WM_APP + 1;
+    /// From PcStateHandler's events (a server thread) to the window's thread.
+    const uint RestartScheduledMessage = WM_APP + 2;
+    const uint RestartCancelledMessage = WM_APP + 3;
     const uint IconId = 1;
 
-    enum Command : uint { None, Header, StartWithWindows = 10, PutDisplayBack, Quit }
+    enum Command : uint { None, Header, StartWithWindows = 10, PutDisplayBack, CancelRestart, Quit }
 
     readonly Win32Platform platform = new();
+    readonly PcStateHandler power;
     readonly TrustedClients trust;
     readonly HelperServer? server;
     readonly string status;
@@ -40,7 +44,13 @@ sealed class TrayApp
     {
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         trust = new TrustedClients(() => TrustedClients.DefaultCandidatePaths(programFiles));
-        var api = new HelperApi(platform, trust, Environment.MachineName);
+        // Restart PC, MoonDeckBuddy's way: scheduled, cancellable, then forced.
+        power = new PcStateHandler(() => platform.CanRestart, platform.RestartNow);
+        power.RestartScheduled += seconds =>
+            Native.PostMessageW(window, RestartScheduledMessage, new IntPtr(seconds), IntPtr.Zero);
+        power.RestartCancelled += () =>
+            Native.PostMessageW(window, RestartCancelledMessage, IntPtr.Zero, IntPtr.Zero);
+        var api = new HelperApi(platform, trust, Environment.MachineName, power);
         api.DeviceServed += name =>
             lastUsed = $"Last used by {(string.IsNullOrEmpty(name) ? "a paired device" : name)} at {DateTime.Now:t}";
 
@@ -105,6 +115,17 @@ sealed class TrayApp
         {
             uint mouse = (uint)(lParam.ToInt64() & 0xFFFF);
             if (mouse == WM_RBUTTONUP || mouse == WM_LBUTTONUP) ShowMenu();
+            return IntPtr.Zero;
+        }
+        if (msg == RestartScheduledMessage)
+        {
+            // MoonDeckBuddy's tray message, in our words.
+            Notify($"Restarting in {wParam.ToInt64()} second(s). Cancel it from this menu.");
+            return IntPtr.Zero;
+        }
+        if (msg == RestartCancelledMessage)
+        {
+            Notify("Restart cancelled.");
             return IntPtr.Zero;
         }
         if (msg == taskbarCreated && taskbarCreated != 0)
@@ -177,6 +198,10 @@ sealed class TrayApp
         AppendMenuW(menu, MF_STRING | (StartsWithWindows() ? MF_CHECKED : 0),
                     (UIntPtr)(uint)Command.StartWithWindows, "Start with Windows");
         AppendMenuW(menu, MF_STRING, (UIntPtr)(uint)Command.PutDisplayBack, "Put the Display Back");
+        if (power.State == PcStateHandler.PcState.Restarting)
+        {
+            AppendMenuW(menu, MF_STRING, (UIntPtr)(uint)Command.CancelRestart, "Cancel Restart");
+        }
         AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenuW(menu, MF_STRING, (UIntPtr)(uint)Command.Quit, "Quit");
 
@@ -195,6 +220,9 @@ sealed class TrayApp
                 break;
             case Command.PutDisplayBack:
                 Notify(platform.Restore().Message);
+                break;
+            case Command.CancelRestart:
+                power.Cancel();   // its event says "Restart cancelled."
                 break;
             case Command.Quit:
                 Quit();
@@ -228,6 +256,7 @@ sealed class TrayApp
         // Leaving the PC as it was found.
         platform.Restore();
         server?.Dispose();
+        power.Dispose();
         platform.Dispose();
         var data = IconData(0);
         Shell_NotifyIconW(NIM_DELETE, ref data);
