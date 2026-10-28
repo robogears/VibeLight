@@ -18,9 +18,12 @@ struct OverlayHost: View {
                 .contentShape(Rectangle())
                 .onTapGesture { state.route(.back) }
                 // Back to Library from the still-running card lifts the scrim
-                // while the poster flies into its tile, so you see it land.
+                // while the poster flies into its tile, so you see it land;
+                // after Quit it fades out slowly with the card.
                 .opacity(scrimLifted ? 0 : 1)
-                .animation(.easeOut(duration: 0.3), value: scrimLifted)
+                .animation(endedQuitting ? Animation.easeInOut(duration: AppState.endedQuitFade)
+                                         : Animation.easeOut(duration: 0.3),
+                           value: scrimLifted)
 
             // The card absorbs its own taps so tapping inside never dismisses.
             card
@@ -30,7 +33,12 @@ struct OverlayHost: View {
     }
 
     private var scrimLifted: Bool {
-        if case .sessionEnded = overlay { return state.endedSession?.leaving == true }
+        if case .sessionEnded = overlay { return state.endedSession?.leaving == true || endedQuitting }
+        return false
+    }
+
+    private var endedQuitting: Bool {
+        if case .sessionEnded = overlay { return state.endedSession?.quitting == true }
         return false
     }
 
@@ -254,9 +262,13 @@ private struct PosterRestCard: View {
     private var ended: AppState.EndedSession? { state.endedSession }
     private var closed: Bool { ended?.closedOnHost == true }
     private var leaving: Bool { ended?.leaving == true }
+    /// Quit fired: hold the closing look (it would otherwise snap back for a
+    /// frame as the hold clears) and fade out.
+    private var quitting: Bool { ended?.quitting == true }
     private var hostName: String { state.selectedHost?.name ?? "the PC" }
-    /// How far Quit has been held, 0…1.
+    /// How far Quit has been held, 0…1 (pinned full once it fired).
     private var hold: Double {
+        if quitting { return 1 }
         guard let p = state.controller.holdProgress, p.kind == .quitGameButton else { return 0 }
         return p.fraction
     }
@@ -279,6 +291,10 @@ private struct PosterRestCard: View {
                                    : Animation.easeOut(duration: 0.25).delay(0.45),
                            value: settled && !leaving)
         }
+        // After Quit: the whole card fades out slowly (owner), with the scrim.
+        .opacity(quitting ? 0 : 1)
+        .scaleEffect(quitting && !reduceMotion ? 0.97 : 1)
+        .animation(.easeInOut(duration: AppState.endedQuitFade), value: quitting)
         .onAppear {
             if curtainDown { settle() }
             if reduceMotion { breathe = true; return }
@@ -339,8 +355,9 @@ private struct PosterRestCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(AppState.endedStatusLine(game: app.name, host: hostName, closed: closed,
-                                          played: ended?.played))
+            Text(quitting ? "Closing \(app.name) on \(hostName)…"
+                          : AppState.endedStatusLine(game: app.name, host: hostName, closed: closed,
+                                                     played: ended?.played))
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -349,7 +366,8 @@ private struct PosterRestCard: View {
                               symbol: "play.fill")
                 if !closed {
                     OverlayButton(id: "ended:quit", title: "Quit Stream Completely",
-                                  symbol: "xmark.octagon.fill", destructive: true, holdEvent: .quitChord)
+                                  symbol: "xmark.octagon.fill", destructive: true, holdEvent: .quitChord,
+                                  held: quitting)
                 }
                 OverlayButton(id: "ended:home", title: "Back to Library", symbol: "square.grid.2x2")
             }
@@ -543,6 +561,8 @@ struct OverlayButton: View {
     /// Return, or a press), filling as it goes; a tap just selects it, which
     /// its card answers with a nudge. The still-running card's Quit.
     var holdEvent: NavigationEvent? = nil
+    /// The hold already fired: stay full while the card fades out.
+    var held = false
 
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
@@ -550,6 +570,7 @@ struct OverlayButton: View {
     private var isFocused: Bool { state.focus.focusedItemID == id }
     /// How far this button has been held, 0…1.
     private var holdFraction: Double {
+        if held { return 1 }
         guard holdEvent != nil, isFocused,
               let p = state.controller.holdProgress, p.kind == .quitGameButton else { return 0 }
         return p.fraction

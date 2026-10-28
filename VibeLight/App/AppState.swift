@@ -273,6 +273,8 @@ final class AppState {
         var readyAt: Date
         /// Back to Library is under way (the poster flies home).
         var leaving = false
+        /// Quit has fired: the card holds its "closing" look and fades out.
+        var quitting = false
     }
     private(set) var endedSession: EndedSession?
     /// Bumped when Quit on the card is tapped instead of held, so its hint flashes.
@@ -2414,7 +2416,7 @@ final class AppState {
     }
 
     /// Listed explicitly, not applied blanket: `.hosts` opens on the computer
-    /// you're on, by ID (`openHostMenu`), `.sessionEnded` opens on Resume
+    /// you're on, by ID (`openHostMenu`), `.sessionEnded` opens on Quit
     /// (`presentSessionEnded`), and the HUD / cheat sheet
     /// deliberately leave the home screen's focus untouched underneath them
     /// (rebuildFocus returns early for those, so forcing focus would move the
@@ -2818,7 +2820,8 @@ final class AppState {
                 dismissOverlay()
             }
         case .sessionEnded(let app):
-            if endedSession?.leaving == true { return }   // the poster is flying home
+            // The poster is flying home, or the card is fading out after Quit.
+            if endedSession?.leaving == true || endedSession?.quitting == true { return }
             if event == .select || event == .back, !endedAcceptsInput { return }
             switch event {
             case .select:
@@ -3107,18 +3110,16 @@ final class AppState {
     /// The headline feature: fully terminate the remote game, from anywhere.
     func quitRemoteGameCompletely() {
         guard let host = selectedHost else { return }
+        // The card's Quit already fired (a second hold, or Menu-hold, during
+        // its fade-out is not a second quit).
+        if case .sessionEnded = overlay, endedSession?.quitting == true { return }
         // Not a drop: a quit that fails must surface as the error card.
         liveStream = nil
-        // Dismiss the card on the SAME press: the /cancel round-trip (~1 s)
-        // used to hold it open, which read as "the button didn't work" and
-        // invited a double-press that resumed the stream instead.
-        if case .sessionEnded = overlay {
-            dismissOverlay()
-            // Park focus on the host chip — the section-restore would land on
-            // Restart PC, where the same impatient mash walks straight into a
-            // PC reboot (select → confirm → yes). The chip just opens a menu.
-            focus.focus(itemID: "header:host")
-        }
+        // The card answers on the SAME press — the /cancel round-trip (~1 s)
+        // used to hold it open, which read as "the button didn't work" — but
+        // by fading out slowly, not snapping away (owner: "slowly fade out,
+        // right now it's choppy"). /cancel runs meanwhile.
+        if case .sessionEnded(let app) = overlay { fadeOutEndedCard(app) }
         Task {
             await session.quitCompletely(host: host)
             if case .failed = session.phase {
@@ -3129,7 +3130,8 @@ final class AppState {
                 // card here. (Quit mid-stream resolves via onStreamDidEnd
                 // instead, where remoteQuitRequested suppresses the card.)
                 session.acknowledgeEnd()
-                if case .sessionEnded = overlay { dismissOverlay() }
+                // A card still fading closes itself when the fade is done.
+                if case .sessionEnded = overlay, endedSession?.quitting != true { dismissOverlay() }
                 // NOW the phase is idle, so the refresh that onStreamDidEnd
                 // couldn't run can finally happen.
                 Task { await refreshSelectedHost() }
@@ -3158,16 +3160,38 @@ final class AppState {
     /// The still-running card — "Poster Rest", the owner's pick of five (Fable
     /// design lead, Oct 2026). The poster that lifted when the game started
     /// is what you land on when you leave it, LIVE and green, with Resume,
-    /// a held Quit and Back to Library beside it. Opens on Resume: Quit can't
-    /// fire from one press any more, and input waits for the curtain.
+    /// a held Quit and Back to Library beside it. Opens on Quit (owner) —
+    /// safe, since Quit can't fire from one press — and input waits for the
+    /// curtain.
     private func presentSessionEnded(_ app: StreamApp, dropReason: String? = nil) {
         let played = liveStream.map { Date().timeIntervalSince($0.since) }
         liveStream = nil
         endedSession = EndedSession(played: played, dropReason: dropReason,
                                     readyAt: Date().addingTimeInterval(endedInputDelay))
         presentOverlay(.sessionEnded(app))
-        focus.focus(itemID: "ended:resume")
+        // Owner: open on Quit Stream Completely. Safe now: Quit only fires
+        // from a 0.8 s hold, and nothing is taken until the curtain lifts.
+        focus.focus(itemID: "ended:quit")
         watchEndedGame(app)
+    }
+
+    /// How long the card takes to fade out after Quit fires, in seconds
+    /// (its views animate over the same span).
+    nonisolated static let endedQuitFade = 0.9
+
+    /// Quit fired from the card: it keeps its closing look (grey poster,
+    /// CLOSING, the button full) and fades out with the scrim, then goes.
+    private func fadeOutEndedCard(_ app: StreamApp) {
+        endedSession?.quitting = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.endedQuitFade))
+            guard let self, isShowingEnded(app) else { return }
+            dismissOverlay()
+            // Park focus on the host chip — the section-restore would land on
+            // Restart PC, where the same impatient mash walks straight into a
+            // PC reboot (select → confirm → yes). The chip just opens a menu.
+            focus.focus(itemID: "header:host")
+        }
     }
 
     /// The lift geometry id of the card's poster (Resume lifts from it).
@@ -3194,7 +3218,7 @@ final class AppState {
     /// The card is up and its game is still running, so there is a game to quit.
     private var endedCardOffersQuit: Bool {
         guard case .sessionEnded = overlay, let ended = endedSession else { return false }
-        return !ended.closedOnHost && !ended.leaving
+        return !ended.closedOnHost && !ended.leaving && !ended.quitting
     }
 
     /// Focus is on the card's Quit and it may be held now — A / Return /

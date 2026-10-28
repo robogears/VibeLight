@@ -39,12 +39,11 @@ final class PosterRestTests: XCTestCase {
         XCTAssertTrue(app.contains("launch(app, liftFrom: Self.endedPosterID)"))
     }
 
-    /// Opens on Resume. Quit is never one press: a tap only nudges, and the
-    /// hold (A, Return or a press) arrives as .quitChord.
+    /// Opens on Quit (owner) — safe, because Quit is never one press: a tap
+    /// only nudges, and the hold (A, Return or a press) arrives as .quitChord.
     func testQuitNeedsAHold() throws {
         let app = try source("VibeLight/App/AppState.swift")
-        XCTAssertTrue(app.contains("presentOverlay(.sessionEnded(app))\n        focus.focus(itemID: \"ended:resume\")"))
-        XCTAssertFalse(app.contains("focus.focus(itemID: \"ended:quit\")"))
+        XCTAssertTrue(app.contains("focus.focus(itemID: \"ended:quit\")\n        watchEndedGame(app)"))
         XCTAssertTrue(app.contains("case \"ended:quit\":\n                    // A tap."))
         XCTAssertTrue(app.contains("endedQuitNudges += 1"))
         let pads = try source("VibeLight/Input/ControllerManager.swift")
@@ -53,6 +52,17 @@ final class PosterRestTests: XCTestCase {
         // The button fills itself, so the ring stays away for that hold.
         let root = try source("VibeLight/UI/RootView.swift")
         XCTAssertTrue(root.contains("hold.kind != .quitGameButton"))
+    }
+
+    /// Owner: after the hold, the card fades out slowly instead of snapping
+    /// away — it keeps its closing look (no snap back as the hold clears).
+    func testQuitFadesTheCardOut() throws {
+        let app = try source("VibeLight/App/AppState.swift")
+        XCTAssertTrue(app.contains("if case .sessionEnded(let app) = overlay { fadeOutEndedCard(app) }"))
+        XCTAssertTrue(app.contains("try? await Task.sleep(for: .seconds(Self.endedQuitFade))"))
+        let overlays = try source("VibeLight/UI/OverlayViews.swift")
+        XCTAssertTrue(overlays.contains(".opacity(quitting ? 0 : 1)"))
+        XCTAssertTrue(overlays.contains("if quitting { return 1 }"))
     }
 
     /// Nothing on the card takes Select / Back until the curtain has lifted.
